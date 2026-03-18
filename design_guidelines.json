@@ -1,0 +1,185 @@
+{
+  "identity": {
+    "name": "The Program",
+    "description": "Premium strength training app for advanced strongman athletes.",
+    "tone": "Serious, Elite, Industrial, Dark, Focused",
+    "target_audience": "Competitive Strongman Athletes"
+  },
+  "design_system": {
+    "colors": {
+      "primary": "#1F3864",
+      "secondary": "#1A1A2E",
+      "accent": "#C55A11",
+      "accent_secondary": "#2E75B6",
+      "surface": "#24243E",
+      "surface_highlight": "#2E2E4A",
+      "background": "#1A1A2E",
+      "text": {
+        "primary": "#FFFFFF",
+        "secondary": "#A0A0A0",
+        "muted": "#6B7280",
+        "inverse": "#000000"
+      },
+      "status": {
+        "success": "#4CAF50",
+        "error": "#CF6679",
+        "warning": "#FFD700",
+        "info": "#2E75B6"
+      },
+      "sessions": {
+        "me_lower": { "bg": "#FFF0E4", "text": "#C55A11", "label": "Max Effort Lower" },
+        "me_upper": { "bg": "#FFFCE4", "text": "#B8860B", "label": "Max Effort Upper" },
+        "de_lower": { "bg": "#E8F6EE", "text": "#008080", "label": "Dynamic Effort Lower" },
+        "de_upper": { "bg": "#E4EEFF", "text": "#2E75B6", "label": "Dynamic Effort Upper" },
+        "event": { "bg": "#F4EAFF", "text": "#800080", "label": "Strongman Event" },
+        "recovery": { "bg": "#F5F0FF", "text": "#9370DB", "label": "Recovery / Mobility" },
+        "deload": { "bg": "#F0F0F0", "text": "#808080", "label": "Deload" }
+      }
+    },
+    "typography": {
+      "font_family": {
+        "heading": "System",
+        "body": "System",
+        "mono": "System"
+      },
+      "weights": {
+        "regular": "400",
+        "medium": "500",
+        "semibold": "600",
+        "bold": "700",
+        "heavy": "900"
+      },
+      "sizes": {
+        "xs": 12,
+        "sm": 14,
+        "base": 16,
+        "lg": 18,
+        "xl": 20,
+        "2xl": 24,
+        "3xl": 30,
+        "4xl": 36
+      }
+    },
+    "spacing": {
+      "xs": 4,
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 24,
+      "2xl": 32,
+      "3xl": 48
+    },
+    "layout": {
+      "border_radius": {
+        "sm": 4,
+        "md": 8,
+        "lg": 12,
+        "xl": 16,
+        "full": 9999
+      },
+      "container_padding": 16,
+      "card_elevation": 2
+    }
+  },
+  "assets": {
+    "images": [
+      {
+        "category": "hero",
+        "url": "https://images.unsplash.com/photo-1634042341465-f08e0d10a670?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHwxfHxzdHJvbmdtYW4lMjBhdGhsZXRlJTIwbGlmdGluZyUyMGhlYXZ5JTIwd2VpZ2h0cyUyMGRhcmslMjBtb29keXxlbnwwfHx8fDE3NzM4Njk4NzV8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Dark moody barbell lift - use for Hero sections or backgrounds"
+      },
+      {
+        "category": "texture",
+        "url": "https://images.unsplash.com/photo-1526506118085-60ce8714f8c5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHwzfHxzdHJvbmdtYW4lMjBhdGhsZXRlJTIwbGlmdGluZyUyMGhlYXZ5JTIwd2VpZ2h0cyUyMGRhcmslMjBtb29keXxlbnwwfHx8fDE3NzM4Njk4NzV8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Grayscale gym texture - use for overlay or card backgrounds"
+      }
+    ],
+    "icons": {
+      "library": "@expo/vector-icons",
+      "sets": ["MaterialCommunityIcons", "Ionicons", "FontAwesome5"],
+      "mappings": {
+        "home": "home-variant",
+        "today": "clipboard-list",
+        "log": "plus-circle",
+        "track": "chart-line",
+        "tools": "wrench",
+        "barbell": "dumbbell",
+        "plate": "disc",
+        "settings": "cog",
+        "check": "check-circle",
+        "back": "arrow-left",
+        "close": "close"
+      }
+    }
+  },
+  "components": {
+    "ScreenContainer": {
+      "description": "Main wrapper for all screens",
+      "style": {
+        "flex": 1,
+        "backgroundColor": "colors.background"
+      }
+    },
+    "Card": {
+      "description": "Standard container for data",
+      "style": {
+        "backgroundColor": "colors.surface",
+        "borderRadius": "layout.border_radius.lg",
+        "padding": "layout.spacing.lg",
+        "marginBottom": "layout.spacing.md"
+      }
+    },
+    "PrimaryButton": {
+      "description": "Main action button",
+      "style": {
+        "backgroundColor": "colors.accent",
+        "borderRadius": "layout.border_radius.md",
+        "height": 48,
+        "justifyContent": "center",
+        "alignItems": "center"
+      },
+      "textStyle": {
+        "color": "#FFFFFF",
+        "fontWeight": "bold",
+        "fontSize": 16
+      }
+    },
+    "SessionBadge": {
+      "description": "Colored badge for session types",
+      "dynamic": true,
+      "props": ["type"]
+    },
+    "Input": {
+      "description": "Text entry field",
+      "style": {
+        "backgroundColor": "colors.surface_highlight",
+        "borderRadius": "layout.border_radius.md",
+        "height": 48,
+        "paddingHorizontal": 12,
+        "color": "#FFFFFF",
+        "borderWidth": 1,
+        "borderColor": "colors.surface"
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "STRICTLY follow the color palette. Dark mode is default.",
+    "Implement the 'Session Color Coding' exactly as specified in design_system.colors.sessions.",
+    "Use 'AsyncStorage' for all data persistence.",
+    "Do NOT use external CSS files. Use React Native StyleSheet.",
+    "Ensure the bottom tab bar uses the specified icons and active/inactive colors.",
+    "For the 'Dashboard', create a grid layout for stats.",
+    "For 'Today's Session', ensure sections are collapsible.",
+    "For 'Onboarding', build a 6-step wizard using a stack navigator or conditional rendering.",
+    "Use @expo/vector-icons for all iconography.",
+    "Ensure all text is readable against the dark background (White #FFFFFF is primary).",
+    "Add 'data-testid' to all interactive elements for testing.",
+    "Use 'ScrollView' or 'FlatList' for scrollable content to ensure performance."
+  ],
+  "universal_guidelines": [
+    "No generic AI design. Focus on 'Elite Strongman' aesthetic - heavy, industrial, raw.",
+    "Avoid gradients unless subtle. Stick to flat, deep colors.",
+    "Use generous padding inside cards.",
+    "Ensure touch targets are at least 44x44 points."
+  ]
+}
