@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
@@ -48,7 +48,11 @@ export default function OnboardingStep6() {
       // Clean up step data
       await AsyncStorage.multiRemove(['ob_step1','ob_step2','ob_step3','ob_step4','ob_step5']);
 
-      router.replace('/(tabs)');
+      if (Platform.OS === 'web') {
+        window.location.href = '/';
+      } else {
+        router.replace('/(tabs)');
+      }
     } catch (e) {
       Alert.alert('Error', 'Could not save profile. Please try again.');
     }
