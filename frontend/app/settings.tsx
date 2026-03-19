@@ -6,6 +6,7 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi } from '../src/utils/api';
 import { AthleteProfile } from '../src/types';
+import { scheduleDailyReminder, cancelDailyReminder, scheduleDeloadAlerts, cancelDeloadAlerts, scheduleWeeklyCheckin, cancelWeeklyCheckin } from '../src/utils/notifications';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -14,7 +15,19 @@ export default function SettingsScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getProfile().then(p => { setProfile(p); setLoading(false); });
+    (async () => {
+      let p = await getProfile();
+      try {
+        const backendProfile = await profileApi.get();
+        if (backendProfile) {
+          // Merge: local settings (units, notifications) take priority; backend fills missing fields
+          p = { ...backendProfile, ...p };
+          await saveProfile(p);
+        }
+      } catch {}
+      setProfile(p);
+      setLoading(false);
+    })();
   }, []);
 
   async function updateProfile(updates: Partial<AthleteProfile>) {

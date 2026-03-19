@@ -2,11 +2,15 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { seedApi } from '../src/utils/api';
+import { getProfile } from '../src/utils/storage';
+import { setupAllNotifications } from '../src/utils/notifications';
 
 export default function RootLayout() {
   useEffect(() => {
-    // Seed database on first launch
     seedApi.seed().catch(() => {});
+    getProfile().then(profile => {
+      if (profile) setupAllNotifications(profile).catch(() => {});
+    });
   }, []);
 
   return (

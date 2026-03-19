@@ -271,21 +271,6 @@ async def get_prs():
         })
     return prs
 
-@api_router.get("/prs/{exercise}")
-async def get_pr_history(exercise: str):
-    docs = await db.log.find({"exercise": exercise}).sort("date", 1).to_list(500)
-    history = []
-    for d in docs:
-        history.append({
-            "date": d.get("date"),
-            "week": d.get("week"),
-            "weight": d.get("weight", 0),
-            "reps": d.get("reps", 0),
-            "e1rm": d.get("e1rm", 0),
-            "rpe": d.get("rpe", 0)
-        })
-    return history
-
 @api_router.get("/prs/bests/overview")
 async def get_bests_overview():
     categories = {
@@ -304,6 +289,21 @@ async def get_bests_overview():
                 best_exercise = ex
         result[cat] = {"exercise": best_exercise, "e1rm": best_e1rm}
     return result
+
+@api_router.get("/prs/{exercise}")
+async def get_pr_history(exercise: str):
+    docs = await db.log.find({"exercise": exercise}).sort("date", 1).to_list(500)
+    history = []
+    for d in docs:
+        history.append({
+            "date": d.get("date"),
+            "week": d.get("week"),
+            "weight": d.get("weight", 0),
+            "reps": d.get("reps", 0),
+            "e1rm": d.get("e1rm", 0),
+            "rpe": d.get("rpe", 0)
+        })
+    return history
 
 # ── Bodyweight Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/bodyweight")

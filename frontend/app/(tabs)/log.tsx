@@ -6,7 +6,7 @@ import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/const
 import { getProfile } from '../../src/utils/storage';
 import { logApi } from '../../src/utils/api';
 import { epleyE1RM, lbsToKg } from '../../src/utils/calculations';
-import { EXERCISE_LIST, SESSION_TYPES, DAYS_OF_WEEK, RPE_OPTIONS, PAIN_OPTIONS, SETS_OPTIONS, REPS_OPTIONS, COMPLETED_OPTIONS, FLAG_OPTIONS } from '../../src/data/exerciseList';
+import { sendPRAlert } from '../../src/utils/notifications';
 import { WorkoutLogEntry } from '../../src/types';
 import { getTodayDayName } from '../../src/data/programData';
 
@@ -64,6 +64,10 @@ export default function LogScreen() {
       setEntries(data);
       setForm(prev => ({ ...prev, exercise: '', weight: '', notes: '', flag: '—', bodyweight: '' }));
       Alert.alert('Logged ✓', `${form.exercise} saved`);
+      if (form.flag === '✓ PR' && form.weight) {
+        const prE1rm = epleyE1RM(parseFloat(form.weight), form.reps);
+        sendPRAlert(form.exercise, parseFloat(form.weight), prE1rm).catch(() => {});
+      }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not save entry');
     }
