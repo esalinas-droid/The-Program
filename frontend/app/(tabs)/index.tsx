@@ -92,7 +92,7 @@ export default function Dashboard() {
 
         {deload && (
           <View testID="deload-badge" style={s.deloadBanner}>
-            <MaterialCommunityIcons name="refresh" size={16} color="#808080" />
+            <MaterialCommunityIcons name="refresh" size={16} color={COLORS.text.muted} />
             <Text style={s.deloadText}> DELOAD WEEK — Keep intensity low. Move well.</Text>
           </View>
         )}
@@ -129,7 +129,7 @@ export default function Dashboard() {
         {/* Week Stats */}
         <Text style={s.sectionTitle}>THIS WEEK</Text>
         <View style={s.statsGrid}>
-          <StatBox label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats && weekStats.avgPain >= 3 ? '#CF6679' : COLORS.text.primary} testID="stat-pain" />
+          <StatBox label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats && weekStats.avgPain >= 3 ? COLORS.status.error : COLORS.text.primary} testID="stat-pain" />
           <StatBox label="AVG RPE" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} testID="stat-rpe" />
           <StatBox label="COMPLETION" value={weekStats ? `${weekStats.completionRate}%` : '—'} testID="stat-completion" />
           <StatBox label="BODYWEIGHT" value={profile.currentBodyweight ? `${profile.currentBodyweight} lbs` : '—'} testID="stat-bw" />
@@ -186,7 +186,7 @@ export default function Dashboard() {
           </View>
           <View style={s.progressBar}><View style={[s.progressFill, { width: '89%' }]} /></View>
           <View style={s.macroRow}>
-            <MacroBox label="PROTEIN" value="218g" color="#4CAF50" />
+            <MacroBox label="PROTEIN" value="218g" color={COLORS.status.success} />
             <MacroBox label="CARBS" value="312g" color={COLORS.accentBlue} />
             <MacroBox label="FAT" value="82g" color={COLORS.accent} />
           </View>
@@ -250,8 +250,8 @@ const s = StyleSheet.create({
   phaseCard: { flex: 1.5 },
   statusNum: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 28 },
   statusLabel: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.bold, letterSpacing: 1 },
-  deloadBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0F0F0', margin: SPACING.lg, marginTop: 0, borderRadius: RADIUS.md, padding: SPACING.md },
-  deloadText: { color: '#808080', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
+  deloadBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.sessions.deload.bg, margin: SPACING.lg, marginTop: 0, borderRadius: RADIUS.md, padding: SPACING.md },
+  deloadText: { color: COLORS.sessions.deload.text, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
   sectionTitle: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, marginTop: SPACING.sm },
   sessionCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, borderLeftWidth: 4, borderLeftColor: COLORS.accent, marginBottom: SPACING.sm },
   sessionBadge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, marginBottom: SPACING.sm },
@@ -276,14 +276,14 @@ const s = StyleSheet.create({
   prRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   prKey: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm },
   prVal: { color: COLORS.text.primary, fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
-  injuryCard: { marginHorizontal: SPACING.lg, backgroundColor: '#1A0F0A', borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: '#4A2010', marginBottom: SPACING.sm },
+  injuryCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.sessions.me_lower.bg, borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.accent, marginBottom: SPACING.sm },
   injuryRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   injuryDot: { color: COLORS.accent, marginRight: 8, fontSize: FONTS.sizes.sm },
   injuryText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm },
   nutritionCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm },
   nutritionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
   nutritionTitle: { color: COLORS.text.primary, fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
-  mockBadge: { backgroundColor: '#0D2B3E', paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },
+  mockBadge: { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },
   mockBadgeText: { color: COLORS.accentBlue, fontSize: 10, fontWeight: FONTS.weights.bold },
   calorieRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginBottom: SPACING.sm },
   calorieNum: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },

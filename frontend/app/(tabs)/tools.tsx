@@ -6,9 +6,9 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 const TOOLS = [
   { id: 'calculator', icon: 'calculator', label: '1RM Calculator', desc: 'Epley & Brzycki formulas with percentage table', color: COLORS.accent },
   { id: 'converter', icon: 'scale-balance', label: 'lbs ↔ kg Converter', desc: 'Bidirectional conversion + plate math calculator', color: COLORS.accentBlue },
-  { id: 'barguide', icon: 'dumbbell', label: 'Bar Guide', desc: 'All bars and strongman implements with specs', color: '#7B2FBE' },
-  { id: 'checkin', icon: 'clipboard-check', label: 'Weekly Check-In', desc: 'Review the week, get coach recommendations', color: '#008080' },
-  { id: 'library', icon: 'book-open-variant', label: 'Reference Library', desc: 'Exercises, warm-ups, rehab protocols, events', color: '#B8860B' },
+  { id: 'barguide', icon: 'dumbbell', label: 'Bar Guide', desc: 'All bars and strongman implements with specs', color: COLORS.sessions.event.text },
+  { id: 'checkin', icon: 'clipboard-check', label: 'Weekly Check-In', desc: 'Review the week, get coach recommendations', color: COLORS.sessions.de_lower.text },
+  { id: 'library', icon: 'book-open-variant', label: 'Reference Library', desc: 'Exercises, warm-ups, rehab protocols, events', color: COLORS.accentLight },
 ];
 
 export default function ToolsScreen() {

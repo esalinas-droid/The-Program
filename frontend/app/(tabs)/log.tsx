@@ -256,7 +256,7 @@ export default function LogScreen() {
             <Text style={s.infoTitle}>PAIN SCALE</Text>
             {[['0','None'],['1-2','Minor, ignorable'],['3-4','Notable, affects movement'],['5','Stop immediately']].map(([n, desc]) => (
               <View key={n} style={s.infoRow}>
-                <Text style={[s.infoNum, parseInt(n) >= 3 && { color: '#CF6679' }]}>{n}</Text>
+                <Text style={[s.infoNum, parseInt(n) >= 3 && { color: COLORS.status.error }]}>{n}</Text>
                 <Text style={s.infoDesc}>{desc}</Text>
               </View>
             ))}

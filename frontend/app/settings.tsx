@@ -151,8 +151,8 @@ export default function SettingsScreen() {
               <Text style={s.settingLabel}>Lose It Connection</Text>
               <Text style={s.settingDesc}>Pull daily calories, macros, and bodyweight</Text>
             </View>
-            <View style={[s.statusBadge, { backgroundColor: profile?.loseitConnected ? '#1A3A1A' : '#2A2A2A' }]}>
-              <Text style={[s.statusText, { color: profile?.loseitConnected ? '#4CAF50' : COLORS.text.muted }]}>
+            <View style={[s.statusBadge, { backgroundColor: profile?.loseitConnected ? COLORS.sessions.de_lower.bg : COLORS.surfaceHighlight }]}>
+              <Text style={[s.statusText, { color: profile?.loseitConnected ? COLORS.status.success : COLORS.text.muted }]}>
                 {profile?.loseitConnected ? 'Connected' : 'Not Connected'}
               </Text>
             </View>
@@ -250,6 +250,6 @@ const s = StyleSheet.create({
   injuryRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
   injuryDot: { color: COLORS.accent, marginRight: 8 },
   injuryText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm },
-  resetBtn: { borderWidth: 1, borderColor: '#CF6679', borderRadius: RADIUS.md, height: 44, justifyContent: 'center', alignItems: 'center' },
-  resetBtnText: { color: '#CF6679', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
+  resetBtn: { borderWidth: 1, borderColor: COLORS.status.error, borderRadius: RADIUS.md, height: 44, justifyContent: 'center', alignItems: 'center' },
+  resetBtnText: { color: COLORS.status.error, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
 });

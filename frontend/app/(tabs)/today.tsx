@@ -180,8 +180,8 @@ export default function TodayScreen() {
                 <Text style={s.weekLift} numberOfLines={2}>{session.mainLift}</Text>
                 <Text style={s.weekScheme} numberOfLines={1}>{session.topSetScheme.split(';')[0]}</Text>
                 {status && (
-                  <View style={[s.statusBadge, { backgroundColor: status === 'Completed' ? '#1A3A1A' : status === 'Modified' ? '#3A2A10' : '#3A1A1A' }]}>
-                    <Text style={[s.statusBadgeText, { color: status === 'Completed' ? '#4CAF50' : status === 'Modified' ? '#FFD700' : '#CF6679' }]}>
+                  <View style={[s.statusBadge, { backgroundColor: status === 'Completed' ? COLORS.sessions.de_lower.bg : status === 'Modified' ? COLORS.sessions.me_lower.bg : COLORS.sessions.event.bg }]}>
+                    <Text style={[s.statusBadgeText, { color: status === 'Completed' ? COLORS.status.success : status === 'Modified' ? COLORS.status.warning : COLORS.status.error }]}>
                       {status === 'Completed' ? '✓' : status === 'Modified' ? '~' : '✗'} {status}
                     </Text>
                   </View>
@@ -231,9 +231,9 @@ const s = StyleSheet.create({
   badge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: RADIUS.full },
   badgeText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold },
   phaseText: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
-  deloadBanner: { marginHorizontal: SPACING.lg, backgroundColor: '#F0F0F0', borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm },
-  deloadText: { color: '#808080', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
-  mainCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm, borderWidth: 1, borderColor: '#2A4070' },
+  deloadBanner: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.sessions.deload.bg, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm },
+  deloadText: { color: COLORS.sessions.deload.text, fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
+  mainCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
   mainLabel: { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 2, marginBottom: SPACING.sm },
   mainLiftRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
   mainLift: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, flex: 1 },

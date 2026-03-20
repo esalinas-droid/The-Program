@@ -93,7 +93,7 @@ export default function CheckInScreen() {
         <View style={s.statsCard}>
           <Text style={s.cardTitle}>THIS WEEK'S STATS</Text>
           <View style={s.statsGrid}>
-            <StatItem label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats?.avgPain >= 3 ? '#CF6679' : COLORS.text.primary} />
+            <StatItem label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats?.avgPain >= 3 ? COLORS.status.error : COLORS.text.primary} />
             <StatItem label="AVG RPE" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} />
             <StatItem label="COMPLETION" value={weekStats ? `${weekStats.completionRate}%` : '—'} />
             <StatItem label="BODYWEIGHT" value={profile?.currentBodyweight ? `${profile.currentBodyweight} lbs` : '—'} />
@@ -119,7 +119,7 @@ export default function CheckInScreen() {
           <Text style={s.cardTitle}>COACH RECOMMENDATIONS</Text>
           {recs.map((rec, i) => (
             <View key={i} style={[s.recRow, rec.startsWith('✓') && s.recGreen, rec.startsWith('⚠') && s.recOrange]}>
-              <Text style={[s.recText, rec.startsWith('✓') && { color: '#4CAF50' }, rec.startsWith('⚠') && { color: COLORS.accent }]}>{rec}</Text>
+              <Text style={[s.recText, rec.startsWith('✓') && { color: COLORS.status.success }, rec.startsWith('⚠') && { color: COLORS.accent }]}>{rec}</Text>
             </View>
           ))}
         </View>
@@ -137,7 +137,7 @@ export default function CheckInScreen() {
           </View>
           <View style={s.nextRow}>
             <Text style={s.nextLabel}>Deload</Text>
-            <Text style={[s.nextVal, DELOAD_WEEKS.includes(nextWeek) && { color: '#808080' }]}>{DELOAD_WEEKS.includes(nextWeek) ? 'YES — Keep intensity low' : 'No'}</Text>
+            <Text style={[s.nextVal, DELOAD_WEEKS.includes(nextWeek) && { color: COLORS.text.muted }]}>{DELOAD_WEEKS.includes(nextWeek) ? 'YES — Keep intensity low' : 'No'}</Text>
           </View>
         </View>
 
@@ -225,13 +225,13 @@ const s = StyleSheet.create({
   statsGrid: { flexDirection: 'row' },
   nutritionCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
-  mockBadge: { backgroundColor: '#0D2B3E', paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },
+  mockBadge: { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },
   mockText: { color: COLORS.accentBlue, fontSize: 9, fontWeight: FONTS.weights.bold },
   macroGrid: { flexDirection: 'row', justifyContent: 'space-around' },
   recsCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm },
   recRow: { padding: SPACING.sm, borderRadius: RADIUS.sm, marginBottom: SPACING.sm },
-  recGreen: { backgroundColor: '#1A3A1A' },
-  recOrange: { backgroundColor: '#2A1A0A' },
+  recGreen: { backgroundColor: COLORS.sessions.de_lower.bg },
+  recOrange: { backgroundColor: COLORS.sessions.me_lower.bg },
   recText: { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20 },
   nextCard: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm },
   nextRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
