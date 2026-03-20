@@ -9,6 +9,7 @@ export default function ToolsLayout() {
       <Stack.Screen name="barguide" />
       <Stack.Screen name="checkin" />
       <Stack.Screen name="library" />
+      <Stack.Screen name="coach" />
     </Stack>
   );
 }

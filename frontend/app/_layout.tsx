@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { seedApi } from '../src/utils/api';
 import { getProfile } from '../src/utils/storage';
 import { setupAllNotifications } from '../src/utils/notifications';
+import { COLORS } from '../src/constants/theme';
 
 export default function RootLayout() {
   useEffect(() => {

@@ -56,3 +56,12 @@ export const checkinApi = {
 export const seedApi = {
   seed: () => api('/seed', { method: 'POST' }),
 };
+
+// Coach
+export const coachApi = {
+  chat: (message: string, history: { role: string; content: string }[]) =>
+    api('/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, conversation_history: history }),
+    }),
+};

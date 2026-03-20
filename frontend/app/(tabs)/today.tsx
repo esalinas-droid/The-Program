@@ -10,12 +10,33 @@ import { ProgramSession } from '../../src/types';
 
 const TRAINING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+const INJURY_MAP: Record<string, string[]> = {
+  'Right hamstring / nerve compression': ['conventional deadlift', 'romanian deadlift', 'rdl', 'stiff-leg', 'from floor'],
+  'Low back': ['jefferson curl', 'spinal flexion', 'good morning'],
+  'Left knee': ['split squat', 'lunge', 'step-up', 'single-leg press'],
+  'Left bicep strain': ['stone to shoulder', 'stone lap', 'axle clean', 'log clean from floor'],
+  'Shoulder history': ['behind-neck', 'behind neck', 'snatch grip'],
+};
+
+function getInjuryWarnings(session: ProgramSession, injuryFlags: string[]): string[] {
+  const warnings: string[] = [];
+  const allWork = [session.mainLift, ...session.supplementalWork, ...session.accessories].join(' ').toLowerCase();
+  for (const flag of injuryFlags) {
+    const triggers = INJURY_MAP[flag];
+    if (triggers?.some(t => allWork.includes(t))) {
+      warnings.push(`⚠ ${flag.split('/')[0].trim()} — Review flagged movements in this session`);
+    }
+  }
+  return warnings;
+}
+
 export default function TodayScreen() {
   const router = useRouter();
   const [week, setWeek] = useState(1);
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
   const [weekSessions, setWeekSessions] = useState<ProgramSession[]>([]);
   const [loggedDays, setLoggedDays] = useState<Record<string, string>>({});
+  const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ warmup: true, activation: true, rampup: true, suppl: true, acc: true, gpp: true, notes: true });
   const [loading, setLoading] = useState(true);
 
@@ -24,6 +45,7 @@ export default function TodayScreen() {
       const prof = await getProfile();
       const w = prof?.currentWeek || 1;
       setWeek(w);
+      setInjuryFlags(prof?.injuryFlags || []);
       const today = getTodayDayName();
       setTodaySession(getProgramSession(w, today === 'Sunday' ? 'Monday' : today));
       setWeekSessions(getWeekSessions(w));
@@ -74,6 +96,14 @@ export default function TodayScreen() {
             <Text style={s.deloadText}>DELOAD WEEK — One boxing session only. Keep intensity low.</Text>
           </View>
         )}
+
+        {/* Injury Warning Banners */}
+        {getInjuryWarnings(todaySession, injuryFlags).map((warning, i) => (
+          <View testID={`injury-banner-${i}`} key={i} style={s.injuryBanner}>
+            <MaterialCommunityIcons name="alert" size={16} color="#FFF" />
+            <Text style={s.injuryBannerText}>{warning}</Text>
+          </View>
+        ))}
 
         {/* Main Work */}
         <View style={s.mainCard}>
@@ -152,7 +182,16 @@ export default function TodayScreen() {
         <TouchableOpacity
           testID="log-session-btn"
           style={s.logBtn}
-          onPress={() => router.push('/(tabs)/log')}
+          onPress={() => router.push({
+            pathname: '/(tabs)/log',
+            params: {
+              prefill_date: new Date().toISOString().slice(0, 10),
+              prefill_week: String(week),
+              prefill_day: todayName === 'Sunday' ? 'Monday' : todayName,
+              prefill_sessionType: todaySession.sessionType,
+              prefill_exercise: todaySession.mainLift,
+            },
+          } as any)}
         >
           <MaterialCommunityIcons name="pencil-plus" size={20} color="#FFF" />
           <Text style={s.logBtnText}>  Log This Session</Text>
@@ -261,4 +300,6 @@ const s = StyleSheet.create({
   statusBadgeText: { fontSize: 9, fontWeight: FONTS.weights.bold },
   weekYT: { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.sm, padding: 4, alignSelf: 'flex-end' },
   weekYTText: { color: COLORS.text.secondary, fontSize: 10 },
+  injuryBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.status.warning, borderRadius: RADIUS.md, padding: SPACING.md, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.sm },
+  injuryBannerText: { color: '#FFF', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 18 },
 });

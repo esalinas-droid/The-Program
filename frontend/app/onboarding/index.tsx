@@ -53,7 +53,7 @@ export default function OnboardingStep1() {
           </View>
         </View>
 
-        <TouchableOpacity testID="ob-next-btn" style={s.btn} onPress={handleNext} disabled={!name.trim()}>
+        <TouchableOpacity testID="ob-step1-next" style={s.btn} onPress={handleNext} disabled={!name.trim()}>
           <Text style={s.btnText}>Continue →</Text>
         </TouchableOpacity>
       </ScrollView>

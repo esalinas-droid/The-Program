@@ -370,6 +370,119 @@ async def seed_database():
 async def root():
     return {"message": "The Program API", "version": "1.0.0"}
 
+# ── Sentence-Transformers model (loaded once at startup) ──────────────────
+from sentence_transformers import SentenceTransformer
+from supabase import create_client
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+import uuid
+
+_embedding_model = None
+_supabase_client = None
+
+@app.on_event("startup")
+async def load_models():
+    global _embedding_model, _supabase_client
+    logger.info("Loading sentence-transformers model...")
+    _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    logger.info("Model loaded.")
+    _supabase_client = create_client(
+        os.environ.get('SUPABASE_URL', ''),
+        os.environ.get('SUPABASE_KEY', '')
+    )
+    logger.info("Supabase client initialized.")
+
+# ── Coach Models ──────────────────────────────────────────────────────────
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class CoachRequest(BaseModel):
+    message: str
+    conversation_history: List[ChatMessage] = []
+
+# ── POST /api/coach/chat ──────────────────────────────────────────────────
+@api_router.post("/coach/chat")
+async def coach_chat(request: CoachRequest):
+    if not _embedding_model or not _supabase_client:
+        raise HTTPException(status_code=503, detail="Coach service not ready yet")
+
+    profile_doc = await db.profile.find_one({})
+    profile_text = "Unknown athlete"
+    if profile_doc:
+        profile_text = (
+            f"Name: {profile_doc.get('name', 'Eric')}\n"
+            f"Experience: {profile_doc.get('experience', 'Advanced')}\n"
+            f"Bodyweight: {profile_doc.get('currentBodyweight', 274)} lbs\n"
+            f"Current Week: {profile_doc.get('currentWeek', 1)}\n"
+            f"Injury Flags: {', '.join(profile_doc.get('injuryFlags', []))}\n"
+            f"Weaknesses: {', '.join(profile_doc.get('weaknesses', []))}\n"
+            f"Avoid: {', '.join(profile_doc.get('avoidMovements', []))}\n"
+            f"12-Week BW Goal: {profile_doc.get('bw12WeekGoal', 255)} lbs"
+        )
+
+    log_docs = await db.log.find({}).sort("date", -1).limit(5).to_list(5)
+    recent_log = "No recent sessions logged."
+    if log_docs:
+        lines = [f"- {d.get('date')} {d.get('exercise')} {d.get('sets')}x{d.get('reps')} @{d.get('weight')}lbs RPE{d.get('rpe')}" for d in log_docs]
+        recent_log = "\n".join(lines)
+
+    week = profile_doc.get('currentWeek', 1) if profile_doc else 1
+    block = 1 if week <= 4 else 2 if week <= 8 else 3 if week <= 12 else 4 if week <= 20 else 5 if week <= 32 else 6 if week <= 44 else 7
+    deload_weeks = [4,8,12,20,24,28,32,36,40,44,48,52]
+    phase = "Deload" if week in deload_weeks else (["Intro","Build","Peak"][(week - max([0]+[d for d in deload_weeks if d < week]) - 1) % 3])
+
+    embedding = _embedding_model.encode(request.message).tolist()
+
+    retrieved_passages = ""
+    sources = []
+    try:
+        result = _supabase_client.rpc(
+            'match_documents',
+            {'query_embedding': embedding, 'match_count': 5}
+        ).execute()
+        if result.data:
+            passage_lines = []
+            for i, chunk in enumerate(result.data):
+                title = chunk.get('title', 'Unknown Source')
+                page = chunk.get('page', '')
+                content = chunk.get('content', '')
+                passage_lines.append(f"[{i+1}] {title}{' p.' + str(page) if page else ''}\n{content}")
+                sources.append({"title": title, "page": page, "preview": content[:120]})
+            retrieved_passages = "\n\n".join(passage_lines)
+    except Exception as e:
+        logger.warning(f"Supabase query failed: {e}")
+        retrieved_passages = "No reference passages available."
+
+    system_prompt = f"""You are an expert strength and conditioning coach with deep knowledge of powerlifting, strongman, sports nutrition, injury management, and recovery. You are coaching a specific athlete whose full profile is provided below. Always consider their injuries, weaknesses, and current training phase before recommending anything. Draw from the provided reference passages when answering. Be specific, practical, and direct — this athlete is advanced and competes in strongman. Never recommend anything that conflicts with their injury flags.
+
+ATHLETE PROFILE:
+{profile_text}
+
+CURRENT TRAINING CONTEXT:
+Week: {week} | Block: {block} | Phase: {phase}
+Recent sessions:
+{recent_log}
+
+REFERENCE PASSAGES FROM COACHING LIBRARY:
+{retrieved_passages}
+
+Answer the question using the reference material where relevant. Cite the source book when you draw from it. If the question is outside your knowledge base, say so honestly."""
+
+    emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+    session_id = str(uuid.uuid4())
+    chat = LlmChat(
+        api_key=emergent_key,
+        session_id=session_id,
+        system_message=system_prompt
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+
+    for msg in request.conversation_history:
+        if msg.role == "user":
+            await chat.send_message(UserMessage(text=msg.content))
+
+    response_text = await chat.send_message(UserMessage(text=request.message))
+    return {"response": response_text, "sources": sources}
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -383,3 +496,4 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+

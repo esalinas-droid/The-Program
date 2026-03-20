@@ -30,7 +30,7 @@ export default function OnboardingStep2() {
         <BWField label="12-WEEK BODYWEIGHT GOAL (lbs)" value={goal12} onChange={setGoal12} testID="bw-12week" />
         <BWField label="LONG-TERM BODYWEIGHT GOAL (lbs)" value={goalLong} onChange={setGoalLong} testID="bw-longrun" />
 
-        <TouchableOpacity testID="ob-next-btn" style={s.btn} onPress={handleNext}>
+        <TouchableOpacity testID="ob-step2-next" style={s.btn} onPress={handleNext}>
           <Text style={s.btnText}>Continue →</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.back()}>

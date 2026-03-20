@@ -75,11 +75,11 @@ export default function OnboardingStep6() {
           <Text style={s.note}>The Program only reads data — no food logging happens here. Lose It handles all of that.</Text>
         </View>
 
-        <TouchableOpacity testID="ob-connect-loseit" style={s.primaryBtn} onPress={() => handleFinish(false)}>
+        <TouchableOpacity testID="ob-step6-skip" style={s.primaryBtn} onPress={() => handleFinish(false)}>
           <Text style={s.primaryBtnText}>Skip for Now — Start Training</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity testID="ob-skip-loseit" style={s.outlineBtn} onPress={() => handleFinish(false)}>
+        <TouchableOpacity testID="ob-step6-connect-later" style={s.outlineBtn} onPress={() => handleFinish(false)}>
           <Text style={s.outlineBtnText}>Connect Lose It Later in Settings</Text>
         </TouchableOpacity>
 

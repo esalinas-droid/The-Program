@@ -59,7 +59,7 @@ export default function OnboardingStep5() {
           <View style={s.infoRow}><Text style={s.infoLabel}>Blocks 4-7</Text><Text style={s.infoVal}>Peak / Competition Prep</Text></View>
         </View>
 
-        <TouchableOpacity testID="ob-next-btn" style={s.btn} onPress={handleNext}>
+        <TouchableOpacity testID="ob-step5-next" style={s.btn} onPress={handleNext}>
           <Text style={s.btnText}>Continue →</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.back()}>

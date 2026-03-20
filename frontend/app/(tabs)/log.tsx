@@ -1,12 +1,15 @@
 import { useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, TextInput, KeyboardAvoidingView, Platform, Modal, FlatList, ActivityIndicator, Alert } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { logApi } from '../../src/utils/api';
 import { epleyE1RM, lbsToKg } from '../../src/utils/calculations';
 import { sendPRAlert } from '../../src/utils/notifications';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
+import { EXERCISE_LIST, SESSION_TYPES, DAYS_OF_WEEK, RPE_OPTIONS, PAIN_OPTIONS, SETS_OPTIONS, REPS_OPTIONS, COMPLETED_OPTIONS, FLAG_OPTIONS } from '../../src/data/exerciseList';
 import { WorkoutLogEntry } from '../../src/types';
 import { getTodayDayName } from '../../src/data/programData';
 
@@ -18,6 +21,12 @@ const DEFAULT_FORM = {
 };
 
 export default function LogScreen() {
+  const params = useLocalSearchParams<{
+    prefill_date?: string; prefill_week?: string; prefill_day?: string;
+    prefill_sessionType?: string; prefill_exercise?: string;
+  }>();
+  const prefillApplied = useRef(false);
+  const shareCardRef = useRef<any>(null);
   const [form, setForm] = useState({ ...DEFAULT_FORM });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -27,22 +36,86 @@ export default function LogScreen() {
   const [showDropdown, setShowDropdown] = useState<string | null>(null);
   const [showRPEInfo, setShowRPEInfo] = useState(false);
   const [showPainInfo, setShowPainInfo] = useState(false);
+  const [showFinishModal, setShowFinishModal] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState<any>(null);
 
   useFocusEffect(useCallback(() => {
     (async () => {
       const prof = await getProfile();
       const today = getTodayDayName();
       const week = prof?.currentWeek || 1;
-      setForm(prev => ({ ...DEFAULT_FORM, week, day: today === 'Sunday' ? 'Monday' : today }));
+      const hasPrefill = !!params.prefill_exercise;
+      if (hasPrefill && !prefillApplied.current) {
+        prefillApplied.current = true;
+        setForm(prev => ({
+          ...DEFAULT_FORM,
+          date: params.prefill_date || new Date().toISOString().slice(0, 10),
+          week: parseInt(params.prefill_week || String(week)) || week,
+          day: params.prefill_day || (today === 'Sunday' ? 'Monday' : today),
+          sessionType: params.prefill_sessionType || 'ME Lower',
+          exercise: params.prefill_exercise || '',
+        }));
+      } else if (!hasPrefill) {
+        setForm(prev => ({ ...DEFAULT_FORM, week, day: today === 'Sunday' ? 'Monday' : today }));
+      }
       try {
         const data = await logApi.list({ week });
         setEntries(data);
       } catch {}
       setLoading(false);
     })();
-  }, []));
+  }, [params]));
 
   const e1rm = epleyE1RM(parseFloat(form.weight) || 0, form.reps);
+
+  function buildSessionSummary(allEntries: WorkoutLogEntry[], currentForm: typeof form) {
+    const sessionEntries = allEntries.filter(
+      e => e.week === currentForm.week && e.day === currentForm.day
+    );
+    if (sessionEntries.length === 0) return null;
+    const exercises = [...new Set(sessionEntries.map(e => e.exercise))];
+    const totalVolume = Math.round(sessionEntries.reduce((s, e) => s + e.sets * e.reps * e.weight, 0));
+    const topSetEntry = sessionEntries.reduce((b, e) => (e.weight > b.weight ? e : b), sessionEntries[0]);
+    const topSet = topSetEntry ? `${topSetEntry.weight} × ${topSetEntry.reps}` : '—';
+    const bestE1rm = Math.max(...sessionEntries.map(e => e.e1rm || epleyE1RM(e.weight, e.reps)));
+    const avgRPE = Math.round(sessionEntries.reduce((s, e) => s + e.rpe, 0) / sessionEntries.length * 10) / 10;
+    const avgPain = Math.round(sessionEntries.reduce((s, e) => s + e.pain, 0) / sessionEntries.length * 10) / 10;
+    const prFlags = sessionEntries.filter(e => e.flag && e.flag !== '—').map(e => `${e.exercise} (${e.flag})`);
+    const readinessNote = avgPain >= 7
+      ? 'Recovery priority — pull back next session.'
+      : avgRPE >= 9
+      ? 'High output session — prioritize sleep and food.'
+      : prFlags.length > 0
+      ? 'Strong day — momentum is building.'
+      : 'Solid work — stay consistent.';
+    return {
+      title: 'Session Complete',
+      week: currentForm.week, day: currentForm.day,
+      sessionType: currentForm.sessionType,
+      mainLift: exercises[0] || currentForm.exercise,
+      exercises, totalVolume, topSet,
+      bestE1rm: bestE1rm > 0 ? bestE1rm : 0,
+      avgRPE, avgPain, prFlags, readinessNote,
+    };
+  }
+
+  async function handleShareSummary() {
+    if (Platform.OS === 'web') {
+      Alert.alert('Share unavailable on web', 'Use a screenshot for now.');
+      return;
+    }
+    try {
+      const uri = await captureRef(shareCardRef, { format: 'png', quality: 1 });
+      const available = await Sharing.isAvailableAsync();
+      if (available) {
+        await Sharing.shareAsync(uri);
+      } else {
+        Alert.alert('Share unavailable', 'Sharing is not available on this device.');
+      }
+    } catch {
+      Alert.alert('Share unavailable on web', 'Use a screenshot for now.');
+    }
+  }
 
   async function handleSave() {
     if (!form.exercise || !form.weight) {
@@ -62,8 +135,10 @@ export default function LogScreen() {
       });
       const data = await logApi.list({ week: form.week });
       setEntries(data);
+      const summary = buildSessionSummary(data, form);
+      setSessionSummary(summary);
+      setShowFinishModal(true);
       setForm(prev => ({ ...prev, exercise: '', weight: '', notes: '', flag: '—', bodyweight: '' }));
-      Alert.alert('Logged ✓', `${form.exercise} saved`);
       if (form.flag === '✓ PR' && form.weight) {
         const prE1rm = epleyE1RM(parseFloat(form.weight), form.reps);
         sendPRAlert(form.exercise, parseFloat(form.weight), prE1rm).catch(() => {});
@@ -266,6 +341,42 @@ export default function LogScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Finish Session Modal */}
+      <Modal visible={showFinishModal} transparent animationType="slide">
+        <View style={s.modalBackdrop}>
+          <View style={s.finishModalCard} testID="finish-session-modal">
+            {sessionSummary && (
+              <>
+                <View ref={shareCardRef} style={s.shareCard}>
+                  <View style={s.summaryHeader}>
+                    <Text style={s.summaryTitle} testID="finish-session-title">{sessionSummary.title}</Text>
+                    <Text style={s.summarySub} testID="finish-session-weekday">Week {sessionSummary.week} • {sessionSummary.day} • {sessionSummary.sessionType}</Text>
+                  </View>
+                  <View style={s.summarySection}>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Main Lift</Text><Text style={s.summaryValue} testID="finish-session-mainlift">{sessionSummary.mainLift}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Total Volume</Text><Text style={s.summaryValue} testID="finish-session-volume">{sessionSummary.totalVolume} lb-reps</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Top Set</Text><Text style={s.summaryValue} testID="finish-session-topset">{sessionSummary.topSet}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Best e1RM</Text><Text style={s.summaryValue} testID="finish-session-e1rm">{sessionSummary.bestE1rm}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Avg RPE</Text><Text style={s.summaryValue} testID="finish-session-avgrpe">{sessionSummary.avgRPE}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Avg Pain</Text><Text style={s.summaryValue} testID="finish-session-avgpain">{sessionSummary.avgPain}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>PR Flags</Text><Text style={s.summaryValue} testID="finish-session-prflags">{sessionSummary.prFlags.length ? sessionSummary.prFlags.join(', ') : 'None'}</Text></View>
+                    <View style={s.summaryRow}><Text style={s.summaryLabel}>Readiness</Text><Text style={s.summaryValue} testID="finish-session-readiness">{sessionSummary.readinessNote}</Text></View>
+                  </View>
+                </View>
+                <View style={s.summaryButtons}>
+                  <TouchableOpacity testID="finish-session-share-btn" style={s.shareBtn} onPress={handleShareSummary}>
+                    <Text style={s.shareBtnText}>Share Summary</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity testID="finish-session-done-btn" style={s.doneBtn} onPress={() => setShowFinishModal(false)}>
+                    <Text style={s.doneBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -344,4 +455,19 @@ const s = StyleSheet.create({
   infoDesc: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, flex: 1 },
   infoClose: { backgroundColor: COLORS.accent, borderRadius: RADIUS.md, height: 44, justifyContent: 'center', alignItems: 'center', marginTop: SPACING.lg },
   infoCloseText: { color: '#FFF', fontWeight: FONTS.weights.bold },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: SPACING.lg },
+  finishModalCard: { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  shareCard: { backgroundColor: COLORS.background, borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.lg },
+  summaryHeader: { marginBottom: SPACING.md, alignItems: 'center' as const },
+  summaryTitle: { color: COLORS.accent, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  summarySub: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, marginTop: 4, textAlign: 'center' as const },
+  summarySection: { gap: SPACING.sm },
+  summaryRow: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'flex-start' as const, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  summaryLabel: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, flex: 1 },
+  summaryValue: { color: COLORS.text.primary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, flex: 1.4, textAlign: 'right' as const },
+  summaryButtons: { flexDirection: 'row' as const, gap: SPACING.md, marginTop: SPACING.lg },
+  shareBtn: { flex: 1, height: 48, borderRadius: RADIUS.md, backgroundColor: COLORS.accentBlue, justifyContent: 'center', alignItems: 'center' },
+  doneBtn: { flex: 1, height: 48, borderRadius: RADIUS.md, backgroundColor: COLORS.accent, justifyContent: 'center', alignItems: 'center' },
+  shareBtnText: { color: '#FFF', fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy },
+  doneBtnText: { color: '#FFF', fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy },
 });
