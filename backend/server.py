@@ -370,21 +370,21 @@ async def seed_database():
 async def root():
     return {"message": "The Program API", "version": "1.0.0"}
 
-# ── Sentence-Transformers model (loaded once at startup) ──────────────────
-from sentence_transformers import SentenceTransformer
+# ── OpenAI + Supabase setup ───────────────────────────────────────────────
+from openai import AsyncOpenAI
 from supabase import create_client
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 import uuid
 
-_embedding_model = None
+_openai_client = None
 _supabase_client = None
 
 @app.on_event("startup")
 async def load_models():
-    global _embedding_model, _supabase_client
-    logger.info("Loading sentence-transformers model...")
-    _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    logger.info("Model loaded.")
+    global _openai_client, _supabase_client
+    logger.info("Initializing OpenAI client for embeddings...")
+    _openai_client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY', ''))
+    logger.info("OpenAI client ready.")
     _supabase_client = create_client(
         os.environ.get('SUPABASE_URL', ''),
         os.environ.get('SUPABASE_KEY', '')
@@ -403,7 +403,7 @@ class CoachRequest(BaseModel):
 # ── POST /api/coach/chat ──────────────────────────────────────────────────
 @api_router.post("/coach/chat")
 async def coach_chat(request: CoachRequest):
-    if not _embedding_model or not _supabase_client:
+    if not _openai_client or not _supabase_client:
         raise HTTPException(status_code=503, detail="Coach service not ready yet")
 
     profile_doc = await db.profile.find_one({})
@@ -431,7 +431,11 @@ async def coach_chat(request: CoachRequest):
     deload_weeks = [4,8,12,20,24,28,32,36,40,44,48,52]
     phase = "Deload" if week in deload_weeks else (["Intro","Build","Peak"][(week - max([0]+[d for d in deload_weeks if d < week]) - 1) % 3])
 
-    embedding = _embedding_model.encode(request.message).tolist()
+    embed_resp = await _openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=request.message
+    )
+    embedding = embed_resp.data[0].embedding
 
     retrieved_passages = ""
     sources = []
