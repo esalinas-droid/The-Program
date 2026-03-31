@@ -100,9 +100,10 @@ export default function CoachScreen() {
             placeholder="Ask your coach anything..."
             placeholderTextColor={COLORS.text.muted}
             multiline
-            maxLength={500}
-            returnKeyType="send"
-            onSubmitEditing={() => sendMessage(input)}
+            returnKeyType="default"
+            blurOnSubmit={false}
+            textAlignVertical="top"
+            scrollEnabled
           />
           <TouchableOpacity
             testID="coach-send-btn"
@@ -231,7 +232,7 @@ const s = StyleSheet.create({
   list: { flex: 1 },
   listContent: { paddingTop: SPACING.lg, paddingBottom: SPACING.md },
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', padding: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border, gap: SPACING.sm, backgroundColor: COLORS.secondary },
-  input: { flex: 1, backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, color: COLORS.text.primary, fontSize: FONTS.sizes.sm, maxHeight: 100, borderWidth: 1, borderColor: COLORS.border },
+  input: { flex: 1, backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingTop: 12, paddingBottom: 12, color: COLORS.text.primary, fontSize: FONTS.sizes.sm, minHeight: 56, maxHeight: 180, borderWidth: 1, borderColor: COLORS.border, lineHeight: 20 },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.accent, justifyContent: 'center', alignItems: 'center' },
   sendBtnDisabled: { backgroundColor: COLORS.surfaceHighlight },
 });
