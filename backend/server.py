@@ -189,7 +189,7 @@ async def update_profile(profile: AthleteProfileUpdate):
 
 # ── Workout Log Endpoints ─────────────────────────────────────────────────────
 @api_router.get("/log")
-async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = None, 
+async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = None,
                            session_type: Optional[str] = None, limit: int = 200):
     query = {}
     if week is not None: query["week"] = week
@@ -370,28 +370,28 @@ async def seed_database():
 async def root():
     return {"message": "The Program API", "version": "1.0.0"}
 
-# ── Sentence-Transformers model (loaded once at startup) ──────────────────
-from sentence_transformers import SentenceTransformer
+# ── OpenAI + Supabase for Pocket Coach ───────────────────────────────────────
+from openai import AsyncOpenAI
 from supabase import create_client
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 import uuid
 
-_embedding_model = None
+_openai_client = None
 _supabase_client = None
 
 @app.on_event("startup")
 async def load_models():
-    global _embedding_model, _supabase_client
-    logger.info("Loading sentence-transformers model...")
-    _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    logger.info("Model loaded.")
+    global _openai_client, _supabase_client
+    logger.info("Initializing OpenAI client...")
+    _openai_client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY', ''))
+    logger.info("OpenAI client initialized.")
     _supabase_client = create_client(
         os.environ.get('SUPABASE_URL', ''),
         os.environ.get('SUPABASE_KEY', '')
     )
     logger.info("Supabase client initialized.")
 
-# ── Coach Models ──────────────────────────────────────────────────────────
+# ── Coach Models ──────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -400,10 +400,10 @@ class CoachRequest(BaseModel):
     message: str
     conversation_history: List[ChatMessage] = []
 
-# ── POST /api/coach/chat ──────────────────────────────────────────────────
+# ── POST /api/coach/chat ──────────────────────────────────────────────────────
 @api_router.post("/coach/chat")
 async def coach_chat(request: CoachRequest):
-    if not _embedding_model or not _supabase_client:
+    if not _openai_client or not _supabase_client:
         raise HTTPException(status_code=503, detail="Coach service not ready yet")
 
     profile_doc = await db.profile.find_one({})
@@ -431,23 +431,31 @@ async def coach_chat(request: CoachRequest):
     deload_weeks = [4,8,12,20,24,28,32,36,40,44,48,52]
     phase = "Deload" if week in deload_weeks else (["Intro","Build","Peak"][(week - max([0]+[d for d in deload_weeks if d < week]) - 1) % 3])
 
-    embedding = _embedding_model.encode(request.message).tolist()
+    embedding_response = await _openai_client.embeddings.create(
+        model='text-embedding-3-small',
+        input=request.message,
+        dimensions=512
+    )
+    embedding = embedding_response.data[0].embedding
 
     retrieved_passages = ""
     sources = []
     try:
         result = _supabase_client.rpc(
             'match_documents',
-            {'query_embedding': embedding, 'match_count': 5}
+            {
+                'query_embedding': embedding,
+                'match_threshold': 0.3,
+                'match_count': 5
+            }
         ).execute()
         if result.data:
             passage_lines = []
             for i, chunk in enumerate(result.data):
-                title = chunk.get('title', 'Unknown Source')
-                page = chunk.get('page', '')
+                source = chunk.get('metadata', {}).get('source', 'Unknown Source')
                 content = chunk.get('content', '')
-                passage_lines.append(f"[{i+1}] {title}{' p.' + str(page) if page else ''}\n{content}")
-                sources.append({"title": title, "page": page, "preview": content[:120]})
+                passage_lines.append(f"[{i+1}] {source}\n{content}")
+                sources.append({"title": source, "page": "", "preview": content[:120]})
             retrieved_passages = "\n\n".join(passage_lines)
     except Exception as e:
         logger.warning(f"Supabase query failed: {e}")
@@ -466,7 +474,7 @@ Recent sessions:
 REFERENCE PASSAGES FROM COACHING LIBRARY:
 {retrieved_passages}
 
-Answer the question using the reference material where relevant. Cite the source book when you draw from it. If the question is outside your knowledge base, say so honestly."""
+Answer the question using the reference material where relevant. Cite the source when you draw from it. If the question is outside your knowledge base, say so honestly."""
 
     emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
     session_id = str(uuid.uuid4())
@@ -496,4 +504,3 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
-
