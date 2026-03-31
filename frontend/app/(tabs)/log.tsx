@@ -45,26 +45,32 @@ export default function LogScreen() {
       const today = getTodayDayName();
       const week = prof?.currentWeek || 1;
       const hasPrefill = !!params.prefill_exercise;
+
       if (hasPrefill && !prefillApplied.current) {
         prefillApplied.current = true;
-        setForm(prev => ({
+        setForm({
           ...DEFAULT_FORM,
           date: params.prefill_date || new Date().toISOString().slice(0, 10),
           week: parseInt(params.prefill_week || String(week)) || week,
           day: params.prefill_day || (today === 'Sunday' ? 'Monday' : today),
           sessionType: params.prefill_sessionType || 'ME Lower',
           exercise: params.prefill_exercise || '',
-        }));
-      } else if (!hasPrefill) {
-        setForm(prev => ({ ...DEFAULT_FORM, week, day: today === 'Sunday' ? 'Monday' : today }));
+          weight: '', notes: '', flag: '—', bodyweight: '',
+        });
+      } else if (!hasPrefill && !prefillApplied.current) {
+        setForm({ ...DEFAULT_FORM, week, day: today === 'Sunday' ? 'Monday' : today });
       }
+
       try {
         const data = await logApi.list({ week });
         setEntries(data);
       } catch {}
       setLoading(false);
     })();
-  }, [params]));
+  }, [
+    params.prefill_date, params.prefill_week, params.prefill_day,
+    params.prefill_sessionType, params.prefill_exercise,
+  ]));
 
   const e1rm = epleyE1RM(parseFloat(form.weight) || 0, form.reps);
 
@@ -135,8 +141,10 @@ export default function LogScreen() {
       });
       const data = await logApi.list({ week: form.week });
       setEntries(data);
+
       const summary = buildSessionSummary(data, form);
       setSessionSummary(summary);
+
       setShowFinishModal(true);
       setForm(prev => ({ ...prev, exercise: '', weight: '', notes: '', flag: '—', bodyweight: '' }));
       if (form.flag === '✓ PR' && form.weight) {
