@@ -332,9 +332,9 @@ export default function Dashboard() {
             onPress={() => router.push('/tools/checkin')}
           />
           <QuickAction
-            icon="map-outline"
-            label="Programme"
-            onPress={() => router.push('/(tabs)/today')}
+            icon="history"
+            label="Changes"
+            onPress={() => router.push('/(tabs)/changes')}
           />
         </View>
 

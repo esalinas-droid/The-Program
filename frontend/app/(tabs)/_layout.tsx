@@ -44,6 +44,11 @@ export default function TabLayout() {
         tabBarIcon: ({ color }) => <MaterialCommunityIcons name="wrench" size={24} color={color} />,
         tabBarTestID: 'tab-tools',
       }} />
+      <Tabs.Screen name="changes" options={{
+        title: 'Changes',
+        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="history" size={24} color={color} />,
+        tabBarTestID: 'tab-changes',
+      }} />
     </Tabs>
   );
 }
