@@ -161,6 +161,7 @@ export default function Dashboard() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />}
         showsVerticalScrollIndicator={false}
       >
+
         {/* ── HEADER ── */}
         <View style={s.header}>
           <View style={{ flex: 1 }}>
@@ -340,6 +341,15 @@ export default function Dashboard() {
 
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
+
+      {/* ── Upload FAB ── */}
+      <TouchableOpacity
+        style={s.fab}
+        onPress={() => router.push('/upload')}
+        activeOpacity={0.85}
+      >
+        <MaterialCommunityIcons name="plus" size={28} color={COLORS.primary} />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -470,6 +480,25 @@ const s = StyleSheet.create({
   e1rmValue:    { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
   e1rmUnit:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginBottom: 2 },
   e1rmExercise: { fontSize: 9, color: COLORS.text.muted, lineHeight: 13, marginTop: 2 },
+
+  // FAB
+  fab: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    zIndex: 100,
+  },
 
   // Quick actions 2x2 grid
   actionsGrid:           { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: SPACING.lg, gap: SPACING.sm },

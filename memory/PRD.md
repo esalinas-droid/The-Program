@@ -1,7 +1,7 @@
 # The Program — PRD & Architecture Reference
 
-**Last Updated:** March 2026
-**Status:** Beta — All core phases complete
+**Last Updated:** June 2025
+**Status:** Beta — All core phases complete + Upload/Context flow added
 
 ---
 
