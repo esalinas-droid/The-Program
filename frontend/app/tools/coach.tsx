@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  SafeAreaView, KeyboardAvoidingView, Platform, Animated, ActivityIndicator,
+  SafeAreaView, KeyboardAvoidingView, Platform, Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -15,6 +15,12 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   sources?: { title: string; page: string | number; preview: string }[];
+  timestamp: Date;
+}
+
+function formatTime(date: Date): string {
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 const STARTERS = [
@@ -47,7 +53,7 @@ export default function CoachScreen() {
   async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: trimmed };
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: new Date() };
     const history = messages.map(m => ({ role: m.role, content: m.content }));
     setMessages(prev => [...prev, userMsg]);
     setInput('');
@@ -60,12 +66,14 @@ export default function CoachScreen() {
         role: 'assistant',
         content: result.response || 'No response received.',
         sources: result.sources || [],
+        timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch {
       setMessages(prev => [...prev, {
         id: `e-${Date.now()}`, role: 'assistant',
         content: 'Connection error. Check your network and try again.', sources: [],
+        timestamp: new Date(),
       }]);
     }
     setLoading(false);
@@ -134,42 +142,236 @@ export default function CoachScreen() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
-  const isUser = message.role === 'user';
+// ── Inline markdown formatter ─────────────────────────────────────────────────
+function InlineText({ text, style }: { text: string; style?: any }): React.ReactElement {
+  const parts: { content: string; bold?: boolean; italic?: boolean }[] = [];
+  const regex = /(\*\*\*[^*]+?\*\*\*|\*\*[^*]+?\*\*|\*[^*]+?\*)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ content: text.slice(lastIndex, match.index) });
+    }
+    const raw = match[0];
+    if (raw.startsWith('***')) {
+      parts.push({ content: raw.slice(3, -3), bold: true, italic: true });
+    } else if (raw.startsWith('**')) {
+      parts.push({ content: raw.slice(2, -2), bold: true });
+    } else {
+      parts.push({ content: raw.slice(1, -1), italic: true });
+    }
+    lastIndex = match.index + raw.length;
+  }
+  if (lastIndex < text.length) parts.push({ content: text.slice(lastIndex) });
+
   return (
-    <View style={[mb.row, isUser && mb.rowUser]}>
-      {!isUser && (
-        <View style={mb.avatar}>
-          <MaterialCommunityIcons name="brain" size={16} color={COLORS.accent} />
+    <Text style={style}>
+      {parts.map((part, i) => (
+        <Text
+          key={i}
+          style={[
+            part.bold  && { fontWeight: '700' as const, color: COLORS.accent },
+            part.italic && { fontStyle: 'italic' as const, color: COLORS.text.secondary },
+          ]}
+        >
+          {part.content}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+// ── Block markdown renderer ───────────────────────────────────────────────────
+function MarkdownText({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const elements: React.ReactNode[] = [];
+  let key = 0;
+  let bullets: string[] = [];
+  let numbered: { n: string; text: string }[] = [];
+
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    elements.push(
+      <View key={`bl${key++}`} style={md.listGroup}>
+        {bullets.map((b, i) => (
+          <View key={i} style={md.bulletRow}>
+            <View style={md.bulletDot} />
+            <InlineText text={b} style={md.bulletText} />
+          </View>
+        ))}
+      </View>
+    );
+    bullets = [];
+  };
+  const flushNumbered = () => {
+    if (!numbered.length) return;
+    elements.push(
+      <View key={`nl${key++}`} style={md.listGroup}>
+        {numbered.map((item, i) => (
+          <View key={i} style={md.numberedRow}>
+            <Text style={md.numberedNum}>{item.n}.</Text>
+            <InlineText text={item.text} style={md.numberedText} />
+          </View>
+        ))}
+      </View>
+    );
+    numbered = [];
+  };
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) { flushBullets(); flushNumbered(); continue; }
+
+    if (t.startsWith('# ')) {
+      flushBullets(); flushNumbered();
+      elements.push(<Text key={`h1${key++}`} style={md.h1}>{t.slice(2)}</Text>);
+    } else if (t.startsWith('## ')) {
+      flushBullets(); flushNumbered();
+      elements.push(<Text key={`h2${key++}`} style={md.h2}>{t.slice(3)}</Text>);
+    } else if (t.startsWith('### ')) {
+      flushBullets(); flushNumbered();
+      elements.push(<Text key={`h3${key++}`} style={md.h3}>{t.slice(4)}</Text>);
+    } else if (t.startsWith('- ') || t.startsWith('* ') || t.startsWith('• ')) {
+      flushNumbered();
+      bullets.push(t.slice(2));
+    } else if (/^\d+\.\s/.test(t)) {
+      flushBullets();
+      const m = t.match(/^(\d+)\.\s(.+)/);
+      if (m) numbered.push({ n: m[1], text: m[2] });
+    } else if (
+      t.startsWith('> ') || t.includes('⚠️') ||
+      /^(warning|caution|note):/i.test(t)
+    ) {
+      flushBullets(); flushNumbered();
+      const wText = t.startsWith('> ') ? t.slice(2) : t;
+      elements.push(
+        <View key={`w${key++}`} style={md.warningBox}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#FFA726" style={{ marginTop: 2 }} />
+          <InlineText text={wText} style={md.warningText} />
         </View>
-      )}
-      <View style={[mb.bubble, isUser ? mb.bubbleUser : mb.bubbleAssistant]}>
-        <Text style={[mb.text, isUser && mb.textUser]}>{message.content}</Text>
-        {!isUser && message.sources && message.sources.length > 0 && (
-          <View style={mb.sources}>
-            <Text style={mb.sourcesLabel}>Sources: </Text>
+      );
+    } else {
+      flushBullets(); flushNumbered();
+      elements.push(<InlineText key={`p${key++}`} text={t} style={md.paragraph} />);
+    }
+  }
+  flushBullets();
+  flushNumbered();
+
+  return <View>{elements}</View>;
+}
+
+const md = StyleSheet.create({
+  h1:          { fontSize: FONTS.sizes.xl,   fontWeight: '800' as any, color: COLORS.text.primary,    marginBottom: 6,         marginTop: SPACING.md,   lineHeight: 28 },
+  h2:          { fontSize: FONTS.sizes.lg,   fontWeight: '800' as any, color: COLORS.accent,          marginBottom: 6,         marginTop: SPACING.md,   lineHeight: 26 },
+  h3:          { fontSize: FONTS.sizes.base, fontWeight: '700' as any, color: COLORS.text.primary,    marginBottom: 4,         marginTop: SPACING.sm,   lineHeight: 22 },
+  paragraph:   { fontSize: FONTS.sizes.sm,   color: COLORS.text.primary, lineHeight: 23,              marginBottom: SPACING.sm },
+  listGroup:   { marginBottom: SPACING.sm  },
+  bulletRow:   { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 5 },
+  bulletDot:   { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.accent, marginRight: 9, marginTop: 9 },
+  bulletText:  { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.primary, lineHeight: 23 },
+  numberedRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 5 },
+  numberedNum: { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: COLORS.accent, marginRight: 6, minWidth: 18 },
+  numberedText:{ flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.primary, lineHeight: 23 },
+  warningBox:  {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 7,
+    backgroundColor: 'rgba(255, 167, 38, 0.07)',
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
+    borderLeftWidth: 2,
+    borderLeftColor: '#FFA726',
+  },
+  warningText: { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 21 },
+});
+
+// ── Message bubble (user + coach) ─────────────────────────────────────────────
+function MessageBubble({ message }: { message: Message }) {
+  const isUser     = message.role === 'user';
+  const timeStr    = formatTime(message.timestamp);
+  const srcCount   = message.sources?.length ?? 0;
+
+  if (isUser) {
+    return (
+      <View style={mb.userRow}>
+        <View style={mb.userBubble}>
+          <Text style={mb.userText}>{message.content}</Text>
+          <Text style={mb.timestamp}>{timeStr}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={mb.coachRow}>
+      <View style={mb.coachCard}>
+        {/* Header row */}
+        <View style={mb.coachHeader}>
+          <View style={mb.coachAvatar}>
+            <MaterialCommunityIcons name="brain" size={13} color={COLORS.accent} />
+          </View>
+          <Text style={mb.coachLabel}>Coach</Text>
+        </View>
+
+        {/* Rendered markdown */}
+        <MarkdownText content={message.content} />
+
+        {/* Sources footer */}
+        {srcCount > 0 && (
+          <View style={mb.sourcesRow}>
+            <MaterialCommunityIcons name="book-open-page-variant-outline" size={12} color={COLORS.text.muted} />
             <Text style={mb.sourcesText}>
-              {message.sources.map(s => `${s.title}${s.page ? ` p.${s.page}` : ''}`).join(' · ')}
+              Based on {srcCount} source{srcCount !== 1 ? 's' : ''}
             </Text>
           </View>
         )}
+
+        <Text style={mb.timestamp}>{timeStr}</Text>
       </View>
     </View>
   );
 }
 
 const mb = StyleSheet.create({
-  row: { flexDirection: 'row', marginBottom: SPACING.md, paddingHorizontal: SPACING.lg, alignItems: 'flex-end' },
-  rowUser: { justifyContent: 'flex-end' },
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center', marginRight: SPACING.sm, marginBottom: 2 },
-  bubble: { maxWidth: '80%', borderRadius: RADIUS.lg, padding: SPACING.md },
-  bubbleUser: { backgroundColor: COLORS.accent, borderBottomRightRadius: 4 },
-  bubbleAssistant: { backgroundColor: COLORS.surfaceHighlight, borderBottomLeftRadius: 4 },
-  text: { color: COLORS.text.primary, fontSize: FONTS.sizes.sm, lineHeight: 20 },
-  textUser: { color: COLORS.primary, fontWeight: FONTS.weights.semibold },
-  sources: { flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
-  sourcesLabel: { color: COLORS.text.muted, fontSize: 10, fontWeight: FONTS.weights.bold },
-  sourcesText: { color: COLORS.text.muted, fontSize: 10, flex: 1 },
+  // User message — right-aligned dark bubble
+  userRow:    { paddingHorizontal: SPACING.lg, marginBottom: SPACING.md, alignItems: 'flex-end' },
+  userBubble: {
+    maxWidth: '80%',
+    backgroundColor: '#2A2A2E',
+    borderRadius: RADIUS.xl,
+    borderBottomRightRadius: RADIUS.sm,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  userText:  { color: COLORS.text.primary, fontSize: FONTS.sizes.sm, lineHeight: 22 },
+
+  // Coach message card — gold left accent
+  coachRow:  { paddingHorizontal: SPACING.lg, marginBottom: SPACING.lg },
+  coachCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderTopWidth: 1,    borderTopColor: COLORS.border,
+    borderRightWidth: 1,  borderRightColor: COLORS.border,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    borderLeftWidth: 3,   borderLeftColor: COLORS.accent,
+  },
+  coachHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: SPACING.md },
+  coachAvatar: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(201, 168, 76, 0.12)',
+    borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.3)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  coachLabel: { fontSize: FONTS.sizes.xs, fontWeight: '800' as any, color: COLORS.accent, letterSpacing: 1 },
+
+  // Sources + timestamp
+  sourcesRow:  { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: SPACING.md, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
+  sourcesText: { fontSize: 10, color: COLORS.text.muted },
+  timestamp:   { fontSize: 10, color: COLORS.text.muted, marginTop: 6, textAlign: 'right' },
 });
 
 function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => void; profile: any }) {
@@ -323,41 +525,61 @@ const sp = StyleSheet.create({
 });
 
 function LoadingDots() {
-  const dots = [useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current];
+  const dots = [
+    useRef(new Animated.Value(0.25)).current,
+    useRef(new Animated.Value(0.25)).current,
+    useRef(new Animated.Value(0.25)).current,
+  ];
 
   useEffect(() => {
-    const animations = dots.map((dot, i) =>
+    const anims = dots.map((dot, i) =>
       Animated.sequence([
-        Animated.delay(i * 200),
+        Animated.delay(i * 180),
         Animated.loop(Animated.sequence([
-          Animated.timing(dot, { toValue: 1, duration: 400, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.3, duration: 400, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 1,    duration: 340, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.25, duration: 340, useNativeDriver: true }),
         ])),
       ])
     );
-    Animated.parallel(animations).start();
+    Animated.parallel(anims).start();
     return () => dots.forEach(d => d.stopAnimation());
   }, []);
 
   return (
     <View style={ld.row}>
-      <View style={ld.avatar}>
-        <MaterialCommunityIcons name="brain" size={16} color={COLORS.accent} />
-      </View>
-      <View style={ld.bubble}>
-        {dots.map((dot, i) => (
-          <Animated.View key={i} style={[ld.dot, { opacity: dot }]} />
-        ))}
+      <View style={ld.card}>
+        <View style={ld.header}>
+          <View style={ld.avatar}>
+            <MaterialCommunityIcons name="brain" size={13} color={COLORS.accent} />
+          </View>
+          <Text style={ld.label}>Coach</Text>
+        </View>
+        <View style={ld.dotsRow}>
+          {dots.map((dot, i) => (
+            <Animated.View key={i} style={[ld.dot, { opacity: dot }]} />
+          ))}
+        </View>
       </View>
     </View>
   );
 }
 
 const ld = StyleSheet.create({
-  row: { flexDirection: 'row', paddingHorizontal: SPACING.lg, marginBottom: SPACING.md, alignItems: 'flex-end' },
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center', marginRight: SPACING.sm },
-  bubble: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.lg, padding: SPACING.md, borderBottomLeftRadius: 4 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent },
+  row:     { paddingHorizontal: SPACING.lg, marginBottom: SPACING.lg },
+  card: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderTopWidth: 1,    borderTopColor: COLORS.border,
+    borderRightWidth: 1,  borderRightColor: COLORS.border,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    borderLeftWidth: 3,   borderLeftColor: COLORS.accent,
+  },
+  header:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: SPACING.sm },
+  avatar:  { width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(201, 168, 76, 0.12)', borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.3)', justifyContent: 'center', alignItems: 'center' },
+  label:   { fontSize: FONTS.sizes.xs, fontWeight: '800' as any, color: COLORS.accent, letterSpacing: 1 },
+  dotsRow: { flexDirection: 'row', gap: 7, alignItems: 'center', paddingVertical: 2 },
+  dot:     { width: 9, height: 9, borderRadius: 5, backgroundColor: COLORS.accent },
 });
 
 const s = StyleSheet.create({
