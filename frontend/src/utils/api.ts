@@ -65,3 +65,12 @@ export const coachApi = {
       body: JSON.stringify({ message, conversation_history: history }),
     }),
 };
+
+// Substitutions
+export const substitutionApi = {
+  log: (entry: {
+    date: string; week: number; day: string; sessionType: string;
+    originalExercise: string; replacementExercise: string; reason: string;
+  }) => api('/substitutions', { method: 'POST', body: JSON.stringify(entry) }),
+  list: (week?: number) => api(`/substitutions${week ? `?week=${week}` : ''}`),
+};

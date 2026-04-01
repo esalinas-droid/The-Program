@@ -338,6 +338,41 @@ async def get_checkin_by_week(week_num: int):
     return CheckIn.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(doc["_id"])}
 
 # ── Seed Endpoint ─────────────────────────────────────────────────────────────
+# ── Exercise Substitution Log ─────────────────────────────────────────────────
+class SubstitutionLog(BaseDocument):
+    date: str
+    week: int
+    day: str
+    sessionType: str
+    originalExercise: str
+    replacementExercise: str
+    reason: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class SubstitutionLogCreate(BaseModel):
+    date: str
+    week: int
+    day: str
+    sessionType: str
+    originalExercise: str
+    replacementExercise: str
+    reason: str
+
+@api_router.post("/substitutions")
+async def log_substitution(entry: SubstitutionLogCreate):
+    obj = SubstitutionLog(**entry.model_dump())
+    result = await db.substitutions.insert_one(obj.to_mongo())
+    doc = await db.substitutions.find_one({"_id": result.inserted_id})
+    return SubstitutionLog.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
+
+@api_router.get("/substitutions")
+async def get_substitutions(week: Optional[int] = None):
+    query = {}
+    if week is not None:
+        query["week"] = week
+    docs = await db.substitutions.find(query).sort("timestamp", -1).to_list(200)
+    return [SubstitutionLog.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
+
 @api_router.post("/seed")
 async def seed_database():
     existing = await db.profile.find_one({})
