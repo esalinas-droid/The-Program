@@ -1,3 +1,4 @@
+from routers.program import program_router
 from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from datetime import datetime, timezone
 import os
 import logging
 from pathlib import Path
+from routers.program import program_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -492,6 +494,8 @@ Answer the question using the reference material where relevant. Cite the source
     return {"response": response_text, "sources": sources}
 
 app.include_router(api_router)
+app.include_router(program_router)
+app.include_router(program_router)
 
 app.add_middleware(
     CORSMiddleware,

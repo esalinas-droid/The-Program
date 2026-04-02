@@ -96,3 +96,132 @@ export interface WeekStats {
   completionRate: number;
   entries: number;
 }
+
+// ─── Stage 1: AI Program Types ──────────────────────────────────────────────
+
+export interface IntakeData {
+  goal: string;
+  experience: string;
+  lifts: { squat?: number; bench?: number; deadlift?: number; ohp?: number };
+  liftUnit: string;
+  frequency: number;
+  injuries: string[];
+  gym: string[];
+  bodyweight?: number;
+}
+
+export interface TargetSet {
+  setNumber: number;
+  targetLoad?: string;
+  targetReps: string;
+  setType: string;
+  targetRPE?: number;
+}
+
+export interface ProgramSessionExercise {
+  sessionExerciseId: string;
+  name: string;
+  category: string;
+  prescription: string;
+  targetSets: TargetSet[];
+  notes: string;
+  cues: string[];
+  lastPerformance: string;
+  recentBest: string;
+  adjustedFrom?: string;
+  adjustmentReason?: string;
+}
+
+export interface ProgramSessionDetail {
+  sessionId: string;
+  sessionType: string;
+  objective: string;
+  coachNote: string;
+  exercises: ProgramSessionExercise[];
+  warmup: { label: string; duration: string; steps: string[] };
+  status: string;
+  weekNumber: number;
+  dayNumber: number;
+}
+
+export interface TodaySessionResponse {
+  phase: string;
+  block: string;
+  week: string;
+  session: ProgramSessionDetail;
+}
+
+export interface ProgramBlock {
+  blockId: string;
+  blockName: string;
+  blockNumber: number;
+  blockGoal: string;
+  weekCount: number;
+  progressionLogic: string;
+  riskAreas: string[];
+  keyExercises: string[];
+  weeks: any[];
+  status: string;
+}
+
+export interface ProgramPhase {
+  phaseId: string;
+  phaseName: string;
+  phaseNumber: number;
+  goal: string;
+  expectedAdaptation: string;
+  startWeek: number;
+  endWeek: number;
+  blocks: ProgramBlock[];
+  status: string;
+}
+
+export interface AnnualPlan {
+  planId: string;
+  planName: string;
+  startDate: string;
+  totalWeeks: number;
+  phases: ProgramPhase[];
+  milestones: any[];
+  deloadWeeks: number[];
+  testingWeeks: number[];
+  status: string;
+}
+
+export interface LogSetData {
+  sessionExerciseId: string;
+  setNumber: number;
+  actualLoad?: number;
+  actualReps?: number;
+  actualRPE?: number;
+  painScore?: number;
+  painLocation?: string;
+  painNote?: string;
+}
+
+export interface PostWorkoutReviewData {
+  sessionId: string;
+  completedSets: number;
+  totalSets: number;
+  duration: number;
+  wins: string[];
+  flags: string[];
+  coachNote: string;
+  whatsNext: string;
+}
+
+export interface ExerciseAlternative {
+  name: string;
+  reason: string;
+  explanation: string;
+}
+
+export interface ProgramChangeEntry {
+  changeId: string;
+  timestamp: string;
+  triggerType: string;
+  scope: string;
+  oldValue: string;
+  newValue: string;
+  explanation: string;
+}

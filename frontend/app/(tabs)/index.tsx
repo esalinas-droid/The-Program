@@ -4,15 +4,16 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, prApi } from '../../src/utils/api';
+import { logApi, prApi, programApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
-import { AthleteProfile, ProgramSession, WeekStats } from '../../src/types';
+import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
 
 export default function Dashboard() {
   const router = useRouter();
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
+  const [programSession, setProgramSession] = useState<TodaySessionResponse | null>(null);
   const [weekStats, setWeekStats] = useState<WeekStats | null>(null);
   const [bests, setBests] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -24,6 +25,13 @@ export default function Dashboard() {
     setProfile(prof);
     const week = prof.currentWeek || 1;
     setTodaySession(getTodaySession(week));
+
+    // Try loading AI-generated session from program API
+    try {
+      const apiSession = await programApi.getTodaySession();
+      setProgramSession(apiSession);
+    } catch { /* No AI plan yet — use local data */ }
+
     try {
       const [stats, bestsData] = await Promise.all([
         logApi.weekStats(week),
@@ -98,6 +106,15 @@ export default function Dashboard() {
         )}
 
         <Text style={s.sectionTitle}>BLOCK {block}: {blockName}</Text>
+
+        {/* AI Coach Directive — shows when plan has been generated */}
+        {programSession && (
+          <View style={[s.sessionCard, { borderLeftColor: COLORS.accentBlue, marginBottom: SPACING.sm }]}>
+            <Text style={{ color: COLORS.accentBlue, fontSize: 10, fontWeight: '800' as any, letterSpacing: 2, marginBottom: 4 }}>COACH DIRECTIVE</Text>
+            <Text style={{ color: COLORS.text.secondary, fontSize: 14, lineHeight: 20 }}>{programSession.session.coachNote}</Text>
+            <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 6 }}>{programSession.phase} → {programSession.block}</Text>
+          </View>
+        )}
 
         {/* Today's Session Card */}
         {todaySession && todaySession.sessionType !== 'Off' && (

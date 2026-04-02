@@ -2,7 +2,7 @@ import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Ale
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { profileApi } from '../../src/utils/api';
+import { profileApi, programApi } from '../../src/utils/api';
 import { saveProfile } from '../../src/utils/storage';
 import { AthleteProfile } from '../../src/types';
 
@@ -42,8 +42,28 @@ export default function OnboardingStep6() {
       // Save locally
       await saveProfile(profile);
 
-      // Sync to backend
+      // Sync profile to backend
       try { await profileApi.create(profile); } catch { /* offline ok */ }
+
+      // Generate AI training plan from intake data
+      const prs = s3.basePRs || {};
+      try {
+        await programApi.submitIntake({
+          goal: 'Strongman',
+          experience: s1.experience || 'Advanced',
+          lifts: {
+            squat: prs.backSquat || prs.ssbBoxSquat || undefined,
+            bench: prs.benchPress || undefined,
+            deadlift: prs.axleDeadlift || undefined,
+            ohp: prs.axleOverhead_weight || prs.logPress || undefined,
+          },
+          liftUnit: 'lbs',
+          frequency: 4,
+          injuries: s4.injuryFlags || [],
+          gym: [],
+          bodyweight: s2.currentBodyweight || undefined,
+        });
+      } catch { /* plan generation can fail silently — app still works with local data */ }
 
       // Clean up step data
       await AsyncStorage.multiRemove(['ob_step1','ob_step2','ob_step3','ob_step4','ob_step5']);
