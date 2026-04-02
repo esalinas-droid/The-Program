@@ -651,7 +651,7 @@ export default function LibraryScreen() {
                   fontSize: 13,
                   fontWeight: '600',
                   letterSpacing: 0.2,
-                  color: isActive ? '#C9A84C' : '#F5F5F5',
+                  color: isActive ? '#C9A84C' : '#8A8A95',
                 }}
               >
                 {cat}
@@ -776,7 +776,7 @@ const s = StyleSheet.create({
   filterScroll:       { maxHeight: 48 },
   filterContent:      { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.sm, gap: SPACING.sm, alignItems: 'center' },
   filterPill:         { paddingVertical: 7, paddingHorizontal: 16, borderRadius: RADIUS.full, borderWidth: 1, borderColor: '#2A2A30', backgroundColor: '#18181C' },
-  filterPillOn:       { backgroundColor: 'rgba(201,168,76,0.12)', borderColor: '#C9A84C' },
+  filterPillOn:       { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: '#C9A84C' },
   filterPillTxt:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: '#F5F5F5', letterSpacing: 0.3 },
   filterPillTxtOn:    { color: '#C9A84C' },
 
