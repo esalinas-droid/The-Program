@@ -71,7 +71,7 @@ export default function OnboardingStep6() {
       if (Platform.OS === 'web') {
         window.location.href = '/';
       } else {
-        router.replace('/(tabs)');
+        router.replace('/program-reveal');
       }
     } catch (e) {
       Alert.alert('Error', 'Could not save profile. Please try again.');

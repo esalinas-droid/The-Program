@@ -1,261 +1,64 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, Animated, Easing, LayoutAnimation,
-  Platform, UIManager,
+  SafeAreaView, Animated, Easing, Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
-import { getProfile } from '../src/utils/storage';
+import { programApi } from '../src/utils/api';
+import { AnnualPlan, ProgramPhase } from '../src/types';
 
-// Enable LayoutAnimation on Android
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// ── Design tokens ─────────────────────────────────────────────────────────────
+const BG      = '#0A0A0C';
+const SURFACE = '#111114';
+const BORDER  = '#2A2A30';
+const GOLD    = '#C9A84C';
+const GREEN   = '#4DCEA6';
+const BLUE    = '#5B9CF5';
+const RED     = '#E54D4D';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
-const BG       = '#0A0A0C';
-const SURFACE  = '#14141A';
-const BORDER   = '#2A2A30';
-const GOLD     = '#C9A84C';
-const GREEN    = '#4DCEA6';
-const BLUE     = '#5B9CF5';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface Exercise { name: string; sets: number; reps: string; notes?: string }
-interface DayPlan  { label: string; type: string; typeColor: string; exercises: Exercise[] }
-interface Program  { name: string; philosophy: string; frequency: number; blockLength: number; days: DayPlan[] }
-
-// ── Build phases ──────────────────────────────────────────────────────────────
+// ── Build phase labels ─────────────────────────────────────────────────────────
 const BUILD_PHASES = [
   'Analyzing your training profile',
   'Selecting exercises for your goals',
   'Programming volume and intensity',
   'Accounting for injuries and recovery',
-  'Building your weekly split',
+  'Building your 52-week timeline',
+  'Calibrating deload and test weeks',
   'Finalizing your program',
 ];
 
-// ── Program templates ─────────────────────────────────────────────────────────
-const STRENGTH: Program = {
-  name: 'Conjugate Strength Block',
-  philosophy:
-    'Built on the Conjugate Method — alternating maximal effort and dynamic effort days to develop absolute strength and bar speed simultaneously. ME days drive you to a training max to recruit high-threshold motor units. DE days use sub-maximal loads with compensatory acceleration to build speed-strength and engrain technique under fatigue.',
-  frequency: 4, blockLength: 4,
-  days: [
-    { label: 'Day 1', type: 'ME Upper', typeColor: GOLD, exercises: [
-      { name: 'Max Effort Press Variation', sets: 5, reps: '1–3', notes: 'Floor press, board press, or comp bench — pick a variation' },
-      { name: 'Close-Grip Bench Press',    sets: 4, reps: '6–8'  },
-      { name: 'Weighted Pull-Ups',         sets: 4, reps: '5–8'  },
-      { name: 'Seated Cable Row',          sets: 4, reps: '10–12'},
-      { name: 'Face Pulls',                sets: 3, reps: '15–20', notes: 'External rotation emphasis — not a lat pull' },
-      { name: 'Tricep Pushdowns',          sets: 3, reps: '12–15'},
-    ]},
-    { label: 'Day 2', type: 'ME Lower', typeColor: BLUE, exercises: [
-      { name: 'Max Effort Squat Variation', sets: 5, reps: '1–3', notes: 'Safety bar, box squat, or comp squat' },
-      { name: 'Romanian Deadlift',          sets: 4, reps: '6–8' },
-      { name: 'Leg Press',                  sets: 3, reps: '10–12'},
-      { name: 'Glute Ham Raise',            sets: 3, reps: '8–10'},
-      { name: 'Ab Wheel Rollout',           sets: 3, reps: '10–15'},
-    ]},
-    { label: 'Day 3', type: 'DE Upper', typeColor: GOLD, exercises: [
-      { name: 'Dynamic Effort Bench Press', sets: 8, reps: '3', notes: '50–60% 1RM — bar speed is everything' },
-      { name: 'Overhead Press',             sets: 4, reps: '5–8' },
-      { name: 'Dumbbell Row',               sets: 4, reps: '10–12'},
-      { name: 'Cable Pull-Apart',           sets: 4, reps: '15–20'},
-      { name: 'Hammer Curl',               sets: 3, reps: '12–15'},
-      { name: 'Lateral Raise',             sets: 3, reps: '15–20'},
-    ]},
-    { label: 'Day 4', type: 'DE Lower', typeColor: BLUE, exercises: [
-      { name: 'Dynamic Effort Deadlift', sets: 6, reps: '2', notes: '60% 1RM — reset each rep, max speed' },
-      { name: 'Box Squat',               sets: 6, reps: '3', notes: 'Sit to box, reset, then drive through floor' },
-      { name: 'Reverse Hyper',           sets: 4, reps: '15–20'},
-      { name: 'Sled Drag',               sets: 4, reps: '30m',   notes: 'Low-load GPP — recovery tool' },
-      { name: 'Plank',                   sets: 3, reps: '45–60s'},
-    ]},
-  ],
-};
-
-const POWERLIFTING: Program = {
-  name: 'Powerlifting Peak Block',
-  philosophy:
-    'A 4-week competition preparation block focused on the three competition lifts. Volume tapers each week as intensity climbs toward meet-day maxes. Accessory work is kept minimal — competition specificity is the priority in a peaking block. Trust the numbers.',
-  frequency: 4, blockLength: 4,
-  days: [
-    { label: 'Day 1', type: 'ME Upper', typeColor: GOLD, exercises: [
-      { name: 'Competition Bench Press', sets: 5, reps: '1–3', notes: 'Paused reps — full competition commands' },
-      { name: 'Spoto Press',             sets: 3, reps: '5',   notes: '2-inch pause — builds bottom-end strength' },
-      { name: 'Lat Pulldown',            sets: 3, reps: '10'  },
-      { name: 'Tricep Dips',             sets: 3, reps: '10'  },
-    ]},
-    { label: 'Day 2', type: 'ME Lower', typeColor: BLUE, exercises: [
-      { name: 'Competition Squat',    sets: 5, reps: '1–3', notes: 'Competition depth — full commands' },
-      { name: 'Competition Deadlift', sets: 4, reps: '2'   },
-      { name: 'Belt Squat',           sets: 3, reps: '8',   notes: 'Quad/hip accessory without spinal load' },
-      { name: 'Back Extension',       sets: 3, reps: '12'  },
-    ]},
-    { label: 'Day 3', type: 'DE Upper', typeColor: GOLD, exercises: [
-      { name: 'Speed Bench Press',     sets: 9, reps: '3', notes: '50–55% — crisp lockout, compensatory acceleration' },
-      { name: 'DB Overhead Press',     sets: 3, reps: '10'},
-      { name: 'Face Pull',             sets: 4, reps: '20'},
-      { name: 'Cable Row',             sets: 3, reps: '10'},
-    ]},
-    { label: 'Day 4', type: 'DE Lower', typeColor: BLUE, exercises: [
-      { name: 'Speed Deadlift', sets: 8, reps: '1', notes: '60% — bar speed over weight, always' },
-      { name: 'Pause Squat',    sets: 4, reps: '3', notes: '3-second pause at parallel' },
-      { name: 'Reverse Hyper', sets: 3, reps: '20'},
-      { name: 'Leg Curl',       sets: 3, reps: '12'},
-    ]},
-  ],
-};
-
-const HYPERTROPHY: Program = {
-  name: 'Hypertrophy Accumulation Block',
-  philosophy:
-    'A volume-driven block targeting mechanical tension and metabolic stress — the two primary drivers of muscle growth. Built on an upper/lower split with progressive overload each week. Rep ranges sit in the 8–15 zone with moderate loads and controlled rest to maximize time under tension.',
-  frequency: 4, blockLength: 4,
-  days: [
-    { label: 'Day 1', type: 'ME Upper', typeColor: GOLD, exercises: [
-      { name: 'Incline Barbell Press', sets: 4, reps: '8–10'},
-      { name: 'Cable Chest Fly',       sets: 3, reps: '12–15', notes: 'Full stretch at the bottom' },
-      { name: 'Seated Cable Row',      sets: 4, reps: '10–12'},
-      { name: 'Lat Pulldown',          sets: 3, reps: '12–15'},
-      { name: 'Lateral Raise',         sets: 4, reps: '15–20'},
-      { name: 'Skull Crusher',         sets: 3, reps: '12–15'},
-    ]},
-    { label: 'Day 2', type: 'ME Lower', typeColor: BLUE, exercises: [
-      { name: 'Back Squat',         sets: 4, reps: '8–10' },
-      { name: 'Romanian Deadlift',  sets: 4, reps: '10–12'},
-      { name: 'Leg Press',          sets: 3, reps: '12–15'},
-      { name: 'Leg Curl',           sets: 4, reps: '12–15'},
-      { name: 'Walking Lunge',      sets: 3, reps: '12 each'},
-      { name: 'Calf Raise',         sets: 4, reps: '15–20'},
-    ]},
-    { label: 'Day 3', type: 'DE Upper', typeColor: GOLD, exercises: [
-      { name: 'Flat Dumbbell Press',     sets: 4, reps: '10–12'},
-      { name: 'Pull-Ups',               sets: 4, reps: '8–12' },
-      { name: 'Machine Press',          sets: 3, reps: '12–15'},
-      { name: 'Chest-Supported Row',    sets: 4, reps: '10–12'},
-      { name: 'Rear Delt Fly',          sets: 3, reps: '15–20'},
-      { name: 'Incline Curl',           sets: 3, reps: '12–15'},
-    ]},
-    { label: 'Day 4', type: 'DE Lower', typeColor: BLUE, exercises: [
-      { name: 'Hack Squat',            sets: 4, reps: '10–12'},
-      { name: 'Stiff-Leg Deadlift',    sets: 4, reps: '10–12'},
-      { name: 'Leg Extension',         sets: 3, reps: '15–20'},
-      { name: 'Seated Leg Curl',       sets: 3, reps: '12–15'},
-      { name: 'Bulgarian Split Squat', sets: 3, reps: '10 each'},
-      { name: 'Calf Raise',            sets: 4, reps: '20'   },
-    ]},
-  ],
-};
-
-const STRONGMAN: Program = {
-  name: 'Strongman Foundation Block',
-  philosophy:
-    'A competition-oriented block combining heavy compound lifting with event-specific training. Alternates strength days (squat/deadlift focus) with event and conditioning days. Grip, core, and posterior chain are prioritized throughout.',
-  frequency: 4, blockLength: 4,
-  days: [
-    { label: 'Day 1', type: 'ME Upper', typeColor: GOLD, exercises: [
-      { name: 'Log Press',          sets: 5, reps: '3–5', notes: 'Clean and press from floor — competition setup' },
-      { name: 'Axle Bar Bench',     sets: 4, reps: '5–8'},
-      { name: 'Dumbbell Row',       sets: 4, reps: '10' },
-      { name: 'Band Pull-Apart',    sets: 3, reps: '20' },
-    ]},
-    { label: 'Day 2', type: 'ME Lower', typeColor: BLUE, exercises: [
-      { name: 'Back Squat',       sets: 5, reps: '3–5'           },
-      { name: 'Trap Bar Deadlift',sets: 4, reps: '4–6'           },
-      { name: 'Yoke Walk',        sets: 4, reps: '20m', notes: 'Competition carry — focus on stability' },
-      { name: 'Farmer Walk',      sets: 4, reps: '20m'           },
-      { name: 'GHR',              sets: 3, reps: '10'            },
-    ]},
-    { label: 'Day 3', type: 'DE Upper', typeColor: GOLD, exercises: [
-      { name: 'Dumbbell Viking Press', sets: 5, reps: '8–10'},
-      { name: 'Keg Carry',             sets: 4, reps: '20m' },
-      { name: 'Sandbag Load',          sets: 4, reps: '4 loads', notes: 'Loading medley — explosiveness off floor' },
-      { name: 'Rope Pull',             sets: 3, reps: '15m' },
-    ]},
-    { label: 'Day 4', type: 'GPP', typeColor: GREEN, exercises: [
-      { name: 'Atlas Stone Series',    sets: 3, reps: '3 loads', notes: 'Technique focus — lock position first' },
-      { name: 'Tire Flip',             sets: 4, reps: '6'        },
-      { name: 'Sled Push',             sets: 4, reps: '30m'      },
-      { name: 'Back Extension',        sets: 3, reps: '15'       },
-      { name: 'Core Circuit',          sets: 3, reps: '60s each', notes: 'Plank, GHR situp, ab wheel' },
-    ]},
-  ],
-};
-
-const ATHLETIC: Program = {
-  name: 'Athletic Performance Block',
-  philosophy:
-    'A strength-speed block for multi-sport athletes. Prioritizes power development via compound strength work and explosive derivatives. Deceleration, coordination, and athletic carry-over are built into every session. Conditioning is integrated — not bolted on.',
-  frequency: 4, blockLength: 4,
-  days: [
-    { label: 'Day 1', type: 'ME Upper', typeColor: GOLD, exercises: [
-      { name: 'Push Press',       sets: 5, reps: '3–5', notes: 'Full-body power transfer — drive from hips' },
-      { name: 'Bench Press',      sets: 4, reps: '5'  },
-      { name: 'Weighted Pull-Ups',sets: 4, reps: '6–8'},
-      { name: 'DB Row',           sets: 4, reps: '10' },
-      { name: 'Band Pull-Apart',  sets: 3, reps: '20' },
-    ]},
-    { label: 'Day 2', type: 'ME Lower', typeColor: BLUE, exercises: [
-      { name: 'Power Clean',           sets: 5, reps: '3', notes: 'Triple extension — hips, knees, ankles' },
-      { name: 'Back Squat',            sets: 4, reps: '5'},
-      { name: 'Romanian Deadlift',     sets: 3, reps: '8'},
-      { name: 'Lateral Bound',         sets: 4, reps: '5 each'},
-      { name: 'Core Anti-Rotation',    sets: 3, reps: '10 each'},
-    ]},
-    { label: 'Day 3', type: 'DE Upper', typeColor: GOLD, exercises: [
-      { name: 'Med Ball Chest Pass', sets: 5, reps: '5', notes: 'Max-effort velocity — throw with intent' },
-      { name: 'Dumbbell Press',      sets: 4, reps: '8–10'},
-      { name: 'Cable Row',           sets: 4, reps: '10'},
-      { name: 'Lateral Raise',       sets: 3, reps: '15'},
-      { name: 'Bicep/Tricep Superset',sets: 3, reps: '12 each'},
-    ]},
-    { label: 'Day 4', type: 'GPP', typeColor: GREEN, exercises: [
-      { name: 'Trap Bar Deadlift Jump',sets: 5, reps: '4', notes: 'Explosive — let it leave the ground' },
-      { name: 'Box Squat',             sets: 4, reps: '5'},
-      { name: 'Sled Sprint',           sets: 6, reps: '20m'},
-      { name: 'Farmer Walk',           sets: 4, reps: '40m'},
-      { name: 'GHR',                   sets: 3, reps: '10'},
-    ]},
-  ],
-};
-
-// ── Get program by goal ───────────────────────────────────────────────────────
-function resolveProgram(goal: string, days: number): Program {
-  const g = (goal || '').toLowerCase();
-  const base =
-    g.includes('powerlifting') ? POWERLIFTING :
-    g.includes('strongman')    ? STRONGMAN    :
-    g.includes('hypertrophy')  ? HYPERTROPHY  :
-    g.includes('athletic') || g.includes('performance') ? ATHLETIC :
-    g.includes('general')      ? ATHLETIC     :
-    STRENGTH;
-  const n = Math.min(Math.max(days || 4, 3), base.days.length);
-  return { ...base, days: base.days.slice(0, n), frequency: n };
+// ── Phase color by phase number ───────────────────────────────────────────────
+function phaseAccent(n: number): string {
+  const map: Record<number, string> = {
+    1: GREEN, 2: BLUE, 3: BLUE, 4: GOLD, 5: RED, 6: RED, 7: GREEN,
+  };
+  return map[n] ?? GOLD;
 }
 
-function buildCoachNote(profile: any): string {
-  const goal     = profile?.goal        || 'Strength';
-  const exp      = profile?.experience  || 'Intermediate';
-  const days     = profile?.trainingDays || 4;
-  const injuries = (profile?.injuryFlags || []).filter((i: string) => i && i !== 'None');
-  let note = `Based on your ${exp.toLowerCase()} background and ${goal.toLowerCase()} goal, I've built a ${days}-day block with the right volume and intensity for where you are right now.`;
-  if (injuries.length > 0) {
-    const listed = injuries.slice(0, 2).join(' and ');
-    note += ` I've flagged your ${listed} issue${injuries.length > 1 ? 's' : ''} — exercises that load those areas have been modified or substituted.`;
-  }
-  note += ' Run this for 4 weeks before we reassess. Stay consistent, trust the process.';
-  return note;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return iso; }
 }
+
+// ── Static conjugate split ────────────────────────────────────────────────────
+const SPLIT_DAYS = [
+  { type: 'ME UPPER', color: GOLD,  icon: 'arm-flex-outline' as const, focus: 'Work to a daily 1RM variation — floor press, board press, or comp bench' },
+  { type: 'ME LOWER', color: BLUE,  icon: 'weight-lifter'    as const, focus: 'Max squat or pull variation — heavy single, then supplemental volume' },
+  { type: 'DE UPPER', color: GOLD,  icon: 'flash'            as const, focus: 'Speed bench 8×3 @ 50–60% + accommodating resistance — bar speed wins' },
+  { type: 'DE LOWER', color: BLUE,  icon: 'run-fast'         as const, focus: 'Speed squat 10×2 + speed pull 8×1 — reset each rep, explosive intent' },
+];
 
 // ── BuildPhaseRow ─────────────────────────────────────────────────────────────
-function BuildPhaseRow({ label, isActive, isDone }: { label: string; isActive: boolean; isDone: boolean }) {
+function BuildPhaseRow({ label, isActive, isDone }: {
+  label: string; isActive: boolean; isDone: boolean;
+}) {
   const fadeIn  = useRef(new Animated.Value(0)).current;
   const slideIn = useRef(new Animated.Value(12)).current;
   const pulse   = useRef(new Animated.Value(1)).current;
@@ -294,7 +97,6 @@ function BuildPhaseRow({ label, isActive, isDone }: { label: string; isActive: b
     </Animated.View>
   );
 }
-
 const bp = StyleSheet.create({
   row:         { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: SPACING.md },
   iconWrap:    { width: 22, height: 22, justifyContent: 'center', alignItems: 'center' },
@@ -305,38 +107,64 @@ const bp = StyleSheet.create({
   labelDone:   { color: COLORS.text.muted },
 });
 
-// ── DayCard ───────────────────────────────────────────────────────────────────
-function DayCard({
-  day, anim, isExpanded, onToggle,
-}: { day: DayPlan; anim: Animated.Value; isExpanded: boolean; onToggle: () => void }) {
-  return (
-    <Animated.View style={[dc.card, { opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0,1], outputRange: [20,0] }) }] }]}>
-      <TouchableOpacity style={dc.header} onPress={onToggle} activeOpacity={0.8}>
-        <View style={dc.headerLeft}>
-          <Text style={dc.dayLabel}>{day.label}</Text>
-          <View style={[dc.typeBadge, { backgroundColor: `${day.typeColor}18` }]}>
-            <Text style={[dc.typeText, { color: day.typeColor }]}>{day.type}</Text>
-          </View>
-        </View>
-        <View style={dc.headerRight}>
-          <Text style={dc.exCount}>{day.exercises.length} exercises</Text>
-          <MaterialCommunityIcons
-            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={COLORS.text.muted}
-          />
-        </View>
-      </TouchableOpacity>
+// ── PhaseCard ─────────────────────────────────────────────────────────────────
+function PhaseCard({ phase, anim, testWeeks, deloadWeeks }: {
+  phase: ProgramPhase; anim: Animated.Value;
+  testWeeks: number[]; deloadWeeks: number[];
+}) {
+  const color      = phaseAccent(phase.phaseNumber);
+  const weekCount  = phase.endWeek - phase.startWeek + 1;
+  const allWeeks   = Array.from({ length: weekCount }, (_, i) => phase.startWeek + i);
+  const hasTest    = testWeeks.some(w => allWeeks.includes(w));
+  const hasDeload  = deloadWeeks.some(w => allWeeks.includes(w));
+  const testInPhase   = testWeeks.filter(w => allWeeks.includes(w));
+  const deloadInPhase = deloadWeeks.filter(w => allWeeks.includes(w));
 
-      {isExpanded && (
-        <View style={dc.exList}>
-          {day.exercises.map((ex, i) => (
-            <View key={i} style={[dc.exRow, i < day.exercises.length - 1 && dc.exRowBorder]}>
-              <View style={dc.exLeft}>
-                <Text style={dc.exName}>{ex.name}</Text>
-                {ex.notes && <Text style={dc.exNotes}>{ex.notes}</Text>}
-              </View>
-              <Text style={dc.setsReps}>{ex.sets} × {ex.reps}</Text>
+  return (
+    <Animated.View style={[
+      pc.card,
+      { opacity: anim, transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) }], borderLeftColor: color },
+    ]}>
+      <View style={pc.header}>
+        <View style={[pc.numBadge, { backgroundColor: color + '22' }]}>
+          <Text style={[pc.numText, { color }]}>{phase.phaseNumber}</Text>
+        </View>
+        <View style={pc.info}>
+          <Text style={pc.name}>{phase.phaseName}</Text>
+          <Text style={pc.weeks}>Wk {phase.startWeek}–{phase.endWeek} · {weekCount} wks</Text>
+        </View>
+        <View style={pc.badges}>
+          {hasTest && (
+            <View style={pc.testBadge}>
+              <Text style={pc.testBadgeText}>TEST</Text>
+            </View>
+          )}
+          {hasDeload && (
+            <View style={pc.deloadBadge}>
+              <Text style={pc.deloadBadgeText}>DELOAD</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      <Text style={pc.goal} numberOfLines={2}>{phase.goal}</Text>
+
+      {phase.expectedAdaptation ? (
+        <Text style={pc.adaptation} numberOfLines={2}>{phase.expectedAdaptation}</Text>
+      ) : null}
+
+      {(testInPhase.length > 0 || deloadInPhase.length > 0) && (
+        <View style={pc.weekRow}>
+          {testInPhase.map(w => (
+            <View key={`t${w}`} style={pc.weekChip}>
+              <MaterialCommunityIcons name="flag-checkered" size={9} color={GOLD} />
+              <Text style={pc.weekChipGold}> Wk {w}</Text>
+            </View>
+          ))}
+          {deloadInPhase.map(w => (
+            <View key={`d${w}`} style={pc.weekChip}>
+              <MaterialCommunityIcons name="battery-charging" size={9} color={GREEN} />
+              <Text style={pc.weekChipGreen}> Wk {w}</Text>
             </View>
           ))}
         </View>
@@ -344,49 +172,44 @@ function DayCard({
     </Animated.View>
   );
 }
-
-const dc = StyleSheet.create({
-  card:        { backgroundColor: SURFACE, borderRadius: 18, borderWidth: 1, borderColor: BORDER, marginBottom: SPACING.sm, overflow: 'hidden' },
-  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.lg },
-  headerLeft:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  dayLabel:    { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary },
-  typeBadge:   { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full },
-  typeText:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  exCount:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
-  exList:      { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md },
-  exRow:       { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: 10, gap: SPACING.md },
-  exRowBorder: { borderBottomWidth: 1, borderBottomColor: BORDER },
-  exLeft:      { flex: 1 },
-  exName:      { fontSize: FONTS.sizes.sm, color: COLORS.text.primary, fontWeight: FONTS.weights.medium, marginBottom: 2 },
-  exNotes:     { fontSize: 11, color: COLORS.text.muted, fontStyle: 'italic', lineHeight: 16 },
-  setsReps:    { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: GOLD, minWidth: 52, textAlign: 'right' },
+const pc = StyleSheet.create({
+  card:           { backgroundColor: SURFACE, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: BORDER, borderLeftWidth: 3, borderLeftColor: GOLD, padding: SPACING.md, marginBottom: SPACING.sm },
+  header:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  numBadge:       { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  numText:        { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy },
+  info:           { flex: 1 },
+  name:           { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  weeks:          { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+  badges:         { flexDirection: 'row', gap: 4, flexShrink: 0 },
+  testBadge:      { backgroundColor: GOLD + '22', borderRadius: RADIUS.sm, paddingHorizontal: 5, paddingVertical: 2 },
+  testBadgeText:  { fontSize: 8, fontWeight: FONTS.weights.heavy, color: GOLD, letterSpacing: 0.8 },
+  deloadBadge:    { backgroundColor: GREEN + '22', borderRadius: RADIUS.sm, paddingHorizontal: 5, paddingVertical: 2 },
+  deloadBadgeText:{ fontSize: 8, fontWeight: FONTS.weights.heavy, color: GREEN, letterSpacing: 0.8 },
+  goal:           { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 19, marginBottom: 4 },
+  adaptation:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', lineHeight: 17 },
+  weekRow:        { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm, flexWrap: 'wrap' },
+  weekChip:       { flexDirection: 'row', alignItems: 'center' },
+  weekChipGold:   { fontSize: 10, color: GOLD, fontWeight: FONTS.weights.semibold },
+  weekChipGreen:  { fontSize: 10, color: GREEN, fontWeight: FONTS.weights.semibold },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function ProgramRevealScreen() {
   const router = useRouter();
 
-  // Profile & program
-  const [profile,  setProfile]  = useState<any>(null);
-  const [program,  setProgram]  = useState<Program | null>(null);
-  const [coachNote,setCoachNote]= useState('');
+  const [plan,             setPlan]             = useState<AnnualPlan | null>(null);
+  const [activePhase,      setActivePhase]      = useState(-1);
+  const [completedPhases,  setCompletedPhases]  = useState<number[]>([]);
+  const [showReveal,       setShowReveal]       = useState(false);
 
-  // Build phase state
-  const [activePhase,     setActivePhase]     = useState(-1);
-  const [completedPhases, setCompletedPhases] = useState<number[]>([]);
-
-  // Reveal state
-  const [showReveal, setShowReveal] = useState(false);
-  const [expandedDays, setExpandedDays] = useState<number[]>([0]);
-
-  // ── Animations ─────────────────────────────────────────────────────────────
-  const spinAnim    = useRef(new Animated.Value(0)).current;
+  // ── Animations ──────────────────────────────────────────────────────────────
+  const spinAnim      = useRef(new Animated.Value(0)).current;
   const phase1Opacity = useRef(new Animated.Value(1)).current;
   const phase2Opacity = useRef(new Animated.Value(0)).current;
   const phase2Slide   = useRef(new Animated.Value(40)).current;
   const headerAnim    = useRef(new Animated.Value(0)).current;
-  const dayAnims      = useRef(Array.from({ length: 6 }, () => new Animated.Value(0))).current;
+  // 7 phases + 1 milestones card = 8 slots
+  const cardAnims     = useRef(Array.from({ length: 8 }, () => new Animated.Value(0))).current;
 
   // Spinning ring
   useEffect(() => {
@@ -399,71 +222,76 @@ export default function ProgramRevealScreen() {
 
   const spinDeg = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
-  // Load profile + run phases
+  // Build phases + fetch plan in parallel
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      const p = await getProfile();
-      if (cancelled) return;
-      setProfile(p);
-      const prog = resolveProgram(p?.goal, p?.trainingDays);
-      setProgram(prog);
-      setCoachNote(buildCoachNote(p));
+      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+
+      // Start fetching plan immediately in background
+      const planPromise = programApi.getYearPlan().catch(() => null);
 
       await sleep(600);
       for (let i = 0; i < BUILD_PHASES.length; i++) {
         if (cancelled) return;
         setActivePhase(i);
-        await sleep(1400 + Math.random() * 600);
+        await sleep(1100 + Math.random() * 400);
         if (cancelled) return;
         setCompletedPhases(prev => [...prev, i]);
       }
-      await sleep(600);
-      if (!cancelled) crossfadeToReveal(prog.days.length);
+      await sleep(500);
+
+      // Await real plan (already resolving in background)
+      const planData = await planPromise;
+      if (cancelled) return;
+      setPlan(planData);
+      crossfadeToReveal(planData?.phases?.length ?? 7);
     };
     run();
     return () => { cancelled = true; };
   }, []);
 
-  const crossfadeToReveal = (dayCount: number) => {
+  const crossfadeToReveal = (phaseCount: number) => {
     setShowReveal(true);
+    try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
     Animated.parallel([
       Animated.timing(phase1Opacity, { toValue: 0, duration: 500, useNativeDriver: true }),
       Animated.sequence([
-        Animated.delay(250),
+        Animated.delay(280),
         Animated.parallel([
           Animated.timing(phase2Opacity, { toValue: 1, duration: 550, useNativeDriver: true }),
           Animated.spring(phase2Slide,   { toValue: 0, tension: 50, friction: 12, useNativeDriver: true }),
-          Animated.timing(headerAnim,    { toValue: 1, duration: 400, useNativeDriver: true }),
+          Animated.timing(headerAnim,    { toValue: 1, duration: 420, useNativeDriver: true }),
         ]),
       ]),
     ]).start(() => {
-      Animated.stagger(90, dayAnims.slice(0, dayCount).map(a =>
+      // Stagger phase cards + milestones card
+      Animated.stagger(65, cardAnims.slice(0, phaseCount + 1).map(a =>
         Animated.timing(a, { toValue: 1, duration: 320, useNativeDriver: true })
       )).start();
     });
   };
 
-  // Day toggle
-  const toggleDay = (idx: number) => {
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedDays(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
-  };
-
-  // ── Phase 1 ───────────────────────────────────────────────────────────────
+  // ── Phase 1 — Animated build loader ─────────────────────────────────────────
   const renderPhase1 = () => (
-    <Animated.View style={[s.phase1Wrap, { opacity: phase1Opacity }]} pointerEvents={showReveal ? 'none' : 'auto'}>
-      {/* Spinner */}
+    <Animated.View
+      style={[s.phase1Wrap, { opacity: phase1Opacity }]}
+      pointerEvents={showReveal ? 'none' : 'auto'}
+    >
+      {/* Spinning gold arc */}
       <View style={s.spinnerWrap}>
         <View style={s.spinnerTrack} />
         <Animated.View style={[s.spinnerArc, { transform: [{ rotate: spinDeg }] }]} />
+        <View style={s.spinnerCenter}>
+          <MaterialCommunityIcons name="dumbbell" size={20} color={GOLD} />
+        </View>
       </View>
 
       <Text style={s.buildTitle}>Building Your Program</Text>
-      <Text style={s.buildSub}>Your AI coach is analyzing your profile{'\n'}and assembling a custom training block.</Text>
+      <Text style={s.buildSub}>
+        Your AI coach is analyzing your profile{'\n'}and assembling a 52-week conjugate plan.
+      </Text>
 
-      {/* Build phases */}
       <View style={s.phaseList}>
         {BUILD_PHASES.map((phase, i) => {
           if (i > activePhase) return null;
@@ -480,9 +308,14 @@ export default function ProgramRevealScreen() {
     </Animated.View>
   );
 
-  // ── Phase 2 ───────────────────────────────────────────────────────────────
+  // ── Phase 2 — Plan reveal ─────────────────────────────────────────────────
   const renderPhase2 = () => {
-    if (!program) return null;
+    const phases      = plan?.phases      ?? [];
+    const milestones  = plan?.milestones  ?? [];
+    const deloadWeeks = plan?.deloadWeeks ?? [];
+    const testWeeks   = plan?.testingWeeks ?? [];
+    const prMilestones = milestones.filter((m: any) => m.targetValue);
+
     return (
       <Animated.View
         style={[s.phase2Wrap, { opacity: phase2Opacity, transform: [{ translateY: phase2Slide }] }]}
@@ -492,89 +325,155 @@ export default function ProgramRevealScreen() {
           style={s.scroll}
           contentContainerStyle={s.scrollContent}
           showsVerticalScrollIndicator={false}
-          bounces
+          bounces={Platform.OS === 'ios'}
         >
-          {/* ── Program header card ── */}
+          {/* ── Program header ── */}
           <Animated.View style={[s.headerCard, { opacity: headerAnim }]}>
-            {/* Ready badge */}
             <View style={s.readyBadge}>
               <MaterialCommunityIcons name="check-circle" size={14} color={GREEN} />
-              <Text style={s.readyBadgeText}>Program Ready</Text>
+              <Text style={s.readyBadgeText}>52-Week Plan Ready</Text>
             </View>
-
-            <Text style={s.programName}>{program.name}</Text>
-
-            {/* Meta chips */}
+            <Text style={s.programName}>{plan?.planName ?? 'Conjugate Strength Program'}</Text>
             <View style={s.metaRow}>
-              {profile?.goal && (
-                <View style={s.metaChip}>
-                  <Text style={s.metaChipText}>{profile.goal}</Text>
-                </View>
-              )}
               <View style={s.metaChip}>
-                <MaterialCommunityIcons name="calendar-week" size={11} color={GOLD} style={{ marginRight: 3 }} />
-                <Text style={s.metaChipText}>{program.frequency} days/wk</Text>
+                <MaterialCommunityIcons name="calendar-range" size={10} color={GOLD} style={{ marginRight: 3 }} />
+                <Text style={s.metaChipText}>{plan?.totalWeeks ?? 52} Weeks</Text>
               </View>
               <View style={s.metaChip}>
-                <MaterialCommunityIcons name="clock-outline" size={11} color={GOLD} style={{ marginRight: 3 }} />
-                <Text style={s.metaChipText}>{program.blockLength} weeks</Text>
+                <MaterialCommunityIcons name="layers-outline" size={10} color={GOLD} style={{ marginRight: 3 }} />
+                <Text style={s.metaChipText}>{phases.length} Phases</Text>
+              </View>
+              <View style={s.metaChip}>
+                <MaterialCommunityIcons name="calendar-week" size={10} color={GOLD} style={{ marginRight: 3 }} />
+                <Text style={s.metaChipText}>4 Days / Wk</Text>
+              </View>
+              <View style={s.metaChip}>
+                <MaterialCommunityIcons name="flag-checkered" size={10} color={GOLD} style={{ marginRight: 3 }} />
+                <Text style={s.metaChipText}>{testWeeks.length} Test Wks</Text>
               </View>
             </View>
           </Animated.View>
 
-          {/* ── Training philosophy card ── */}
-          <View style={s.philosophyCard}>
-            <View style={s.cardHeader}>
-              <View style={s.cardIconWrap}>
-                <MaterialCommunityIcons name="lightbulb-outline" size={15} color={GOLD} />
-              </View>
-              <Text style={s.cardTitle}>Training Philosophy</Text>
-            </View>
-            <Text style={s.philosophyText}>{program.philosophy}</Text>
-          </View>
-
-          {/* ── Weekly split ── */}
+          {/* ── Phase timeline ── */}
           <View style={s.sectionWrap}>
-            <Text style={s.sectionTitle}>Your Weekly Split</Text>
-            <Text style={s.sectionSub}>Tap any day to see exercises</Text>
+            <Text style={s.sectionTitle}>52-Week Phase Timeline</Text>
+            <Text style={s.sectionSub}>
+              {phases.length} phases · {testWeeks.length} testing weeks · {deloadWeeks.length} deload week{deloadWeeks.length !== 1 ? 's' : ''}
+            </Text>
           </View>
 
-          {program.days.map((day, i) => (
-            <DayCard
-              key={i}
-              day={day}
-              anim={dayAnims[i]}
-              isExpanded={expandedDays.includes(i)}
-              onToggle={() => toggleDay(i)}
+          {phases.map((phase, i) => (
+            <PhaseCard
+              key={phase.phaseId ?? i}
+              phase={phase}
+              anim={cardAnims[i]}
+              testWeeks={testWeeks}
+              deloadWeeks={deloadWeeks}
             />
           ))}
 
-          {/* ── Coach note ── */}
+          {/* ── Target PRs (milestones) ── */}
+          {prMilestones.length > 0 && (
+            <>
+              <View style={s.sectionWrap}>
+                <Text style={s.sectionTitle}>Target PRs</Text>
+                <Text style={s.sectionSub}>Projected from your current maxes</Text>
+              </View>
+              <Animated.View style={[s.milestonesCard, { opacity: cardAnims[phases.length] }]}>
+                {prMilestones.map((m: any, i: number) => (
+                  <View
+                    key={i}
+                    style={[s.milestoneRow, i < prMilestones.length - 1 && s.milestoneRowBorder]}
+                  >
+                    <View style={s.milestoneIcon}>
+                      <MaterialCommunityIcons name="trophy-outline" size={14} color={GOLD} />
+                    </View>
+                    <Text style={s.milestoneName}>{m.name}</Text>
+                    <Text style={s.milestoneDate}>{formatDate(m.targetDate)}</Text>
+                  </View>
+                ))}
+              </Animated.View>
+            </>
+          )}
+
+          {/* ── Key weeks row ── */}
+          {(testWeeks.length > 0 || deloadWeeks.length > 0) && (
+            <>
+              <View style={s.sectionWrap}>
+                <Text style={s.sectionTitle}>Key Weeks</Text>
+                <Text style={s.sectionSub}>Testing and recovery markers in your plan</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.keyWeeksScroll}
+              >
+                {testWeeks.map(w => (
+                  <View key={`t${w}`} style={s.keyChipGold}>
+                    <MaterialCommunityIcons name="flag-checkered" size={10} color={GOLD} />
+                    <Text style={s.keyChipGoldText}>Test  Wk {w}</Text>
+                  </View>
+                ))}
+                {deloadWeeks.map(w => (
+                  <View key={`d${w}`} style={s.keyChipGreen}>
+                    <MaterialCommunityIcons name="battery-charging-outline" size={10} color={GREEN} />
+                    <Text style={s.keyChipGreenText}>Deload  Wk {w}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </>
+          )}
+
+          {/* ── Training split summary ── */}
+          <View style={s.sectionWrap}>
+            <Text style={s.sectionTitle}>Weekly Training Split</Text>
+            <Text style={s.sectionSub}>Conjugate method — 4 sessions / week</Text>
+          </View>
+          <View style={s.splitGrid}>
+            {SPLIT_DAYS.map((d, i) => (
+              <View key={i} style={[s.splitCard, { borderLeftColor: d.color }]}>
+                <MaterialCommunityIcons name={d.icon} size={16} color={d.color} style={{ marginBottom: 6 }} />
+                <Text style={[s.splitType, { color: d.color }]}>{d.type}</Text>
+                <Text style={s.splitFocus}>{d.focus}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* ── Conjugate method note ── */}
           <View style={s.coachCard}>
             <View style={s.coachHeader}>
-              <View style={s.coachAvatar}>
+              <View style={s.coachAvatarWrap}>
                 <MaterialCommunityIcons name="brain" size={15} color={GOLD} />
               </View>
               <View>
-                <Text style={s.coachLabel}>Your Coach</Text>
-                <Text style={s.coachSub}>Personalized note</Text>
+                <Text style={s.coachLabel}>The Method</Text>
+                <Text style={s.coachSub}>Why conjugate works for advanced athletes</Text>
               </View>
             </View>
-            <Text style={s.coachText}>{coachNote}</Text>
+            <Text style={s.coachText}>
+              The conjugate system avoids accommodation by rotating exercises every session. ME days
+              drive absolute strength by working to a daily max. DE days build speed-strength through
+              compensatory acceleration at sub-maximal loads. Running both simultaneously creates a
+              strength athlete who is both strong and explosive — the combination that separates
+              competitive lifters from everyone else.
+            </Text>
           </View>
 
-          <View style={{ height: 110 }} />
+          <View style={{ height: 120 }} />
         </ScrollView>
 
         {/* ── Fixed bottom CTA ── */}
         <View style={s.ctaBar}>
           <TouchableOpacity
             style={s.startBtn}
-            onPress={() => router.replace('/(tabs)')}
+            onPress={() => {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+              router.replace('/(tabs)');
+            }}
             activeOpacity={0.87}
           >
             <Text style={s.startBtnText}>Start Training</Text>
-            <MaterialCommunityIcons name="arrow-right" size={20} color={COLORS.primary} />
+            <MaterialCommunityIcons name="arrow-right" size={20} color={BG} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.back()} style={s.adjustLink}>
             <Text style={s.adjustText}>Adjust preferences</Text>
@@ -584,15 +483,12 @@ export default function ProgramRevealScreen() {
     );
   };
 
-  // ── Main render ───────────────────────────────────────────────────────────
+  // ── Root render ──────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.safe}>
-      {/* Phase 1 — absolutely positioned so it can be faded out */}
       <View style={StyleSheet.absoluteFill} pointerEvents={showReveal ? 'none' : 'auto'}>
         {renderPhase1()}
       </View>
-
-      {/* Phase 2 */}
       <View style={{ flex: 1 }} pointerEvents={showReveal ? 'auto' : 'none'}>
         {renderPhase2()}
       </View>
@@ -612,20 +508,30 @@ const s = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.xxl,
   },
-  spinnerWrap:  { width: 64, height: 64, marginBottom: SPACING.xl },
+  spinnerWrap: {
+    width: 72, height: 72,
+    marginBottom: SPACING.xl,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   spinnerTrack: {
-    position: 'absolute', top: 0, left: 0,
-    width: 64, height: 64, borderRadius: 32,
+    position: 'absolute',
+    width: 72, height: 72, borderRadius: 36,
     borderWidth: 5, borderColor: '#252528',
   },
   spinnerArc: {
-    position: 'absolute', top: 0, left: 0,
-    width: 64, height: 64, borderRadius: 32,
+    position: 'absolute',
+    width: 72, height: 72, borderRadius: 36,
     borderWidth: 5,
     borderTopColor:    GOLD,
     borderRightColor:  GOLD,
     borderBottomColor: 'transparent',
     borderLeftColor:   'transparent',
+  },
+  spinnerCenter: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: GOLD + '15',
+    justifyContent: 'center', alignItems: 'center',
   },
   buildTitle: {
     fontSize: FONTS.sizes.xxl,
@@ -641,14 +547,14 @@ const s = StyleSheet.create({
     lineHeight: 21,
     marginBottom: SPACING.xxl,
   },
-  phaseList: { width: '100%', maxWidth: 320 },
+  phaseList: { width: '100%', maxWidth: 330 },
 
   // ── Phase 2 ──
-  phase2Wrap: { flex: 1 },
-  scroll:     { flex: 1 },
+  phase2Wrap:    { flex: 1 },
+  scroll:        { flex: 1 },
   scrollContent: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
 
-  // Program header card
+  // Header card
   headerCard: {
     borderWidth: 1.5,
     borderColor: GOLD,
@@ -656,109 +562,138 @@ const s = StyleSheet.create({
     backgroundColor: SURFACE,
     padding: SPACING.xl,
     alignItems: 'center',
-    marginBottom: SPACING.md,
+    marginBottom: SPACING.lg,
+    shadowColor: GOLD,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 5,
   },
   readyBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: `${GREEN}18`,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: GREEN + '18',
     borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 5,
+    paddingHorizontal: SPACING.md, paddingVertical: 5,
     marginBottom: SPACING.md,
-    borderWidth: 1,
-    borderColor: `${GREEN}40`,
+    borderWidth: 1, borderColor: GREEN + '40',
   },
   readyBadgeText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: GREEN, letterSpacing: 0.5 },
-  programName:    { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: GOLD, textAlign: 'center', marginBottom: SPACING.lg, lineHeight: 30 },
-  metaRow:        { flexDirection: 'row', gap: SPACING.sm, flexWrap: 'wrap', justifyContent: 'center' },
+  programName:    {
+    fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy,
+    color: GOLD, textAlign: 'center', marginBottom: SPACING.lg, lineHeight: 30,
+  },
+  metaRow:    { flexDirection: 'row', gap: SPACING.sm, flexWrap: 'wrap', justifyContent: 'center' },
   metaChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: `${GOLD}14`,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: GOLD + '14',
     borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: `${GOLD}30`,
+    paddingHorizontal: SPACING.md, paddingVertical: 5,
+    borderWidth: 1, borderColor: GOLD + '30',
   },
   metaChipText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: GOLD },
 
-  // Philosophy card
-  philosophyCard: {
-    backgroundColor: SURFACE,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
-    padding: SPACING.lg,
-    marginBottom: SPACING.md,
-  },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
-  cardIconWrap: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: `${GOLD}14`,
-    borderWidth: 1, borderColor: `${GOLD}30`,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  cardTitle:       { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary },
-  philosophyText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
-
-  // Section heading
-  sectionWrap:  { marginBottom: SPACING.md, marginTop: SPACING.sm },
-  sectionTitle: { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: 2 },
+  // Section headings
+  sectionWrap:  { marginBottom: SPACING.sm, marginTop: SPACING.md },
+  sectionTitle: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: 2 },
   sectionSub:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
 
-  // Coach note card
+  // Milestones card
+  milestonesCard: {
+    backgroundColor: SURFACE, borderRadius: RADIUS.xl,
+    borderWidth: 1, borderColor: BORDER,
+    borderLeftWidth: 3, borderLeftColor: GOLD,
+    overflow: 'hidden', marginBottom: SPACING.sm,
+  },
+  milestoneRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: SPACING.md, paddingHorizontal: SPACING.lg,
+    gap: SPACING.sm,
+  },
+  milestoneRowBorder: { borderBottomWidth: 1, borderBottomColor: BORDER },
+  milestoneIcon:  {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: GOLD + '18',
+    justifyContent: 'center', alignItems: 'center', flexShrink: 0,
+  },
+  milestoneName: { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.primary, fontWeight: FONTS.weights.semibold },
+  milestoneDate: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+
+  // Key weeks
+  keyWeeksScroll:  { gap: SPACING.sm, paddingBottom: SPACING.sm },
+  keyChipGold: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: GOLD + '18',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.md, paddingVertical: 6,
+    borderWidth: 1, borderColor: GOLD + '40',
+  },
+  keyChipGoldText:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: GOLD },
+  keyChipGreen: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: GREEN + '18',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.md, paddingVertical: 6,
+    borderWidth: 1, borderColor: GREEN + '40',
+  },
+  keyChipGreenText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: GREEN },
+
+  // Training split
+  splitGrid: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    gap: SPACING.sm, marginBottom: SPACING.sm,
+  },
+  splitCard: {
+    flex: 1, minWidth: '45%',
+    backgroundColor: SURFACE,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1, borderColor: BORDER,
+    borderLeftWidth: 3,
+    padding: SPACING.md,
+  },
+  splitType:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1, marginBottom: 4 },
+  splitFocus: { fontSize: 11, color: COLORS.text.muted, lineHeight: 16 },
+
+  // Coach card
   coachCard: {
     backgroundColor: SURFACE,
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: `${GOLD}40`,
-    borderLeftWidth: 3,
-    borderLeftColor: GOLD,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1.5, borderColor: GOLD + '40',
+    borderLeftWidth: 3, borderLeftColor: GOLD,
     padding: SPACING.lg,
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.sm,
+    marginTop: SPACING.sm, marginBottom: SPACING.sm,
   },
-  coachHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginBottom: SPACING.md },
-  coachAvatar: {
+  coachHeader:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginBottom: SPACING.md },
+  coachAvatarWrap: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: `${GOLD}14`,
-    borderWidth: 1.5, borderColor: `${GOLD}40`,
+    backgroundColor: GOLD + '14',
+    borderWidth: 1.5, borderColor: GOLD + '40',
     justifyContent: 'center', alignItems: 'center',
   },
   coachLabel: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: GOLD, letterSpacing: 0.5 },
   coachSub:   { fontSize: 10, color: COLORS.text.muted, marginTop: 1 },
   coachText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
 
-  // CTA bar
+  // CTA
   ctaBar: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
+    position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: BG,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
+    borderTopWidth: 1, borderTopColor: BORDER,
     paddingHorizontal: SPACING.xl,
     paddingTop: SPACING.md,
-    paddingBottom: SPACING.lg,
+    paddingBottom: SPACING.lg + (Platform.OS === 'ios' ? 4 : 0),
     gap: SPACING.sm,
   },
   startBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: GOLD,
-    borderRadius: 16,
-    paddingVertical: 17,
+    borderRadius: 16, paddingVertical: 17,
     gap: SPACING.sm,
     shadowColor: GOLD,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
+    shadowOpacity: 0.35, shadowRadius: 12,
     elevation: 6,
   },
-  startBtnText: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: '#0A0A0C', letterSpacing: 0.5 },
+  startBtnText: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: BG, letterSpacing: 0.5 },
   adjustLink:   { alignItems: 'center', paddingVertical: SPACING.sm },
   adjustText:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, textDecorationLine: 'underline' },
 });
