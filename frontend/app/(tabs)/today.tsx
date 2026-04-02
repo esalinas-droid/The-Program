@@ -1,31 +1,166 @@
-import { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
-  Linking, ActivityIndicator, Modal, Animated, Pressable,
+  ActivityIndicator, Animated, Pressable, Modal,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
+import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, substitutionApi } from '../../src/utils/api';
-import { getProgramSession, getWeekSessions, getTodayDayName } from '../../src/data/programData';
-import { ProgramSession } from '../../src/types';
+import { substitutionApi } from '../../src/utils/api';
+import { getProgramSession, getTodayDayName } from '../../src/data/programData';
+import { getBlock } from '../../src/utils/calculations';
 import {
   ADJUST_REASONS, REASON_ICONS, AdjustReason, Alternative,
   getAlternatives, extractExerciseName,
 } from '../../src/data/substitutions';
+import { ProgramSession } from '../../src/types';
 
-const TRAINING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// ── Additional palette ────────────────────────────────────────────────────────
+const TEAL = '#4DCEA6';
+const BLUE = '#5B9CF5';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+type SetType     = 'warmup' | 'ramp' | 'work';
+type ExCategory  = 'maxeffort' | 'supplemental' | 'accessory' | 'prehab';
+
+interface ExSet {
+  id: string;
+  type: SetType;
+  weight: number;
+  reps: string;
+  label: string;
+}
+interface Exercise {
+  id: string;
+  name: string;
+  category: ExCategory;
+  prescription: string;
+  lastSession: string;
+  cues: string[];
+  notes: string;
+  sets: ExSet[];
+}
+type SwapInfo = { original: string; replacement: string; reason: string };
+type SwapMap  = Record<string, SwapInfo>;
+
+// ── Mock Exercise Data ────────────────────────────────────────────────────────
+const EXERCISES: Exercise[] = [
+  {
+    id: 'floor-press',
+    name: 'Floor Press',
+    category: 'maxeffort',
+    prescription: 'Work to 1RM',
+    lastSession: '315 × 1  @  RPE 8.5',
+    cues: ['Pin shoulders back', 'Pause on floor 1-count', 'Drive through triceps'],
+    notes: 'If 375 moves clean, take 390. No grinding attempts.',
+    sets: [
+      { id: 'fp-wu-1', type: 'warmup', weight: 45,  reps: '5', label: 'Warm-Up' },
+      { id: 'fp-wu-2', type: 'warmup', weight: 95,  reps: '5', label: 'Warm-Up' },
+      { id: 'fp-wu-3', type: 'warmup', weight: 135, reps: '3', label: 'Warm-Up' },
+      { id: 'fp-wu-4', type: 'warmup', weight: 185, reps: '3', label: 'Warm-Up' },
+      { id: 'fp-wu-5', type: 'warmup', weight: 225, reps: '2', label: 'Warm-Up' },
+      { id: 'fp-r-1',  type: 'ramp',   weight: 275, reps: '1', label: 'Ramp'    },
+      { id: 'fp-r-2',  type: 'ramp',   weight: 315, reps: '1', label: 'Ramp'    },
+      { id: 'fp-r-3',  type: 'ramp',   weight: 355, reps: '1', label: 'Ramp'    },
+      { id: 'fp-w-1',  type: 'work',   weight: 375, reps: '1', label: 'Work'    },
+    ],
+  },
+  {
+    id: 'pendlay-row',
+    name: 'Pendlay Row',
+    category: 'supplemental',
+    prescription: '4 × 6-8',
+    lastSession: '225 × 6  @  RPE 7',
+    cues: ['Dead stop on floor', 'Elbows tight', 'Control the descent'],
+    notes: 'Use straps from set 3 onwards.',
+    sets: [
+      { id: 'pr-w-1', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
+      { id: 'pr-w-2', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
+      { id: 'pr-w-3', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
+      { id: 'pr-w-4', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
+    ],
+  },
+  {
+    id: 'incline-db-press',
+    name: 'Incline DB Press',
+    category: 'accessory',
+    prescription: '3 × 10-12',
+    lastSession: '85 × 12  @  RPE 7',
+    cues: ['Slight arch', 'Elbows 45°', 'Full range of motion'],
+    notes: '',
+    sets: [
+      { id: 'idp-w-1', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
+      { id: 'idp-w-2', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
+      { id: 'idp-w-3', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
+    ],
+  },
+  {
+    id: 'tricep-pushdown',
+    name: 'Tricep Pushdown',
+    category: 'accessory',
+    prescription: '3 × 15-20',
+    lastSession: '120 × 15  @  RPE 6',
+    cues: ['Lock elbows at sides', 'Full extension', 'Controlled negative'],
+    notes: 'Cable or bands — both acceptable.',
+    sets: [
+      { id: 'tp-w-1', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
+      { id: 'tp-w-2', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
+      { id: 'tp-w-3', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
+    ],
+  },
+  {
+    id: 'face-pull',
+    name: 'Face Pull',
+    category: 'prehab',
+    prescription: '3 × 15-20',
+    lastSession: '50 × 20  @  RPE 5',
+    cues: ['Pull to nose height', 'External rotation at peak', 'Slow and controlled'],
+    notes: 'Mandatory — protect the shoulder.',
+    sets: [
+      { id: 'fp2-w-1', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
+      { id: 'fp2-w-2', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
+      { id: 'fp2-w-3', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
+    ],
+  },
+];
+
+const WARMUP_STEPS = [
+  { name: 'Band Pull-Aparts',      sets: '3 × 20',       note: 'Light band, scapular retraction focus' },
+  { name: 'Shoulder Dislocates',   sets: '3 × 10',       note: 'Dowel or light band, full ROM' },
+  { name: 'Scapular Wall Slides',  sets: '2 × 15',       note: 'Press low back firmly into wall' },
+  { name: 'Face Pulls (warm-up)',  sets: '2 × 20',       note: 'High cable, external rotation at peak' },
+  { name: 'Rotator Cuff ER / IR', sets: '2 × 15 each',  note: '3–5 lbs only, controlled tempo' },
+];
+
+const BLOCK_LABELS: Record<number, string> = {
+  1: 'FOUNDATION', 2: 'STRENGTH', 3: 'INTENSITY',
+  4: 'VOLUME',     5: 'STRENGTH EMPHASIS', 6: 'PEAK PREP', 7: 'PIVOT',
+};
+
+const DAY_NUM: Record<string, number> = {
+  Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 7,
+};
+
+const SESSION_OBJECTIVES: Record<string, string> = {
+  'Max Effort Upper':    'Work to a 1RM on a pressing variation. Build supplemental and accessory volume.',
+  'Max Effort Lower':    'Work to a 1RM on a lower body pattern. Build posterior chain supplemental volume.',
+  'Dynamic Effort Upper':'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
+  'Dynamic Effort Lower':'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
+  'Event Day':           'Strongman event training. Prioritize technique and confidence across all implements.',
+  'Boxing / Recovery':   'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
+};
 
 const INJURY_MAP: Record<string, string[]> = {
-  'Right hamstring / nerve compression': ['conventional deadlift', 'romanian deadlift', 'rdl', 'stiff-leg', 'from floor'],
+  'Right hamstring / nerve compression': ['conventional deadlift', 'romanian deadlift', 'rdl', 'stiff-leg'],
   'Low back':          ['jefferson curl', 'spinal flexion', 'good morning'],
   'Left knee':         ['split squat', 'lunge', 'step-up', 'single-leg press'],
-  'Left bicep strain': ['stone to shoulder', 'stone lap', 'axle clean', 'log clean from floor'],
+  'Left bicep strain': ['stone to shoulder', 'stone lap', 'axle clean'],
   'Shoulder history':  ['behind-neck', 'behind neck', 'snatch grip'],
 };
 
+// ── Helper Functions ──────────────────────────────────────────────────────────
 function getInjuryWarnings(session: ProgramSession, injuryFlags: string[]): string[] {
   const warnings: string[] = [];
   const allWork = [session.mainLift, ...session.supplementalWork, ...session.accessories].join(' ').toLowerCase();
@@ -38,9 +173,27 @@ function getInjuryWarnings(session: ProgramSession, injuryFlags: string[]): stri
   return warnings;
 }
 
-// ── Swap state shape ──────────────────────────────────────────────────────────
-type SwapInfo = { original: string; replacement: string; reason: string };
-type SwapMap  = Record<string, SwapInfo>;
+function getSetCircleColor(type: SetType, logged: boolean): string {
+  if (logged) return TEAL;
+  if (type === 'warmup') return '#666666';
+  if (type === 'ramp') return BLUE;
+  return COLORS.accent;
+}
+
+function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
+  return {
+    maxeffort:    { bg: COLORS.accent + '25', text: COLORS.accent, label: 'Max Effort' },
+    supplemental: { bg: BLUE + '25',           text: BLUE,          label: 'Supplemental' },
+    accessory:    { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: 'Accessory' },
+    prehab:       { bg: TEAL + '25',            text: TEAL,          label: 'Prehab' },
+  }[cat];
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 // ── AdjustModal ───────────────────────────────────────────────────────────────
 interface AdjustModalProps {
@@ -50,24 +203,20 @@ interface AdjustModalProps {
   onClose: () => void;
   onConfirm: (key: string, original: string, replacement: string, reason: AdjustReason) => void;
 }
-
 function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }: AdjustModalProps) {
   const [step, setStep]                 = useState<1 | 2>(1);
   const [selectedReason, setReason]     = useState<AdjustReason | null>(null);
   const [alternatives, setAlternatives] = useState<Alternative[]>([]);
   const [selectedAlt, setSelectedAlt]   = useState<Alternative | null>(null);
-  const slideAnim = useRef(new Animated.Value(600)).current;
+  const slideAnim = useRef(new Animated.Value(700)).current;
 
-  // Slide in/out on visibility change
-  useCallback(() => {}, [])(); // ensure stable ref
   const handleShow = () => {
     setStep(1); setReason(null); setAlternatives([]); setSelectedAlt(null);
     Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
   };
   const handleHide = (cb?: () => void) => {
-    Animated.timing(slideAnim, { toValue: 600, duration: 220, useNativeDriver: true }).start(() => cb?.());
+    Animated.timing(slideAnim, { toValue: 700, duration: 220, useNativeDriver: true }).start(() => cb?.());
   };
-
   const handleClose = () => handleHide(onClose);
 
   const handleReasonSelect = (r: AdjustReason) => {
@@ -77,12 +226,10 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
     setSelectedAlt(null);
     setStep(2);
   };
-
   const handleAltSelect = (alt: Alternative) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedAlt(alt);
   };
-
   const handleConfirm = () => {
     if (!selectedAlt || !selectedReason) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -90,70 +237,40 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onShow={handleShow}
-      onRequestClose={handleClose}
-    >
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow} onRequestClose={handleClose}>
       <Pressable style={m.overlay} onPress={step === 1 ? handleClose : undefined}>
         <Animated.View style={[m.sheet, { transform: [{ translateY: slideAnim }] }]}>
           <Pressable onPress={e => e.stopPropagation()}>
-
-            {/* ── Handle ── */}
-            <View style={m.handleWrap}>
-              <View style={m.handle} />
-            </View>
-
-            {/* ── Header ── */}
+            <View style={m.handleWrap}><View style={m.handle} /></View>
             <View style={m.header}>
               {step === 2 ? (
                 <TouchableOpacity onPress={() => { setStep(1); setSelectedAlt(null); }} style={m.backBtn}>
                   <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.secondary} />
                 </TouchableOpacity>
-              ) : (
-                <View style={m.backBtn} />
-              )}
+              ) : <View style={m.backBtn} />}
               <View style={m.headerCenter}>
                 <Text style={m.headerTitle}>Adjust Exercise</Text>
-                <Text style={m.headerSub} numberOfLines={1}>
-                  {extractExerciseName(exerciseName)}
-                </Text>
+                <Text style={m.headerSub} numberOfLines={1}>{extractExerciseName(exerciseName)}</Text>
               </View>
               <TouchableOpacity onPress={handleClose} style={m.closeBtn}>
                 <MaterialCommunityIcons name="close" size={20} color={COLORS.text.muted} />
               </TouchableOpacity>
             </View>
 
-            {/* ── Step 1: Reason selector ── */}
             {step === 1 && (
               <View style={m.body}>
                 <Text style={m.prompt}>Why are you swapping this one?</Text>
                 <View style={m.pillGrid}>
                   {ADJUST_REASONS.map(r => (
-                    <TouchableOpacity
-                      key={r}
-                      style={[m.reasonPill, selectedReason === r && m.reasonPillActive]}
-                      onPress={() => handleReasonSelect(r)}
-                    >
-                      <MaterialCommunityIcons
-                        name={REASON_ICONS[r] as any}
-                        size={16}
-                        color={selectedReason === r ? COLORS.primary : COLORS.accent}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={[m.reasonPillText, selectedReason === r && m.reasonPillTextActive]}>
-                        {r}
-                      </Text>
+                    <TouchableOpacity key={r} style={[m.reasonPill, selectedReason === r && m.reasonPillActive]} onPress={() => handleReasonSelect(r)}>
+                      <MaterialCommunityIcons name={REASON_ICONS[r] as any} size={16} color={selectedReason === r ? COLORS.primary : COLORS.accent} style={{ marginRight: 6 }} />
+                      <Text style={[m.reasonPillText, selectedReason === r && m.reasonPillTextActive]}>{r}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
             )}
 
-            {/* ── Step 2: Alternatives ── */}
             {step === 2 && selectedReason && (
               <View style={m.body}>
                 <View style={m.reasonChip}>
@@ -163,52 +280,31 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
                 <Text style={m.prompt}>Your coach's picks:</Text>
                 <View style={m.altList}>
                   {alternatives.map((alt, i) => {
-                    const isSelected = selectedAlt?.name === alt.name;
+                    const isSel = selectedAlt?.name === alt.name;
                     return (
-                      <TouchableOpacity
-                        key={alt.name}
-                        style={[m.altCard, isSelected && m.altCardSelected]}
-                        onPress={() => handleAltSelect(alt)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={m.altRankBadge}>
-                          <Text style={m.altRankText}>{i + 1}</Text>
-                        </View>
+                      <TouchableOpacity key={alt.name} style={[m.altCard, isSel && m.altCardSelected]} onPress={() => handleAltSelect(alt)} activeOpacity={0.8}>
+                        <View style={m.altRankBadge}><Text style={m.altRankText}>{i + 1}</Text></View>
                         <View style={m.altInfo}>
-                          <Text style={[m.altName, isSelected && m.altNameSelected]}>{alt.name}</Text>
+                          <Text style={[m.altName, isSel && m.altNameSelected]}>{alt.name}</Text>
                           <View style={m.altEquipRow}>
                             <MaterialCommunityIcons name="dumbbell" size={11} color={COLORS.text.muted} />
                             <Text style={m.altEquip}> {alt.equipment}</Text>
                           </View>
                           <Text style={m.altIntentNote}>{alt.intentNote}</Text>
                         </View>
-                        <View style={[m.altRadio, isSelected && m.altRadioSelected]}>
-                          {isSelected && <View style={m.altRadioInner} />}
+                        <View style={[m.altRadio, isSel && m.altRadioSelected]}>
+                          {isSel && <View style={m.altRadioInner} />}
                         </View>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
-
-                {/* ── Confirm button ── */}
-                <TouchableOpacity
-                  style={[m.confirmBtn, !selectedAlt && m.confirmBtnDisabled]}
-                  onPress={handleConfirm}
-                  disabled={!selectedAlt}
-                  activeOpacity={0.85}
-                >
-                  <MaterialCommunityIcons
-                    name="swap-horizontal"
-                    size={18}
-                    color={selectedAlt ? COLORS.primary : COLORS.text.muted}
-                  />
-                  <Text style={[m.confirmBtnText, !selectedAlt && m.confirmBtnTextDisabled]}>
-                    CONFIRM SWAP
-                  </Text>
+                <TouchableOpacity style={[m.confirmBtn, !selectedAlt && m.confirmBtnDisabled]} onPress={handleConfirm} disabled={!selectedAlt} activeOpacity={0.85}>
+                  <MaterialCommunityIcons name="swap-horizontal" size={18} color={selectedAlt ? COLORS.primary : COLORS.text.muted} />
+                  <Text style={[m.confirmBtnText, !selectedAlt && m.confirmBtnTextDisabled]}>CONFIRM SWAP</Text>
                 </TouchableOpacity>
               </View>
             )}
-
           </Pressable>
         </Animated.View>
       </Pressable>
@@ -216,326 +312,506 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
   );
 }
 
+// ── RestTimerBar ──────────────────────────────────────────────────────────────
+function RestTimerBar({ running, seconds, onToggle, onReset }: {
+  running: boolean; seconds: number; onToggle: () => void; onReset: () => void;
+}) {
+  const restWarning = seconds > 180; // over 3 mins = too long
+  const timeColor   = restWarning ? '#EF5350' : running ? COLORS.accent : COLORS.text.muted;
+
+  return (
+    <View style={rt.bar}>
+      <View style={rt.left}>
+        <MaterialCommunityIcons name="timer-outline" size={18} color={timeColor} />
+        <Text style={rt.label}>REST</Text>
+        <Text style={[rt.time, { color: timeColor }]}>{formatTime(seconds)}</Text>
+        {running && (
+          <View style={rt.activeDot} />
+        )}
+      </View>
+      <View style={rt.controls}>
+        <TouchableOpacity onPress={onToggle} style={rt.controlBtn} activeOpacity={0.75}>
+          <MaterialCommunityIcons name={running ? 'pause-circle' : 'play-circle'} size={28} color={COLORS.accent} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onReset} style={rt.controlBtn} activeOpacity={0.75}>
+          <MaterialCommunityIcons name="refresh" size={22} color={COLORS.text.muted} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+const rt = StyleSheet.create({
+  bar:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
+  left:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  label:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2 },
+  time:       { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, fontVariant: ['tabular-nums'] as any, letterSpacing: -0.5 },
+  activeDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: TEAL, marginLeft: 4 },
+  controls:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  controlBtn: { padding: 4 },
+});
+
+// ── SetRow ────────────────────────────────────────────────────────────────────
+function SetRow({ set, logged, painFlagged, onLog, onPain, index }: {
+  set: ExSet; logged: boolean; painFlagged: boolean;
+  onLog: () => void; onPain: () => void; index: number;
+}) {
+  const circleColor = getSetCircleColor(set.type, logged);
+  return (
+    <View style={sr.row}>
+      {/* Numbered circle */}
+      <View style={[sr.circle, { backgroundColor: circleColor + '20', borderColor: circleColor }]}>
+        {logged
+          ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
+          : <Text style={[sr.circleNum, { color: circleColor }]}>{index + 1}</Text>
+        }
+      </View>
+
+      {/* Weight × Reps */}
+      <Text style={[sr.weight, logged && sr.weightDone]}>
+        {set.weight} × {set.reps}
+      </Text>
+
+      {/* Type label */}
+      <Text style={[sr.typeLabel, logged && sr.typeLabelDone]}>
+        {logged ? 'Done' : set.label.toUpperCase()}
+      </Text>
+
+      {/* Pain flag button */}
+      <TouchableOpacity onPress={onPain} style={sr.painBtn} activeOpacity={0.7}>
+        <MaterialCommunityIcons
+          name="alert-circle-outline"
+          size={18}
+          color={painFlagged ? '#EF5350' : COLORS.border}
+        />
+      </TouchableOpacity>
+
+      {/* Log / Done */}
+      {!logged ? (
+        <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
+          <Text style={sr.logBtnText}>LOG</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={sr.doneWrap}>
+          <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
+        </View>
+      )}
+    </View>
+  );
+}
+const sr = StyleSheet.create({
+  row:          { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border + '55' },
+  circle:       { width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  circleNum:    { fontSize: 11, fontWeight: FONTS.weights.heavy },
+  weight:       { flex: 1, fontSize: 14, color: COLORS.text.primary, fontWeight: FONTS.weights.semibold },
+  weightDone:   { textDecorationLine: 'line-through', color: COLORS.text.muted },
+  typeLabel:    { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, width: 72, textAlign: 'right' },
+  typeLabelDone:{ color: TEAL },
+  painBtn:      { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  logBtn:       { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
+  logBtnText:   { color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  doneWrap:     { width: 52, alignItems: 'center' },
+});
+
+// ── ExerciseCard ──────────────────────────────────────────────────────────────
+function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLog, onPain, onAdjust, swap }: {
+  exercise: Exercise;
+  expanded: boolean;
+  loggedSets: Set<string>;
+  painSets: Set<string>;
+  onToggle: () => void;
+  onLog: (setId: string) => void;
+  onPain: (setId: string) => void;
+  onAdjust: (id: string, name: string) => void;
+  swap?: SwapInfo;
+}) {
+  const catStyle   = getCategoryStyle(exercise.category);
+  const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
+  const total       = exercise.sets.length;
+  const allDone     = loggedCount === total;
+  const displayName = swap?.replacement ?? exercise.name;
+  const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
+
+  return (
+    <View style={ec.card}>
+      {/* ── Collapsible header ── */}
+      <TouchableOpacity onPress={onToggle} style={ec.header} activeOpacity={0.8}>
+        <View style={ec.headerLeft}>
+          <View style={[ec.catBadge, { backgroundColor: catStyle.bg }]}>
+            <Text style={[ec.catBadgeText, { color: catStyle.text }]}>{catStyle.label}</Text>
+          </View>
+          {swap && (
+            <View style={ec.swapPill}>
+              <MaterialCommunityIcons name="swap-horizontal" size={10} color={COLORS.accent} />
+              <Text style={ec.swapPillText}>SWAPPED</Text>
+            </View>
+          )}
+        </View>
+        <View style={ec.headerRight}>
+          <View style={[ec.progressPill, { backgroundColor: progColor + '20' }]}>
+            <Text style={[ec.progressText, { color: progColor }]}>{loggedCount}/{total}</Text>
+          </View>
+          <MaterialCommunityIcons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={COLORS.text.muted}
+          />
+        </View>
+      </TouchableOpacity>
+
+      {/* ── Name + Prescription (always visible) ── */}
+      <TouchableOpacity onPress={onToggle} style={ec.nameRow} activeOpacity={0.8}>
+        <Text style={ec.name} numberOfLines={2}>{displayName}</Text>
+        <Text style={ec.prescription}>{exercise.prescription}</Text>
+      </TouchableOpacity>
+
+      {/* ── Expanded body ── */}
+      {expanded && (
+        <View style={ec.body}>
+          {/* Last session ref */}
+          <View style={ec.lastRow}>
+            <MaterialCommunityIcons name="history" size={13} color={COLORS.text.muted} />
+            <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
+          </View>
+
+          {/* Coaching cues */}
+          {exercise.cues.length > 0 && (
+            <View style={ec.cuesRow}>
+              <MaterialCommunityIcons name="lightbulb-on-outline" size={13} color={COLORS.accent} style={{ marginTop: 1 }} />
+              <Text style={ec.cuesText}>{exercise.cues.join('  ·  ')}</Text>
+            </View>
+          )}
+
+          {/* Divider */}
+          <View style={ec.divider} />
+
+          {/* Set rows */}
+          <View>
+            {exercise.sets.map((set, idx) => (
+              <SetRow
+                key={set.id}
+                set={set}
+                index={idx}
+                logged={loggedSets.has(set.id)}
+                painFlagged={painSets.has(set.id)}
+                onLog={() => onLog(set.id)}
+                onPain={() => onPain(set.id)}
+              />
+            ))}
+          </View>
+
+          {/* Notes */}
+          {exercise.notes ? (
+            <Text style={ec.notes}>{exercise.notes}</Text>
+          ) : null}
+
+          {/* Adjust Exercise button */}
+          <TouchableOpacity style={ec.adjustBtn} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
+            <MaterialCommunityIcons name="swap-horizontal" size={14} color={COLORS.text.muted} />
+            <Text style={ec.adjustBtnText}>Adjust Exercise</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+const ec = StyleSheet.create({
+  card:          { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.md, paddingBottom: SPACING.sm },
+  headerLeft:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  headerRight:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  catBadge:      { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
+  catBadgeText:  { fontSize: 10, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
+  swapPill:      { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: COLORS.accent + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.full },
+  swapPillText:  { fontSize: 9, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
+  progressPill:  { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
+  progressText:  { fontSize: 11, fontWeight: FONTS.weights.heavy },
+  nameRow:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md, gap: SPACING.sm },
+  name:          { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, flex: 1, lineHeight: 23 },
+  prescription:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  body:          { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg },
+  lastRow:       { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: SPACING.sm },
+  lastText:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic' },
+  cuesRow:       { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: SPACING.md, backgroundColor: COLORS.accent + '10', borderRadius: RADIUS.md, padding: SPACING.sm },
+  cuesText:      { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 17 },
+  divider:       { height: 1, backgroundColor: COLORS.border, marginBottom: SPACING.sm },
+  notes:         { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginTop: SPACING.md, lineHeight: 17 },
+  adjustBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
+  adjustBtnText: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+});
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function TodayScreen() {
   const router = useRouter();
+
+  // Session data
   const [week, setWeek]               = useState(1);
-  const [sessionType, setSessionType] = useState('');
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
-  const [weekSessions, setWeekSessions] = useState<ProgramSession[]>([]);
-  const [loggedDays, setLoggedDays]   = useState<Record<string, string>>({});
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
-  const [collapsed, setCollapsed]     = useState<Record<string, boolean>>({
-    warmup: true, activation: true, rampup: true, suppl: true, acc: true, gpp: true, notes: true,
-  });
   const [loading, setLoading]         = useState(true);
 
-  // ── Adjust Exercise state ──
-  const [swaps, setSwaps]           = useState<SwapMap>({});
-  const [modalVisible, setModal]    = useState(false);
-  const [adjustKey, setAdjustKey]   = useState('');
+  // Exercise interaction
+  const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
+  const [painSets, setPainSets]       = useState<Set<string>>(new Set());
+  const [expanded, setExpanded]       = useState<Set<string>>(new Set(['floor-press']));
+  const [swaps, setSwaps]             = useState<SwapMap>({});
+  const [warmupExpanded, setWarmupExpanded] = useState(false);
+
+  // Rest timer
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Adjust modal
+  const [modalVisible, setModal]   = useState(false);
+  const [adjustKey, setAdjustKey]  = useState('');
   const [adjustName, setAdjustName] = useState('');
+
   const todayName = getTodayDayName();
 
+  // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
       const prof = await getProfile();
-      const w = prof?.currentWeek || 1;
+      const w    = prof?.currentWeek || 1;
       setWeek(w);
       setInjuryFlags(prof?.injuryFlags || []);
-      const day = todayName === 'Sunday' ? 'Monday' : todayName;
+      const day  = todayName === 'Sunday' ? 'Monday' : todayName;
       const sess = getProgramSession(w, day);
       setTodaySession(sess);
-      setSessionType(sess?.sessionType || '');
-      setWeekSessions(getWeekSessions(w));
-      try {
-        const entries = await logApi.list({ week: w });
-        const dayMap: Record<string, string> = {};
-        entries.forEach((e: any) => { dayMap[e.day] = e.completed || 'Completed'; });
-        setLoggedDays(dayMap);
-      } catch {}
       setLoading(false);
     })();
   }, []));
 
-  function toggleSection(key: string) {
-    setCollapsed(prev => ({ ...prev, [key]: !prev[key] }));
-  }
+  // ── Rest timer effect ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (timerRunning) {
+      timerRef.current = setInterval(() => setTimerSeconds(s => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [timerRunning]);
 
-  function openYouTube(lift: string) {
-    Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(lift + ' strongman tutorial')}`);
-  }
+  // ── Computed values ──────────────────────────────────────────────────────────
+  const totalSets   = EXERCISES.reduce((sum, ex) => sum + ex.sets.length, 0);
+  const loggedCount = loggedSets.size;
+  const progressPct = totalSets > 0 ? (loggedCount / totalSets) * 100 : 0;
+  const canFinish   = progressPct >= 50;
 
-  function openAdjust(key: string, name: string) {
-    setAdjustKey(key);
-    setAdjustName(name);
-    setModal(true);
-  }
+  // Session header values
+  const block        = getBlock(week);
+  const blockLabel   = BLOCK_LABELS[block] || `BLOCK ${block}`;
+  const dayNum       = DAY_NUM[todayName] || 1;
+  const sessionType  = todaySession?.sessionType || 'Max Effort Upper';
+  const sessionObj   = SESSION_OBJECTIVES[sessionType] || todaySession?.intentRPETarget || '';
+  const coachNote    = todaySession?.coachingNotes
+    || "Drive through today's session with full intent. Build deliberately to your peak and leave no doubt in those supplemental sets.";
 
-  async function handleConfirmSwap(key: string, original: string, replacement: string, reason: AdjustReason) {
+  // ── Handlers ─────────────────────────────────────────────────────────────────
+  const handleLog = (setId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setLoggedSets(prev => new Set([...prev, setId]));
+    setTimerSeconds(0);
+    setTimerRunning(true);
+  };
+
+  const handlePain = (setId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setPainSets(prev => {
+      const next = new Set(prev);
+      if (next.has(setId)) next.delete(setId); else next.add(setId);
+      return next;
+    });
+  };
+
+  const handleToggleExpand = (exId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(exId)) next.delete(exId); else next.add(exId);
+      return next;
+    });
+  };
+
+  const openAdjust = (id: string, name: string) => {
+    setAdjustKey(id); setAdjustName(name); setModal(true);
+  };
+
+  const handleConfirmSwap = async (key: string, original: string, replacement: string, reason: AdjustReason) => {
     setModal(false);
     setSwaps(prev => ({ ...prev, [key]: { original, replacement, reason } }));
-    // Log to backend
     try {
       const day = todayName === 'Sunday' ? 'Monday' : todayName;
       await substitutionApi.log({
         date: new Date().toISOString().slice(0, 10),
-        week,
-        day,
-        sessionType,
+        week, day, sessionType,
         originalExercise: extractExerciseName(original),
         replacementExercise: replacement,
         reason,
       });
-    } catch (e) {
-      console.warn('Substitution log failed:', e);
-    }
+    } catch (e) { console.warn('Substitution log failed:', e); }
+  };
+
+  const handleFinish = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    router.push('/(tabs)');
+  };
+
+  // ── Injury warnings ──────────────────────────────────────────────────────────
+  const warnings = todaySession ? getInjuryWarnings(todaySession, injuryFlags) : [];
+
+  // ── Loading guard ────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={s.loading}>
+        <ActivityIndicator color={COLORS.accent} size="large" />
+      </View>
+    );
   }
-
-  // Display helper: returns the current exercise name (swapped or original)
-  function displayExercise(key: string, original: string): string {
-    return swaps[key]?.replacement ?? original;
-  }
-
-  if (loading) return <View style={s.loading}><ActivityIndicator color={COLORS.accent} /></View>;
-  if (!todaySession) return <View style={s.loading}><Text style={s.noData}>Loading session data...</Text></View>;
-
-  const sc = getSessionStyle(todaySession.sessionType);
-  const mainDisplayName = displayExercise('main', todaySession.mainLift);
-  const mainSwapped     = !!swaps['main'];
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScrollView style={s.scroll} testID="today-scroll">
 
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <Text style={s.appName}>TODAY'S SESSION</Text>
-          <Text style={s.dateText}>
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+      {/* ── Thin progress bar at very top ── */}
+      <View style={s.progressTrack}>
+        <View style={[s.progressFill, { width: `${progressPct}%` as any }]} />
+      </View>
+
+      {/* ── Scrollable content ── */}
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+
+        {/* ── SESSION HEADER ── */}
+        <View style={s.sessionHeader}>
+          <Text style={s.contextLine}>
+            {blockLabel} BLOCK {block}  ·  WEEK {week}  ·  DAY {dayNum}
           </Text>
+          <Text style={s.sessionTitle}>{sessionType}</Text>
+          {sessionObj ? <Text style={s.sessionObj}>{sessionObj}</Text> : null}
         </View>
 
-        {/* ── Session Type Badge ── */}
-        <View style={s.badgeRow}>
-          <View style={[s.badge, { backgroundColor: sc.bg }]}>
-            <Text style={[s.badgeText, { color: sc.text }]}>{todaySession.sessionType}</Text>
-          </View>
-          <Text style={s.phaseText}>Block {todaySession.block} · {todaySession.phase}</Text>
-        </View>
-
-        {/* ── Deload Banner ── */}
-        {todaySession.isDeload && (
-          <View style={s.deloadBanner}>
-            <Text style={s.deloadText}>DELOAD WEEK — One boxing session only. Keep intensity low.</Text>
-          </View>
-        )}
-
-        {/* ── Injury Warning Banners ── */}
-        {getInjuryWarnings(todaySession, injuryFlags).map((warning, i) => (
-          <View testID={`injury-banner-${i}`} key={i} style={s.injuryBanner}>
-            <MaterialCommunityIcons name="alert" size={16} color="#FFF" />
-            <Text style={s.injuryBannerText}>{warning}</Text>
+        {/* ── INJURY WARNING BANNERS ── */}
+        {warnings.map((w, i) => (
+          <View key={i} style={s.injuryBanner}>
+            <MaterialCommunityIcons name="alert" size={15} color="#FFF" />
+            <Text style={s.injuryBannerText}>{w}</Text>
           </View>
         ))}
 
-        {/* ── Main Lift Card ── */}
-        <View style={s.mainCard}>
-          <View style={s.mainCardTopRow}>
-            <Text style={s.mainLabel}>MAIN LIFT</Text>
-            <TouchableOpacity
-              style={s.adjustBtn}
-              onPress={() => openAdjust('main', todaySession.mainLift)}
-            >
-              <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.accent} />
-              <Text style={s.adjustBtnText}>Adjust</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={s.mainLiftRow}>
-            <View style={{ flex: 1 }}>
-              <View style={s.exerciseTitleRow}>
-                <Text style={s.mainLift} numberOfLines={2}>{mainDisplayName}</Text>
-                {mainSwapped && (
-                  <View style={s.swappedBadge}>
-                    <MaterialCommunityIcons name="swap-horizontal" size={10} color={COLORS.primary} />
-                    <Text style={s.swappedBadgeText}> SWAPPED</Text>
-                  </View>
-                )}
-              </View>
-              {mainSwapped && (
-                <Text style={s.originalName}>was: {swaps['main'].original}</Text>
-              )}
+        {/* ── COACH NOTE CARD ── */}
+        <View style={s.coachCard}>
+          <View style={s.coachHeader}>
+            <View style={s.coachAvatar}>
+              <Text style={s.coachAvatarIcon}>✦</Text>
             </View>
-            <TouchableOpacity testID="yt-main-lift" onPress={() => openYouTube(mainDisplayName)}>
-              <View style={s.ytBtn}><Text style={s.ytBtnText}>▶ Demo</Text></View>
-            </TouchableOpacity>
+            <Text style={s.coachLabel}>COACH NOTE</Text>
           </View>
-
-          <Text style={s.scheme}>{todaySession.topSetScheme}</Text>
-          <View style={s.intentRow}>
-            <MaterialCommunityIcons name="target" size={14} color={COLORS.text.muted} />
-            <Text style={s.intent}> {todaySession.intentRPETarget}</Text>
-          </View>
+          <Text style={s.coachText}>{coachNote}</Text>
         </View>
 
-        {/* ── Ramp-Up Sets ── */}
-        <CollapsibleSection
-          title="RAMP-UP SETS" sectionKey="rampup"
-          collapsed={collapsed} onToggle={toggleSection} testID="rampup-section"
-        >
-          <Text style={s.protocolText}>{todaySession.rampUpSets}</Text>
-        </CollapsibleSection>
-
-        {/* ── Warm-Up Protocol ── */}
-        <CollapsibleSection
-          title="WARM-UP PROTOCOL" sectionKey="warmup"
-          collapsed={collapsed} onToggle={toggleSection} testID="warmup-section"
-        >
-          <Text style={s.protocolText}>{todaySession.warmUpProtocol}</Text>
-        </CollapsibleSection>
-
-        {/* ── Activation / Rehab ── */}
-        <CollapsibleSection
-          title="ACTIVATION / REHAB DRILLS" sectionKey="activation"
-          collapsed={collapsed} onToggle={toggleSection} testID="activation-section"
-        >
-          <Text style={s.protocolText}>{todaySession.activationRehab}</Text>
-        </CollapsibleSection>
-
-        {/* ── Supplemental Work ── */}
-        {todaySession.supplementalWork.length > 0 && (
-          <CollapsibleSection
-            title="SUPPLEMENTAL WORK" sectionKey="suppl"
-            collapsed={collapsed} onToggle={toggleSection} testID="suppl-section"
-          >
-            {todaySession.supplementalWork.map((item, i) => {
-              const key = `suppl-${i}`;
-              const swapped = !!swaps[key];
-              const display = swapped ? item.replace(extractExerciseName(item), swaps[key].replacement) : item;
-              return (
-                <ExerciseListItem
-                  key={i}
-                  item={display}
-                  swapped={swapped}
-                  originalName={swapped ? swaps[key].original : undefined}
-                  onAdjust={() => openAdjust(key, item)}
-                />
-              );
-            })}
-          </CollapsibleSection>
-        )}
-
-        {/* ── Accessories ── */}
-        {todaySession.accessories.length > 0 && (
-          <CollapsibleSection
-            title="ACCESSORIES" sectionKey="acc"
-            collapsed={collapsed} onToggle={toggleSection} testID="acc-section"
-          >
-            {todaySession.accessories.map((item, i) => {
-              const key = `acc-${i}`;
-              const swapped = !!swaps[key];
-              const display = swapped ? item.replace(extractExerciseName(item), swaps[key].replacement) : item;
-              return (
-                <ExerciseListItem
-                  key={i}
-                  item={display}
-                  swapped={swapped}
-                  originalName={swapped ? swaps[key].original : undefined}
-                  onAdjust={() => openAdjust(key, item)}
-                />
-              );
-            })}
-          </CollapsibleSection>
-        )}
-
-        {/* ── Event/GPP ── */}
-        {todaySession.eventGPP !== '' && (
-          <CollapsibleSection
-            title="EVENT / GPP" sectionKey="gpp"
-            collapsed={collapsed} onToggle={toggleSection} testID="gpp-section"
-          >
-            <Text style={s.protocolText}>{todaySession.eventGPP}</Text>
-          </CollapsibleSection>
-        )}
-
-        {/* ── Coaching Notes ── */}
-        <CollapsibleSection
-          title="COACHING NOTES" sectionKey="notes"
-          collapsed={collapsed} onToggle={toggleSection} testID="notes-section"
-        >
-          <Text style={s.protocolText}>{todaySession.coachingNotes}</Text>
-        </CollapsibleSection>
-
-        {/* ── Log This Session ── */}
+        {/* ── WARM-UP SECTION ── */}
         <TouchableOpacity
-          testID="log-session-btn"
-          style={s.logBtn}
-          onPress={() => router.push({
-            pathname: '/(tabs)/log',
-            params: {
-              prefill_date: new Date().toISOString().slice(0, 10),
-              prefill_week: String(week),
-              prefill_day: todayName === 'Sunday' ? 'Monday' : todayName,
-              prefill_sessionType: todaySession.sessionType,
-              prefill_exercise: mainDisplayName,
-            },
-          } as any)}
+          style={s.warmupBar}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setWarmupExpanded(e => !e);
+          }}
+          activeOpacity={0.8}
         >
-          <MaterialCommunityIcons name="pencil-plus" size={20} color="#FFF" />
-          <Text style={s.logBtnText}>  Log This Session</Text>
+          <View style={s.warmupBarLeft}>
+            <MaterialCommunityIcons name="run-fast" size={17} color={COLORS.text.secondary} />
+            <Text style={s.warmupBarTitle}>Upper Body Warm-Up Protocol</Text>
+          </View>
+          <View style={s.warmupBarRight}>
+            <View style={s.warmupDurationBadge}>
+              <Text style={s.warmupDurationText}>8–10 min</Text>
+            </View>
+            <MaterialCommunityIcons
+              name={warmupExpanded ? 'chevron-up' : 'chevron-down'}
+              size={20}
+              color={COLORS.text.muted}
+            />
+          </View>
         </TouchableOpacity>
 
-        {/* ── Week Grid ── */}
-        <Text style={s.weekHeader}>WEEK {week} OVERVIEW</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.weekGrid}>
-          {weekSessions.map((session, idx) => {
-            const day = TRAINING_DAYS[idx];
-            const sc2 = getSessionStyle(session.sessionType);
-            const isToday = day === todayName;
-            const status = loggedDays[day];
-            return (
-              <TouchableOpacity
-                testID={`week-card-${day}`}
-                key={day}
-                style={[s.weekCard, isToday && s.weekCardToday]}
-                onPress={() => {}}
-              >
-                <Text style={s.weekDay}>{day.slice(0, 3).toUpperCase()}</Text>
-                <View style={[s.weekBadge, { backgroundColor: sc2.bg }]}>
-                  <Text style={[s.weekBadgeText, { color: sc2.text }]}>
-                    {session.sessionType.split(' ')[0]} {session.sessionType.split(' ')[1] || ''}
-                  </Text>
+        {warmupExpanded && (
+          <View style={s.warmupContent}>
+            {WARMUP_STEPS.map((step, i) => (
+              <View key={i} style={s.warmupStep}>
+                <View style={s.warmupStepNum}>
+                  <Text style={s.warmupStepNumText}>{i + 1}</Text>
                 </View>
-                <Text style={s.weekLift} numberOfLines={2}>{session.mainLift}</Text>
-                <Text style={s.weekScheme} numberOfLines={1}>{session.topSetScheme.split(';')[0]}</Text>
-                {status && (
-                  <View style={[s.statusBadge, {
-                    backgroundColor: status === 'Completed'
-                      ? COLORS.sessions.de_lower.bg
-                      : status === 'Modified' ? COLORS.sessions.me_lower.bg : COLORS.sessions.event.bg
-                  }]}>
-                    <Text style={[s.statusBadgeText, {
-                      color: status === 'Completed'
-                        ? COLORS.status.success
-                        : status === 'Modified' ? COLORS.status.warning : COLORS.status.error
-                    }]}>
-                      {status === 'Completed' ? '✓' : status === 'Modified' ? '~' : '✗'} {status}
-                    </Text>
+                <View style={s.warmupStepInfo}>
+                  <View style={s.warmupStepTop}>
+                    <Text style={s.warmupStepName}>{step.name}</Text>
+                    <Text style={s.warmupStepSets}>{step.sets}</Text>
                   </View>
-                )}
-                <TouchableOpacity testID={`yt-week-${day}`} onPress={() => openYouTube(session.mainLift)} style={s.weekYT}>
-                  <Text style={s.weekYTText}>▶</Text>
-                </TouchableOpacity>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+                  <Text style={s.warmupStepNote}>{step.note}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
-        <View style={{ height: 24 }} />
+        {/* ── REST TIMER ── */}
+        <RestTimerBar
+          running={timerRunning}
+          seconds={timerSeconds}
+          onToggle={() => setTimerRunning(r => !r)}
+          onReset={() => { setTimerRunning(false); setTimerSeconds(0); }}
+        />
+
+        {/* ── EXERCISES LABEL ── */}
+        <Text style={s.sectionLabel}>EXERCISES</Text>
+
+        {/* ── EXERCISE CARDS ── */}
+        {EXERCISES.map(ex => (
+          <ExerciseCard
+            key={ex.id}
+            exercise={ex}
+            expanded={expanded.has(ex.id)}
+            loggedSets={loggedSets}
+            painSets={painSets}
+            onToggle={() => handleToggleExpand(ex.id)}
+            onLog={handleLog}
+            onPain={handlePain}
+            onAdjust={openAdjust}
+            swap={swaps[ex.id]}
+          />
+        ))}
+
+        <View style={{ height: SPACING.xl }} />
       </ScrollView>
 
-      {/* ── Adjust Modal ── */}
+      {/* ── FIXED BOTTOM BAR ── */}
+      <View style={s.bottomBar}>
+        <View style={s.bottomLeft}>
+          <Text style={s.setsCount}>{loggedCount}/{totalSets}</Text>
+          <Text style={s.setsLabel}>sets logged</Text>
+          <View style={s.pctPill}>
+            <Text style={s.pctText}>{Math.round(progressPct)}%</Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[s.finishBtn, !canFinish && s.finishBtnDisabled]}
+          onPress={canFinish ? handleFinish : undefined}
+          activeOpacity={canFinish ? 0.85 : 1}
+        >
+          <Text style={[s.finishBtnText, !canFinish && s.finishBtnTextDisabled]}>
+            FINISH SESSION
+          </Text>
+          <MaterialCommunityIcons
+            name="flag-checkered"
+            size={16}
+            color={canFinish ? COLORS.primary : COLORS.text.muted}
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* ── ADJUST EXERCISE MODAL ── */}
       <AdjustModal
         visible={modalVisible}
         exerciseKey={adjustKey}
@@ -547,125 +823,75 @@ export default function TodayScreen() {
   );
 }
 
-// ── ExerciseListItem ──────────────────────────────────────────────────────────
-function ExerciseListItem({ item, swapped, originalName, onAdjust }: {
-  item: string; swapped: boolean; originalName?: string; onAdjust: () => void;
-}) {
-  return (
-    <View style={li.wrapper}>
-      <View style={{ flex: 1 }}>
-        <View style={li.row}>
-          <Text style={li.bullet}>•</Text>
-          <View style={{ flex: 1 }}>
-            <View style={li.nameRow}>
-              <Text style={li.text}>{item}</Text>
-              {swapped && (
-                <View style={li.swappedBadge}>
-                  <Text style={li.swappedBadgeText}>↔ SWAPPED</Text>
-                </View>
-              )}
-            </View>
-            {swapped && originalName && (
-              <Text style={li.original}>was: {originalName}</Text>
-            )}
-          </View>
-        </View>
-      </View>
-      <TouchableOpacity style={li.adjustBtn} onPress={onAdjust}>
-        <Text style={li.adjustBtnText}>Adjust</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-// ── CollapsibleSection ────────────────────────────────────────────────────────
-function CollapsibleSection({ title, sectionKey, collapsed, onToggle, children, testID }: any) {
-  const isCollapsed = collapsed[sectionKey];
-  return (
-    <View style={cs.wrapper}>
-      <TouchableOpacity testID={testID} style={cs.header} onPress={() => onToggle(sectionKey)}>
-        <Text style={cs.title}>{title}</Text>
-        <MaterialCommunityIcons name={isCollapsed ? 'chevron-down' : 'chevron-up'} size={20} color={COLORS.text.muted} />
-      </TouchableOpacity>
-      {!isCollapsed && <View style={cs.content}>{children}</View>}
-    </View>
-  );
-}
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const cs = StyleSheet.create({
-  wrapper:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg },
-  header:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: SPACING.lg },
-  title:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary, letterSpacing: 1.5 },
-  content:  { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg },
-});
-
-const li = StyleSheet.create({
-  wrapper:      { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
-  row:          { flexDirection: 'row', flex: 1 },
-  bullet:       { color: COLORS.accent, marginRight: 8, fontSize: FONTS.sizes.sm },
-  nameRow:      { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
-  text:         { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, flex: 1, lineHeight: 20 },
-  swappedBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.accent, paddingHorizontal: 5, paddingVertical: 1, borderRadius: RADIUS.full },
-  swappedBadgeText: { fontSize: 8, color: COLORS.primary, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
-  original:     { fontSize: 10, color: COLORS.text.muted, marginTop: 1, fontStyle: 'italic' },
-  adjustBtn:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.border, marginLeft: SPACING.sm },
-  adjustBtnText:{ fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
-});
-
+// ── Main Styles ───────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  safe:          { flex: 1, backgroundColor: COLORS.background },
-  scroll:        { flex: 1 },
-  loading:       { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' },
-  noData:        { color: COLORS.text.secondary, fontSize: FONTS.sizes.base },
-  header:        { padding: SPACING.lg, paddingTop: SPACING.xl },
-  appName:       { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 3, marginBottom: 4 },
-  dateText:      { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
-  badgeRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.md },
-  badge:         { paddingHorizontal: 12, paddingVertical: 5, borderRadius: RADIUS.full },
-  badgeText:     { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold },
-  phaseText:     { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
-  deloadBanner:  { marginHorizontal: SPACING.lg, backgroundColor: COLORS.sessions.deload.bg, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm },
-  deloadText:    { color: COLORS.sessions.deload.text, fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
-  injuryBanner:  { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.status.warning, borderRadius: RADIUS.md, padding: SPACING.md, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.sm },
+  safe:         { flex: 1, backgroundColor: COLORS.background },
+  loading:      { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' },
+  scroll:       { flex: 1 },
+  scrollContent:{ paddingBottom: SPACING.xl },
+
+  // Progress bar
+  progressTrack:{ height: 3, backgroundColor: COLORS.surfaceHighlight, width: '100%' },
+  progressFill: { height: 3, backgroundColor: COLORS.accent },
+
+  // Session header
+  sessionHeader:{ paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.lg },
+  contextLine:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 2, marginBottom: SPACING.sm },
+  sessionTitle: { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 32, marginBottom: SPACING.sm },
+  sessionObj:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, lineHeight: 20 },
+
+  // Injury banners
+  injuryBanner:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#8B2222', borderRadius: RADIUS.md, padding: SPACING.md, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.sm },
   injuryBannerText: { color: '#FFF', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 18 },
 
-  // Main lift card
-  mainCard:        { marginHorizontal: SPACING.lg, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
-  mainCardTopRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
-  mainLabel:       { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 2 },
-  adjustBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.accent + '55', backgroundColor: COLORS.surfaceHighlight },
-  adjustBtnText:   { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
-  mainLiftRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
-  exerciseTitleRow:{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
-  mainLift:        { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 30, flex: 1 },
-  swappedBadge:    { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.accent, paddingHorizontal: 7, paddingVertical: 3, borderRadius: RADIUS.full },
-  swappedBadgeText:{ fontSize: 9, color: COLORS.primary, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
-  originalName:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: 4 },
-  ytBtn:           { backgroundColor: COLORS.accent, paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.md, marginLeft: SPACING.sm },
-  ytBtnText:       { color: '#FFF', fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold },
-  scheme:          { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, marginBottom: SPACING.sm, lineHeight: 20 },
-  intentRow:       { flexDirection: 'row', alignItems: 'center' },
-  intent:          { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
-  protocolText:    { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, lineHeight: 22 },
-  logBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, margin: SPACING.lg, borderRadius: RADIUS.lg, height: 52 },
-  logBtnText:      { color: '#FFF', fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy },
-  weekHeader:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginBottom: SPACING.sm },
-  weekGrid:        { paddingLeft: SPACING.lg, marginBottom: SPACING.sm },
-  weekCard:        { width: 150, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, marginRight: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
-  weekCardToday:   { borderColor: COLORS.accent, borderWidth: 2 },
-  weekDay:         { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 },
-  weekBadge:       { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full, marginBottom: 6 },
-  weekBadgeText:   { fontSize: 9, fontWeight: FONTS.weights.bold },
-  weekLift:        { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, marginBottom: 4 },
-  weekScheme:      { fontSize: 10, color: COLORS.text.muted, marginBottom: 6 },
-  statusBadge:     { alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.full, marginBottom: 4 },
-  statusBadgeText: { fontSize: 9, fontWeight: FONTS.weights.bold },
-  weekYT:          { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.sm, padding: 4, alignSelf: 'flex-end' },
-  weekYTText:      { color: COLORS.text.secondary, fontSize: 10 },
+  // Coach note card — gold left border
+  coachCard:    { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderLeftWidth: 3, borderLeftColor: COLORS.accent, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg },
+  coachHeader:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  coachAvatar:  { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.accent + '25', justifyContent: 'center', alignItems: 'center' },
+  coachAvatarIcon:{ fontSize: 13, color: COLORS.accent },
+  coachLabel:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5 },
+  coachText:    { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
+
+  // Warm-up section
+  warmupBar:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: SPACING.lg, marginBottom: 0, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
+  warmupBarLeft:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  warmupBarRight: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  warmupBarTitle: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
+  warmupDurationBadge: { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
+  warmupDurationText:  { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
+  warmupContent:  { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderBottomLeftRadius: RADIUS.lg, borderBottomRightRadius: RADIUS.lg, borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.border, paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg, marginBottom: SPACING.sm },
+  warmupStep:     { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.md, paddingTop: SPACING.md },
+  warmupStepNum:  { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center', marginTop: 1 },
+  warmupStepNumText: { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
+  warmupStepInfo: { flex: 1 },
+  warmupStepTop:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  warmupStepName: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary, flex: 1 },
+  warmupStepSets: { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
+  warmupStepNote: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 16 },
+
+  // Exercises section label
+  sectionLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm },
+
+  // Bottom bar
+  bottomBar:     { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, gap: SPACING.md },
+  bottomLeft:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  setsCount:     { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  setsLabel:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  pctPill:       { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 7, paddingVertical: 3, borderRadius: RADIUS.full },
+  pctText:       { fontSize: 10, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
+  finishBtn:     {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 13,
+    paddingHorizontal: SPACING.lg, gap: SPACING.sm,
+    shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
+  },
+  finishBtnDisabled: { backgroundColor: COLORS.surfaceHighlight, shadowOpacity: 0 },
+  finishBtnText:     { color: COLORS.primary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  finishBtnTextDisabled: { color: COLORS.text.muted },
 });
 
-// ── Modal Styles ──────────────────────────────────────────────────────────────
+// ── AdjustModal Styles ────────────────────────────────────────────────────────
 const m = StyleSheet.create({
   overlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   sheet:          { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40, maxHeight: '85%' },
@@ -679,19 +905,13 @@ const m = StyleSheet.create({
   closeBtn:       { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
   body:           { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
   prompt:         { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: SPACING.md },
-
-  // Step 1 — reason pills
   pillGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
   reasonPill:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.primary },
   reasonPillActive:   { borderColor: COLORS.accent, backgroundColor: COLORS.accent },
   reasonPillText:     { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
   reasonPillTextActive: { color: COLORS.primary },
-
-  // Step 2 — reason chip (above alts)
   reasonChip:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, backgroundColor: COLORS.surfaceHighlight, alignSelf: 'flex-start', marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.accent + '55' },
   reasonChipText: { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
-
-  // Alternative cards
   altList:        { gap: SPACING.sm, marginBottom: SPACING.lg },
   altCard:        { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, padding: SPACING.md, borderWidth: 1.5, borderColor: COLORS.border, gap: SPACING.sm },
   altCardSelected:{ borderColor: COLORS.accent, backgroundColor: COLORS.surface },
@@ -706,8 +926,6 @@ const m = StyleSheet.create({
   altRadio:       { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center', marginTop: 2 },
   altRadioSelected:{ borderColor: COLORS.accent },
   altRadioInner:  { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.accent },
-
-  // Confirm button
   confirmBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm },
   confirmBtnDisabled: { backgroundColor: COLORS.surfaceHighlight },
   confirmBtnText:     { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
