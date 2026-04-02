@@ -1,4 +1,8 @@
-import { AthleteProfile } from '../types';
+import {
+  AthleteProfile,
+  IntakeData, AnnualPlan, TodaySessionResponse, LogSetData,
+  PostWorkoutReviewData, ExerciseAlternative, ProgramChangeEntry
+} from '../types';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
@@ -66,19 +70,47 @@ export const coachApi = {
     }),
 };
 
-// Analytics
-export const analyticsApi = {
-  overview:   () => api('/analytics/overview'),
-  volume:     () => api('/analytics/volume'),
-  pain:       () => api('/analytics/pain'),
-  compliance: () => api('/analytics/compliance'),
-};
+// ─── Stage 1: Program API ───────────────────────────────────────────────────
 
-// Substitutions
-export const substitutionApi = {
-  log: (entry: {
-    date: string; week: number; day: string; sessionType: string;
-    originalExercise: string; replacementExercise: string; reason: string;
-  }) => api('/substitutions', { method: 'POST', body: JSON.stringify(entry) }),
-  list: (week?: number) => api(`/substitutions${week ? `?week=${week}` : ''}`),
+export const programApi = {
+  // Intake → generates 12-month plan
+  submitIntake: (data: IntakeData): Promise<{ success: boolean; profile: any; plan: AnnualPlan }> =>
+    api('/profile/intake', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Planning
+  getYearPlan: (): Promise<AnnualPlan> => api('/plan/year'),
+  getCurrentBlock: (): Promise<{ phase: any; block: any }> => api('/plan/block/current'),
+  getTodaySession: (): Promise<TodaySessionResponse> => api('/plan/session/today'),
+
+  // Session execution
+  startSession: (sessionId: string) =>
+    api('/session/start', { method: 'POST', body: JSON.stringify({ sessionId }) }),
+  logSet: (data: LogSetData) =>
+    api('/session/log-set', { method: 'POST', body: JSON.stringify(data) }),
+  adjustExercise: (exerciseId: string, exerciseName: string, reason: string): Promise<{ exercise: string; reason: string; alternatives: ExerciseAlternative[] }> =>
+    api('/session/adjust-exercise', { method: 'POST', body: JSON.stringify({ exerciseId, exerciseName, reason }) }),
+  applyAdjustment: (sessionId: string, oldExercise: string, newExercise: string, reason: string) =>
+    api('/session/apply-adjustment', { method: 'POST', body: JSON.stringify({ sessionId, oldExercise, newExercise, reason }) }),
+  finishSession: (sessionId: string): Promise<PostWorkoutReviewData> =>
+    api('/session/finish', { method: 'POST', body: JSON.stringify({ sessionId }) }),
+
+  // Pain
+  logPain: (data: { exerciseId?: string; sessionId?: string; location: string; score: number; note?: string }) =>
+    api('/pain', { method: 'POST', body: JSON.stringify(data) }),
+  getPainTrends: () => api('/pain/trends'),
+
+  // Coach intelligence
+  getChangeLog: (): Promise<{ changes: ProgramChangeEntry[] }> => api('/coach/change-log'),
+  getCoachMemory: () => api('/coach/memory'),
+
+  // Progress
+  getPRs: () => api('/progress/prs'),
+  getE1RM: (exercise: string) => api(`/progress/e1rm/${encodeURIComponent(exercise)}`),
+  getVolumeTrends: () => api('/progress/volume'),
+  getCompliance: () => api('/progress/compliance'),
+  getBodyweight: () => api('/progress/bodyweight'),
+
+  // Uploads
+  confirmFacts: (facts: Array<{ type: string; value: string }>) =>
+    api('/uploads/confirm', { method: 'POST', body: JSON.stringify({ facts }) }),
 };
