@@ -25,6 +25,7 @@ export default function RootLayout() {
         <Stack.Screen name="tools" />
         <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="upload" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="roadmap" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </>
   );

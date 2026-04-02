@@ -4,6 +4,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 
 const TOOLS = [
+  { id: 'roadmap', icon: 'map-marker-path', label: 'Year Roadmap', desc: '12-month strategic plan — phases, peaks, and milestones', color: COLORS.accent, route: '/roadmap' },
   { id: 'coach', icon: 'brain', label: 'Pocket Coach', desc: 'Ask your AI coach anything — powered by 37 strength books', color: COLORS.accent },
   { id: 'calculator', icon: 'calculator', label: '1RM Calculator', desc: 'Epley & Brzycki formulas with percentage table', color: COLORS.accent },
   { id: 'converter', icon: 'scale-balance', label: 'lbs ↔ kg Converter', desc: 'Bidirectional conversion + plate math calculator', color: COLORS.accentBlue },
@@ -26,7 +27,7 @@ export default function ToolsScreen() {
             testID={`tool-${tool.id}`}
             key={tool.id}
             style={s.toolCard}
-            onPress={() => router.push(`/tools/${tool.id}` as any)}
+            onPress={() => router.push((tool as any).route ?? `/tools/${tool.id}` as any)}
           >
             <View style={[s.toolIcon, { backgroundColor: tool.color + '20' }]}>
               <MaterialCommunityIcons name={tool.icon as any} size={28} color={tool.color} />
