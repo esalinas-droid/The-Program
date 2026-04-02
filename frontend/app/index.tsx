@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Redirect } from 'expo-router';
-import { isOnboardingComplete } from '../src/utils/storage';
+import { isOnboardingComplete, saveProfile } from '../src/utils/storage';
+import { profileApi } from '../src/utils/api';
 import { COLORS } from '../src/constants/theme';
 
 export default function Index() {
@@ -9,10 +10,29 @@ export default function Index() {
   const [onboarded, setOnboarded] = useState(false);
 
   useEffect(() => {
-    isOnboardingComplete().then(result => {
-      setOnboarded(result);
+    async function check() {
+      // First check local AsyncStorage
+      const localResult = await isOnboardingComplete();
+      if (localResult) {
+        setOnboarded(true);
+        setLoading(false);
+        return;
+      }
+      // Fallback: check backend profile (handles web fresh sessions & cleared storage)
+      try {
+        const profile = await profileApi.get();
+        if (profile?.onboardingComplete === true) {
+          // Sync to local storage so future checks are faster
+          await saveProfile(profile);
+          setOnboarded(true);
+          setLoading(false);
+          return;
+        }
+      } catch (_) { /* ignore */ }
+      setOnboarded(false);
       setLoading(false);
-    });
+    }
+    check();
   }, []);
 
   if (loading) {

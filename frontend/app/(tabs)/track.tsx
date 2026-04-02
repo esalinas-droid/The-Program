@@ -1,233 +1,757 @@
-import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, FlatList, ActivityIndicator, Dimensions } from 'react-native';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  SafeAreaView, ActivityIndicator, Animated, Dimensions,
+} from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { prApi, bwApi } from '../../src/utils/api';
-import { getProfile } from '../../src/utils/storage';
-import { PRRecord } from '../../src/types';
+import { prApi, bwApi, analyticsApi, profileApi } from '../../src/utils/api';
 
-const TRACKED_EXERCISES = [
-  'SSB Box Squat', 'Back Squat', 'Bench Press', 'Floor Press', 'Close-Grip Bench Press',
-  'Conventional Deadlift', 'Sumo Deadlift', 'Trap Bar Deadlift (High Handle)',
-  'Block Pull (Below Knee)', 'Log Clean and Press', 'Log Push Press',
-  'Axle Clean and Press', 'Axle Push Press', 'Overhead Press (Barbell)',
-  'Cambered Bar Box Squat', 'Yoke Carry', 'Farmers Carry', 'Speed Box Squat',
-  'Sandbag Carry', 'Suitcase Carry', 'Belt Squat',
+// ── Constants ─────────────────────────────────────────────────────────────────
+const W = Dimensions.get('window').width;
+const CHART_W = W - SPACING.lg * 4; // section margins + section padding on both sides
+
+const TEAL  = '#4DCEA6';
+const RED   = '#E54D4D';
+const AMBER = '#F5A623';
+
+const PRIMARY_LIFTS = [
+  { label: 'Squat', exercise: 'Back Squat' },
+  { label: 'Bench', exercise: 'Bench Press' },
+  { label: 'DL',    exercise: 'Conventional Deadlift' },
+  { label: 'OHP',   exercise: 'Overhead Press (Barbell)' },
 ];
 
-const { width } = Dimensions.get('window');
+const DELOAD_WEEKS = [4, 8, 12, 20, 24, 28, 32, 36, 40, 44, 48, 52];
+const SECTION_COUNT = 9;
 
-export default function TrackScreen() {
-  const [tab, setTab] = useState<'prs' | 'chart' | 'bw'>('prs');
-  const [prs, setPrs] = useState<PRRecord[]>([]);
-  const [bwHistory, setBwHistory] = useState<any[]>([]);
-  const [selectedEx, setSelectedEx] = useState<string | null>(null);
-  const [exHistory, setExHistory] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<any>(null);
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtDate(date: string): string {
+  try { return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  catch { return date; }
+}
 
-  useFocusEffect(useCallback(() => {
-    (async () => {
-      const prof = await getProfile();
-      setProfile(prof);
-      try {
-        const [prData, bwData] = await Promise.all([prApi.getAll(), bwApi.getHistory()]);
-        setPrs(prData);
-        setBwHistory(bwData);
-      } catch {}
-      setLoading(false);
-    })();
-  }, []));
+function isRecentPR(lastDate?: string | null): boolean {
+  if (!lastDate) return false;
+  return (Date.now() - new Date(lastDate).getTime()) / 86400000 < 14;
+}
 
-  async function loadExHistory(exercise: string) {
-    setSelectedEx(exercise);
-    setTab('chart');
-    try {
-      const data = await prApi.getHistory(exercise);
-      setExHistory(data);
-    } catch {}
+function getBlockInfo(currentWeek: number) {
+  const blockEnd   = DELOAD_WEEKS.find(w => w >= currentWeek) ?? 52;
+  const prevDeload = [...DELOAD_WEEKS].reverse().find(w => w < currentWeek) ?? 0;
+  const blockLen   = blockEnd - prevDeload;
+  const weekInBlk  = currentWeek - prevDeload;
+  const blockNum   = DELOAD_WEEKS.indexOf(blockEnd) + 1;
+  return { blockNum, blockEnd, blockStart: prevDeload + 1, progress: weekInBlk / blockLen, weekInBlk, blockLen };
+}
+
+// ── Chart: LineChart ──────────────────────────────────────────────────────────
+function LineChart({ data, color = COLORS.accent, height = 160 }: {
+  data: { y: number; label: string }[];
+  color?: string;
+  height?: number;
+}) {
+  if (!data || data.length < 2) {
+    return (
+      <View style={{ height, justifyContent: 'center', alignItems: 'center' }}>
+        <MaterialCommunityIcons name="chart-line-variant" size={28} color={COLORS.text.muted} />
+        <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm, marginTop: 6 }}>
+          Log more sessions to see your trend
+        </Text>
+      </View>
+    );
   }
 
-  if (loading) return <View style={s.loading}><ActivityIndicator color={COLORS.accent} /></View>;
+  const PAD_L = 42, PAD_R = 10, PAD_T = 14, PAD_B = 28;
+  const cW = CHART_W - PAD_L - PAD_R;
+  const cH = height - PAD_T - PAD_B;
+
+  const vals   = data.map(d => d.y);
+  const minY   = Math.min(...vals);
+  const maxY   = Math.max(...vals);
+  const rangeY = maxY - minY || 1;
+
+  const pts = data.map((d, i) => ({
+    x: PAD_L + (i / (data.length - 1)) * cW,
+    y: PAD_T + cH - ((d.y - minY) / rangeY) * cH,
+    label: d.label,
+    val: d.y,
+  }));
+
+  const linePath  = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaPath  = `${linePath} L ${pts[pts.length - 1].x.toFixed(1)} ${(PAD_T + cH).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(PAD_T + cH).toFixed(1)} Z`;
+  const gridVals  = [minY, Math.round((minY + maxY) / 2), maxY];
+  const xIdxs     = data.length <= 5
+    ? data.map((_, i) => i)
+    : [0, Math.floor(data.length / 4), Math.floor(data.length / 2), Math.floor(3 * data.length / 4), data.length - 1];
+
+  const svgH = height + PAD_B;
 
   return (
-    <SafeAreaView style={s.safe}>
-      <View style={s.header}>
-        <Text style={s.title}>PR TRACKING</Text>
-      </View>
-
-      {/* Tabs */}
-      <View style={s.tabRow}>
-        {[['prs', 'PR TABLE'], ['chart', 'PROGRESS CHART'], ['bw', 'BODYWEIGHT']].map(([key, label]) => (
-          <TouchableOpacity testID={`track-tab-${key}`} key={key} style={[s.tabBtn, tab === key && s.tabActive]} onPress={() => setTab(key as any)}>
-            <Text style={[s.tabText, tab === key && s.tabTextActive]}>{label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {tab === 'prs' && (
-        <ScrollView testID="pr-table-scroll">
-          <View style={s.tableHeader}>
-            <Text style={[s.th, { flex: 2 }]}>EXERCISE</Text>
-            <Text style={s.th}>DATE</Text>
-            <Text style={s.th}>e1RM</Text>
-            <Text style={s.th}>BEST</Text>
-          </View>
-          {prs.map((pr, i) => (
-            <TouchableOpacity testID={`pr-row-${i}`} key={pr.exercise} style={[s.prRow, i % 2 === 0 && s.prRowAlt]} onPress={() => loadExHistory(pr.exercise)}>
-              <Text style={[s.prCell, { flex: 2 }]} numberOfLines={1}>{pr.exercise}</Text>
-              <Text style={s.prCell}>{pr.lastDate ? formatDate(pr.lastDate) : '—'}</Text>
-              <Text style={[s.prCell, { color: COLORS.accentBlue, fontWeight: FONTS.weights.bold }]}>
-                {pr.bestE1rm > 0 ? `${pr.bestE1rm}` : '—'}
-              </Text>
-              <Text style={s.prCell}>{pr.bestWeight > 0 ? `${pr.bestWeight}×${pr.bestReps}` : '—'}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      )}
-
-      {tab === 'chart' && (
-        <ScrollView testID="chart-scroll">
-          {selectedEx ? (
-            <View style={s.chartContainer}>
-              <Text style={s.chartTitle}>{selectedEx}</Text>
-              <Text style={s.chartSub}>e1RM over time</Text>
-              {exHistory.length < 2 ? (
-                <View style={s.noChart}>
-                  <Text style={s.noChartText}>Log more sessions to see your progress curve.</Text>
-                </View>
-              ) : (
-                <SimpleLineChart data={exHistory.map(d => ({ x: d.week, y: d.e1rm, label: d.date }))} />
-              )}
-            </View>
-          ) : (
-            <View style={s.noChart}>
-              <Text style={s.noChartText}>Tap an exercise in the PR Table to view its progress chart.</Text>
-            </View>
-          )}
-          <View style={s.exList}>
-            <Text style={s.exListHeader}>SELECT EXERCISE</Text>
-            {TRACKED_EXERCISES.map(ex => (
-              <TouchableOpacity testID={`select-ex-${ex}`} key={ex} style={[s.exItem, selectedEx === ex && s.exItemActive]} onPress={() => loadExHistory(ex)}>
-                <Text style={[s.exItemText, selectedEx === ex && { color: COLORS.accent }]}>{ex}</Text>
-                <Text style={s.exItemArrow}>→</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
-      )}
-
-      {tab === 'bw' && (
-        <ScrollView testID="bw-scroll">
-          <View style={s.bwContainer}>
-            <Text style={s.chartTitle}>Bodyweight Trend</Text>
-            {profile && (
-              <View style={s.bwGoals}>
-                <View style={s.bwGoalRow}>
-                  <Text style={s.bwGoalLabel}>Current</Text>
-                  <Text style={[s.bwGoalVal, { color: COLORS.text.primary }]}>{profile.currentBodyweight} lbs</Text>
-                </View>
-                <View style={s.bwGoalRow}>
-                  <Text style={s.bwGoalLabel}>12-Week Goal</Text>
-                  <Text style={[s.bwGoalVal, { color: COLORS.accentBlue }]}>{profile.bw12WeekGoal} lbs</Text>
-                </View>
-                <View style={s.bwGoalRow}>
-                  <Text style={s.bwGoalLabel}>Long-Run Goal</Text>
-                  <Text style={[s.bwGoalVal, { color: COLORS.accent }]}>{profile.bwLongRunGoal} lbs</Text>
-                </View>
-              </View>
-            )}
-            {bwHistory.length < 2 ? (
-              <View style={s.noChart}>
-                <Text style={s.noChartText}>Log bodyweight in the workout log to see your trend here.</Text>
-              </View>
-            ) : (
-              <SimpleLineChart data={bwHistory.map(d => ({ x: d.date, y: d.weight, label: d.date }))} color={COLORS.accentBlue} />
-            )}
-          </View>
-        </ScrollView>
-      )}
-    </SafeAreaView>
+    <Svg width={CHART_W} height={svgH}>
+      {gridVals.map((v, i) => {
+        const gy = PAD_T + cH - ((v - minY) / rangeY) * cH;
+        return (
+          <G key={i}>
+            <Line x1={PAD_L} y1={gy} x2={CHART_W - PAD_R} y2={gy} stroke="#2A2A2A" strokeWidth={1} strokeDasharray="4,3" />
+            <SvgText x={PAD_L - 4} y={gy + 4} fontSize={9} fill="#666" textAnchor="end">{Math.round(v)}</SvgText>
+          </G>
+        );
+      })}
+      <Path d={areaPath} fill={color + '14'} />
+      <Path d={linePath} stroke={color} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {pts.map((pt, i) => <Circle key={i} cx={pt.x} cy={pt.y} r={3.5} fill={color} />)}
+      {xIdxs.map(idx => (
+        <SvgText key={idx} x={pts[idx].x} y={svgH - 4} fontSize={9} fill="#666" textAnchor="middle">
+          {data[idx].label}
+        </SvgText>
+      ))}
+    </Svg>
   );
 }
 
-function SimpleLineChart({ data, color = COLORS.accentBlue }: { data: any[]; color?: string }) {
-  if (!data || data.length < 2) return null;
-  const vals = data.map(d => d.y);
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const range = max - min || 1;
-  const W = width - SPACING.lg * 2 - SPACING.xl;
-  const H = 160;
+// ── Chart: BarChart ───────────────────────────────────────────────────────────
+function BarChart({ data, color = COLORS.accent }: {
+  data: { week: number; value: number; isCurrent: boolean }[];
+  color?: string;
+}) {
+  if (!data || data.length === 0) return (
+    <View style={{ height: 120, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm }}>Log sessions to see volume</Text>
+    </View>
+  );
 
-  const points = data.map((d, i) => ({
-    x: (i / (data.length - 1)) * W,
-    y: H - ((d.y - min) / range) * H,
-    val: d.y,
-    label: d.label,
-  }));
+  const H = 130, PAD_X = 8, PAD_T = 10, PAD_B = 26;
+  const cH = H - PAD_T - PAD_B;
+  const cW = CHART_W - PAD_X * 2;
+
+  const maxVal = Math.max(...data.map(d => d.value), 1);
+  const barW   = Math.max(10, (cW / data.length) * 0.65);
+  const step   = cW / data.length;
 
   return (
-    <View style={{ marginHorizontal: SPACING.lg, marginVertical: SPACING.lg }}>
-      <View style={{ height: H + 20, position: 'relative', borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
-        {points.map((pt, i) => (
-          <View key={i} style={{ position: 'absolute', left: pt.x - 4, top: pt.y - 4, width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
-        ))}
-        {points.slice(1).map((pt, i) => {
-          const prev = points[i];
-          const dx = pt.x - prev.x;
-          const dy = pt.y - prev.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-          return (
-            <View key={i} style={{ position: 'absolute', left: prev.x, top: prev.y, width: len, height: 2, backgroundColor: color, transformOrigin: '0% 50%', transform: [{ rotate: `${angle}deg` }] }} />
-          );
-        })}
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-        <Text style={{ color: COLORS.text.muted, fontSize: 10 }}>{data[0].label}</Text>
-        <Text style={{ color: color, fontSize: 12, fontWeight: FONTS.weights.bold }}>{max.toFixed(0)}</Text>
-        <Text style={{ color: COLORS.text.muted, fontSize: 10 }}>{data[data.length - 1].label}</Text>
+    <Svg width={CHART_W} height={H}>
+      {data.map((d, i) => {
+        const barH = Math.max(2, (d.value / maxVal) * cH);
+        const x    = PAD_X + step * i + (step - barW) / 2;
+        const y    = PAD_T + cH - barH;
+        return (
+          <G key={i}>
+            <Rect
+              x={x} y={y} width={barW} height={barH}
+              fill={d.isCurrent ? 'transparent' : color}
+              stroke={d.isCurrent ? color : 'none'}
+              strokeWidth={1.5}
+              rx={3}
+            />
+            {d.value > 0 && (
+              <SvgText x={x + barW / 2} y={y - 4} fontSize={8} fill={d.isCurrent ? color : COLORS.text.muted} textAnchor="middle">
+                {d.value >= 1000 ? `${(d.value / 1000).toFixed(1)}k` : d.value}
+              </SvgText>
+            )}
+            <SvgText x={x + barW / 2} y={H - 6} fontSize={8} fill="#666" textAnchor="middle">
+              W{d.week}
+            </SvgText>
+          </G>
+        );
+      })}
+    </Svg>
+  );
+}
+
+// ── Chart: CircularProgress ───────────────────────────────────────────────────
+function CircularProgress({ size = 130, progress = 0, color = COLORS.accent }: {
+  size?: number; progress?: number; color?: string;
+}) {
+  const sw    = 11;
+  const r     = (size - sw * 2) / 2;
+  const cx    = size / 2;
+  const cy    = size / 2;
+  const circ  = 2 * Math.PI * r;
+  const pct   = Math.min(1, Math.max(0, progress));
+  const offset = circ * (1 - pct);
+
+  return (
+    <View style={{ width: size, height: size }}>
+      <Svg width={size} height={size}>
+        <Circle cx={cx} cy={cy} r={r} stroke="#2A2A2A" strokeWidth={sw} fill="none" />
+        <Circle
+          cx={cx} cy={cy} r={r}
+          stroke={color} strokeWidth={sw} fill="none"
+          strokeDasharray={`${circ} ${circ}`}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform={`rotate(-90, ${cx}, ${cy})`}
+        />
+      </Svg>
+      <View style={[StyleSheet.absoluteFillObject, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: COLORS.text.primary, fontSize: 24, fontWeight: '900', lineHeight: 28 }}>
+          {Math.round(pct * 100)}%
+        </Text>
+        <Text style={{ color: COLORS.text.muted, fontSize: 9, letterSpacing: 1 }}>COMPLIANCE</Text>
       </View>
     </View>
   );
 }
 
-function formatDate(date: string): string {
-  try {
-    return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-  } catch { return date; }
+// ── Chart: MiniPainBars ───────────────────────────────────────────────────────
+function MiniPainBars({ data, color }: { data: { week: number; avgPain: number }[]; color: string }) {
+  if (!data || data.length === 0) return null;
+  const H = 90, PAD_X = 8, PAD_T = 8, PAD_B = 22;
+  const cH = H - PAD_T - PAD_B;
+  const cW = CHART_W - PAD_X * 2;
+  const step = cW / data.length;
+  const barW = Math.max(8, step * 0.6);
+
+  return (
+    <Svg width={CHART_W} height={H}>
+      {data.map((d, i) => {
+        const barH = Math.max(2, (d.avgPain / 4) * cH);
+        const x    = PAD_X + step * i + (step - barW) / 2;
+        const y    = PAD_T + cH - barH;
+        return (
+          <G key={i}>
+            <Rect x={x} y={y} width={barW} height={barH} fill={color} rx={2} />
+            <SvgText x={x + barW / 2} y={H - 5} fontSize={8} fill="#666" textAnchor="middle">W{d.week}</SvgText>
+          </G>
+        );
+      })}
+    </Svg>
+  );
 }
 
+// ── SectionHeader ─────────────────────────────────────────────────────────────
+function SectionHeader({ icon, title, subtitle }: { icon: string; title: string; subtitle?: string }) {
+  return (
+    <View style={hdr.wrap}>
+      <View style={hdr.icon}>
+        <MaterialCommunityIcons name={icon as any} size={17} color={COLORS.accent} />
+      </View>
+      <View>
+        <Text style={hdr.title}>{title}</Text>
+        {subtitle ? <Text style={hdr.sub}>{subtitle}</Text> : null}
+      </View>
+    </View>
+  );
+}
+const hdr = StyleSheet.create({
+  wrap:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
+  icon:  { width: 32, height: 32, borderRadius: RADIUS.md, backgroundColor: COLORS.accent + '22', justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 0.5 },
+  sub:   { fontSize: 10, color: COLORS.text.muted, letterSpacing: 1.5, marginTop: 1 },
+});
+
+// ── PillRow ───────────────────────────────────────────────────────────────────
+function PillRow({ options, value, onSelect, labels }: {
+  options: string[];
+  value: string;
+  onSelect: (v: string) => void;
+  labels?: Record<string, string>;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.md }}>
+      {options.map(opt => (
+        <TouchableOpacity
+          key={opt}
+          style={[pill.base, value === opt && pill.active]}
+          onPress={() => onSelect(opt)}
+        >
+          <Text style={[pill.text, value === opt && pill.textActive]}>
+            {labels ? labels[opt] : opt}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+const pill = StyleSheet.create({
+  base:       { paddingVertical: 6, paddingHorizontal: 14, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  active:     { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  text:       { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: COLORS.text.muted, letterSpacing: 0.5 },
+  textActive: { color: '#000' },
+});
+
+// ── Main Screen ───────────────────────────────────────────────────────────────
+export default function TrackScreen() {
+  // Data state
+  const [overview,    setOverview]    = useState<any>(null);
+  const [prs,         setPrs]         = useState<any[]>([]);
+  const [prSort,      setPrSort]      = useState<'recent' | 'heaviest' | 'exercise'>('recent');
+  const [selectedLift,setSelectedLift]= useState('Back Squat');
+  const [liftHistory, setLiftHistory] = useState<any[]>([]);
+  const [liftLoading, setLiftLoading] = useState(false);
+  const [volumeData,  setVolumeData]  = useState<any[]>([]);
+  const [volumeMode,  setVolumeMode]  = useState('sets');
+  const [bwData,      setBwData]      = useState<any[]>([]);
+  const [bwRange,     setBwRange]     = useState('30');
+  const [painData,    setPainData]    = useState<any>(null);
+  const [compliance,  setCompliance]  = useState<any[]>([]);
+  const [profile,     setProfile]     = useState<any>(null);
+  const [loading,     setLoading]     = useState(true);
+
+  // Stagger animations
+  const anims = useRef(Array.from({ length: SECTION_COUNT }, () => new Animated.Value(0))).current;
+
+  function runAnims() {
+    anims.forEach(a => a.setValue(0));
+    Animated.stagger(65, anims.map(a =>
+      Animated.timing(a, { toValue: 1, duration: 380, useNativeDriver: true })
+    )).start();
+  }
+
+  function fade(i: number) {
+    return {
+      opacity: anims[i],
+      transform: [{ translateY: anims[i].interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }],
+    };
+  }
+
+  useFocusEffect(useCallback(() => { loadAll(); }, []));
+
+  async function loadAll() {
+    setLoading(true);
+    const [prData, bwHistory, profileData] = await Promise.all([
+      prApi.getAll().catch(() => []),
+      bwApi.getHistory().catch(() => []),
+      profileApi.get().catch(() => null),
+    ]);
+    setPrs(prData);
+    setBwData(bwHistory);
+    setProfile(profileData);
+
+    const [ov, vol, pain, comp] = await Promise.all([
+      analyticsApi.overview().catch(() => null),
+      analyticsApi.volume().catch(() => []),
+      analyticsApi.pain().catch(() => null),
+      analyticsApi.compliance().catch(() => []),
+    ]);
+    setOverview(ov);
+    setVolumeData(vol);
+    setPainData(pain);
+    setCompliance(comp);
+    setLoading(false);
+    runAnims();
+    loadLift('Back Squat');
+  }
+
+  async function loadLift(exercise: string) {
+    setSelectedLift(exercise);
+    setLiftLoading(true);
+    const data = await prApi.getHistory(exercise).catch(() => []);
+    setLiftHistory(data);
+    setLiftLoading(false);
+  }
+
+  // ── Derived data ────────────────────────────────────────────────────────────
+  const sortedPRs = useMemo(() => {
+    const filtered = prs.filter(p => p.bestE1rm > 0 || p.bestWeight > 0);
+    if (prSort === 'recent')   return [...filtered].sort((a, b) => (b.lastDate ?? '') > (a.lastDate ?? '') ? 1 : -1);
+    if (prSort === 'heaviest') return [...filtered].sort((a, b) => b.bestE1rm - a.bestE1rm);
+    return [...filtered].sort((a, b) => a.exercise.localeCompare(b.exercise));
+  }, [prs, prSort]);
+
+  const liftChartData = useMemo(() =>
+    liftHistory.filter(d => d.e1rm > 0).map(d => ({ y: d.e1rm, label: `W${d.week}` })),
+    [liftHistory]
+  );
+
+  const currentE1RM = useMemo(() =>
+    liftChartData.length ? liftChartData[liftChartData.length - 1].y : null,
+    [liftChartData]
+  );
+
+  const bwChartData = useMemo(() => {
+    if (!bwData.length) return [];
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - parseInt(bwRange));
+    return bwData.filter(d => new Date(d.date) >= cutoff).map(d => ({ y: d.weight, label: fmtDate(d.date) }));
+  }, [bwData, bwRange]);
+
+  const currentBW = useMemo(() =>
+    bwChartData.length ? bwChartData[bwChartData.length - 1].y : (profile?.currentBodyweight ?? null),
+    [bwChartData, profile]
+  );
+
+  const blockInfo = useMemo(() => getBlockInfo(profile?.currentWeek ?? 1), [profile]);
+
+  const trendColor = useMemo(() => {
+    if (!painData?.trend) return AMBER;
+    if (painData.trend === 'decreasing') return TEAL;
+    if (painData.trend === 'increasing') return RED;
+    return AMBER;
+  }, [painData]);
+
+  const overallCompliance = overview?.compliance ?? 0;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={s.loadWrap}>
+        <ActivityIndicator color={COLORS.accent} size="large" />
+        <Text style={s.loadText}>Analyzing your data…</Text>
+      </View>
+    );
+  }
+
+  const summaryCards = [
+    { icon: 'trophy',        label: 'PRs This Block',  value: overview?.prsThisBlock ?? '—' },
+    { icon: 'speedometer',   label: 'Avg RPE',          value: overview?.avgRPE ?? '—' },
+    { icon: 'check-circle',  label: 'Compliance',       value: overview ? `${overview.compliance}%` : '—' },
+    { icon: 'calendar-check',label: 'Training Days',    value: overview?.trainingDays ?? '—' },
+  ];
+
+  return (
+    <SafeAreaView style={s.safe}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={s.scroll}
+      >
+        {/* ─── Header ──────────────────────────────────────────────────── */}
+        <Animated.View style={[s.header, fade(0)]}>
+          <Text style={s.title}>TRACK</Text>
+          <Text style={s.subtitle}>PROGRESS & ANALYTICS</Text>
+        </Animated.View>
+
+        {/* ─── Summary Cards ────────────────────────────────────────────── */}
+        <Animated.View style={fade(1)}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ paddingLeft: SPACING.lg }}
+            contentContainerStyle={{ gap: SPACING.sm, paddingRight: SPACING.lg, paddingVertical: 4 }}
+          >
+            {summaryCards.map((c, i) => (
+              <View key={i} style={s.summCard}>
+                <MaterialCommunityIcons name={c.icon as any} size={15} color={COLORS.accent} style={{ marginBottom: 5 }} />
+                <Text style={s.summLabel}>{c.label}</Text>
+                <Text style={s.summValue}>{String(c.value)}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </Animated.View>
+
+        {/* ─── PR Board ─────────────────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(2)]}>
+          <SectionHeader icon="trophy-outline" title="Personal Records" subtitle="ALL-TIME BESTS" />
+
+          {/* Sort pills */}
+          <View style={s.sortRow}>
+            {([['recent', 'Most Recent'], ['heaviest', 'Heaviest'], ['exercise', 'A–Z']] as const).map(([k, label]) => (
+              <TouchableOpacity
+                key={k}
+                style={[s.sortPill, prSort === k && s.sortPillOn]}
+                onPress={() => setPrSort(k)}
+              >
+                <Text style={[s.sortPillTxt, prSort === k && s.sortPillTxtOn]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {sortedPRs.length === 0 ? (
+            <View style={s.empty}>
+              <MaterialCommunityIcons name="dumbbell" size={30} color={COLORS.text.muted} />
+              <Text style={s.emptyTxt}>Start logging to build your PR board</Text>
+            </View>
+          ) : sortedPRs.map((pr, i) => (
+            <View key={pr.exercise} style={[s.prRow, i > 0 && s.prRowBorder]}>
+              <View style={s.prLeft}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <MaterialCommunityIcons name="star" size={12} color={COLORS.accent} />
+                  <Text style={s.prName} numberOfLines={1}>{pr.exercise}</Text>
+                </View>
+                <Text style={s.prDate}>{pr.lastDate ? fmtDate(pr.lastDate) : '—'}</Text>
+              </View>
+              <View style={s.prRight}>
+                {isRecentPR(pr.lastDate) && (
+                  <View style={s.newBadge}><Text style={s.newBadgeTxt}>NEW PR</Text></View>
+                )}
+                <Text style={s.prVal}>{pr.bestWeight > 0 ? `${pr.bestWeight} × ${pr.bestReps}` : '—'}</Text>
+                {pr.bestE1rm > 0 && <Text style={s.prE1rm}>e1RM: {pr.bestE1rm}</Text>}
+              </View>
+            </View>
+          ))}
+        </Animated.View>
+
+        {/* ─── Strength Trends ──────────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(3)]}>
+          <SectionHeader icon="chart-line" title="Strength Trends" subtitle="ESTIMATED 1RM OVER TIME" />
+
+          {/* Current e1RM callout */}
+          {currentE1RM !== null && (
+            <View style={s.e1rmBox}>
+              <Text style={s.e1rmBoxLabel}>Current e1RM</Text>
+              <Text style={s.e1rmBoxVal}>
+                {currentE1RM} <Text style={s.e1rmBoxUnit}>{profile?.units || 'lbs'}</Text>
+              </Text>
+            </View>
+          )}
+
+          {/* Lift selector */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: SPACING.md }}
+            contentContainerStyle={{ gap: SPACING.sm }}
+          >
+            {PRIMARY_LIFTS.map(lift => (
+              <TouchableOpacity
+                key={lift.exercise}
+                style={[s.liftPill, selectedLift === lift.exercise && s.liftPillOn]}
+                onPress={() => loadLift(lift.exercise)}
+              >
+                <Text style={[s.liftPillTxt, selectedLift === lift.exercise && s.liftPillTxtOn]}>
+                  {lift.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {liftLoading
+            ? <View style={{ height: 160, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={COLORS.accent} /></View>
+            : <LineChart data={liftChartData} color={COLORS.accent} height={160} />
+          }
+        </Animated.View>
+
+        {/* ─── Volume Trends ────────────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(4)]}>
+          <SectionHeader icon="chart-bar" title="Training Volume" subtitle="LAST 8 WEEKS" />
+          <PillRow
+            options={['sets', 'tonnage']}
+            value={volumeMode}
+            onSelect={setVolumeMode}
+            labels={{ sets: 'Total Sets', tonnage: 'Tonnage (lbs)' }}
+          />
+          <BarChart
+            data={volumeData.map(d => ({
+              week: d.week,
+              value: volumeMode === 'sets' ? d.sets : d.tonnage,
+              isCurrent: d.isCurrent,
+            }))}
+            color={COLORS.accent}
+          />
+        </Animated.View>
+
+        {/* ─── Bodyweight ───────────────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(5)]}>
+          <SectionHeader icon="scale-bathroom" title="Bodyweight" subtitle="WEIGHT TREND" />
+
+          <View style={s.bwStatRow}>
+            <View>
+              <Text style={s.bwStatLabel}>Current</Text>
+              <Text style={s.bwStatVal}>
+                {currentBW ?? '—'} <Text style={s.bwUnit}>{profile?.units || 'lbs'}</Text>
+              </Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={s.bwStatLabel}>12-Wk Goal</Text>
+              <Text style={[s.bwStatVal, { color: TEAL }]}>
+                {profile?.bw12WeekGoal ?? '—'} <Text style={s.bwUnit}>{profile?.units || 'lbs'}</Text>
+              </Text>
+            </View>
+          </View>
+
+          <PillRow
+            options={['30', '60', '90']}
+            value={bwRange}
+            onSelect={setBwRange}
+            labels={{ '30': '30 Days', '60': '60 Days', '90': '90 Days' }}
+          />
+          <LineChart data={bwChartData} color={TEAL} height={140} />
+        </Animated.View>
+
+        {/* ─── Pain & Discomfort ────────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(6)]}>
+          <SectionHeader icon="medical-bag" title="Pain & Discomfort" subtitle="HEALTH MONITORING" />
+
+          {!painData?.hasPain ? (
+            <View style={s.cleanWrap}>
+              <MaterialCommunityIcons name="shield-check" size={30} color={TEAL} />
+              <Text style={[s.emptyTxt, { color: TEAL }]}>No significant pain patterns</Text>
+              <Text style={s.cleanSub}>Your body is handling the training load well</Text>
+            </View>
+          ) : (
+            <>
+              <View style={[s.trendBadge, { backgroundColor: trendColor + '1A', borderColor: trendColor + '60' }]}>
+                <MaterialCommunityIcons
+                  name={painData.trend === 'decreasing' ? 'trending-down' : painData.trend === 'increasing' ? 'trending-up' : 'trending-neutral'}
+                  size={15} color={trendColor}
+                />
+                <Text style={[s.trendTxt, { color: trendColor }]}>
+                  {painData.trend === 'decreasing'
+                    ? 'Improving — pain trending down'
+                    : painData.trend === 'increasing'
+                    ? 'Worsening — monitor closely'
+                    : 'Stable — no significant change'}
+                </Text>
+              </View>
+
+              <MiniPainBars data={painData.weeklyData} color={trendColor} />
+
+              <Text style={s.locHeader}>MOST AFFECTED EXERCISES</Text>
+              {painData.locations.map((loc: any, i: number) => (
+                <View key={i} style={s.locRow}>
+                  <Text style={s.locName} numberOfLines={1}>{loc.exercise}</Text>
+                  <View style={[s.locBadge, { backgroundColor: trendColor + '22' }]}>
+                    <Text style={[s.locCount, { color: trendColor }]}>{loc.count}×</Text>
+                  </View>
+                </View>
+              ))}
+            </>
+          )}
+        </Animated.View>
+
+        {/* ─── Session Compliance ───────────────────────────────────────── */}
+        <Animated.View style={[s.section, fade(7)]}>
+          <SectionHeader icon="check-circle-outline" title="Session Compliance" subtitle="LAST 8 WEEKS" />
+
+          <View style={s.compRow}>
+            <CircularProgress progress={overallCompliance / 100} color={COLORS.accent} size={130} />
+
+            <View style={s.compBreakdown}>
+              {compliance.length === 0 ? (
+                <Text style={s.emptyTxt}>Log sessions to see breakdown</Text>
+              ) : compliance.map((item: any, i: number) => {
+                const clr = item.rate >= 80 ? TEAL : item.rate >= 60 ? AMBER : RED;
+                return (
+                  <View key={i} style={s.compItem}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <Text style={s.compLabel}>{item.sessionType}</Text>
+                      <Text style={[s.compRate, { color: clr }]}>{item.rate}%</Text>
+                    </View>
+                    <View style={s.compBar}>
+                      <View style={[s.compFill, { width: `${item.rate}%`, backgroundColor: clr }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* ─── Block Progress ───────────────────────────────────────────── */}
+        <Animated.View style={[s.section, s.lastSection, fade(8)]}>
+          <SectionHeader icon="flag-checkered" title="Block Progress" subtitle={`BLOCK ${blockInfo.blockNum} OF 13`} />
+
+          <View style={s.blkStatRow}>
+            <View>
+              <Text style={s.blkStatLabel}>Current Week</Text>
+              <Text style={s.blkStatVal}>Week {profile?.currentWeek ?? 1}</Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={s.blkStatLabel}>Week in Block</Text>
+              <Text style={s.blkStatVal}>{blockInfo.weekInBlk} / {blockInfo.blockLen}</Text>
+            </View>
+          </View>
+
+          <View style={s.blkBarTrack}>
+            <View style={[s.blkBarFill, { width: `${Math.min(100, blockInfo.progress * 100)}%` }]} />
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 }}>
+            <Text style={s.blkBarLabel}>Wk {blockInfo.blockStart}</Text>
+            <Text style={[s.blkBarLabel, { color: COLORS.accent, fontWeight: FONTS.weights.bold }]}>
+              {Math.round(blockInfo.progress * 100)}% complete
+            </Text>
+            <Text style={s.blkBarLabel}>Deload Wk {blockInfo.blockEnd}</Text>
+          </View>
+
+          <View style={s.milestone}>
+            <MaterialCommunityIcons name="flag" size={15} color={COLORS.accent} />
+            <Text style={s.milestoneTxt}>
+              {blockInfo.blockLen - blockInfo.weekInBlk} week{blockInfo.blockLen - blockInfo.weekInBlk !== 1 ? 's' : ''} until next deload
+            </Text>
+          </View>
+        </Animated.View>
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.background },
-  loading: { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' },
-  header: { padding: SPACING.lg, paddingTop: SPACING.xl },
-  title: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 2 },
-  tabRow: { flexDirection: 'row', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
-  tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: RADIUS.md, backgroundColor: COLORS.surface },
-  tabActive: { backgroundColor: COLORS.accent },
-  tabText: { fontSize: 10, fontWeight: FONTS.weights.bold, color: COLORS.text.muted, letterSpacing: 1 },
-  tabTextActive: { color: '#FFF' },
-  tableHeader: { flexDirection: 'row', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  th: { flex: 1, fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1 },
-  prRow: { flexDirection: 'row', paddingHorizontal: SPACING.lg, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  prRowAlt: { backgroundColor: COLORS.surface + '40' },
-  prCell: { flex: 1, color: COLORS.text.secondary, fontSize: FONTS.sizes.xs },
-  chartContainer: { padding: SPACING.lg },
-  chartTitle: { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: 4 },
-  chartSub: { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, marginBottom: SPACING.lg },
-  noChart: { margin: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.xl, alignItems: 'center' },
-  noChartText: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm, textAlign: 'center', lineHeight: 22 },
-  exList: { padding: SPACING.lg },
-  exListHeader: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, marginBottom: SPACING.sm },
-  exItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  exItemActive: { borderLeftWidth: 2, borderLeftColor: COLORS.accent, paddingLeft: 8 },
-  exItemText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm },
-  exItemArrow: { color: COLORS.text.muted },
-  bwContainer: { padding: SPACING.lg },
-  bwGoals: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: SPACING.lg },
-  bwGoalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  bwGoalLabel: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm },
-  bwGoalVal: { fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.sm },
+  safe:        { flex: 1, backgroundColor: COLORS.background },
+  scroll:      { paddingBottom: 40 },
+  loadWrap:    { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center', gap: 12 },
+  loadText:    { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
+
+  // Header
+  header:   { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.md },
+  title:    { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 2 },
+  subtitle: { fontSize: 10, color: COLORS.text.muted, letterSpacing: 2.5, marginTop: 2 },
+
+  // Summary cards
+  summCard:  { width: 100, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
+  summLabel: { fontSize: 10, color: COLORS.text.muted, letterSpacing: 0.3, marginBottom: 2, lineHeight: 14 },
+  summValue: { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.accent, lineHeight: 30 },
+
+  // Section card
+  section:     { marginHorizontal: SPACING.lg, marginTop: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  lastSection: { marginBottom: SPACING.xxl },
+
+  // Empty state
+  empty:    { alignItems: 'center', paddingVertical: SPACING.xl, gap: SPACING.sm },
+  emptyTxt: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm, textAlign: 'center' },
+  cleanWrap:{ alignItems: 'center', paddingVertical: SPACING.lg, gap: 6 },
+  cleanSub: { color: COLORS.text.muted, fontSize: FONTS.sizes.xs, textAlign: 'center', lineHeight: 18, maxWidth: 260 },
+
+  // PR Board
+  sortRow:       { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md, flexWrap: 'wrap' },
+  sortPill:      { paddingVertical: 5, paddingHorizontal: 11, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  sortPillOn:    { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  sortPillTxt:   { fontSize: 11, fontWeight: FONTS.weights.bold, color: COLORS.text.muted },
+  sortPillTxtOn: { color: '#000' },
+  prRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 11 },
+  prRowBorder:{ borderTopWidth: 1, borderTopColor: COLORS.border },
+  prLeft:     { flex: 1, gap: 3, paddingRight: SPACING.sm },
+  prRight:    { alignItems: 'flex-end', gap: 4 },
+  prName:     { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary },
+  prDate:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  prVal:      { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary },
+  prE1rm:     { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.medium },
+  newBadge:   { backgroundColor: COLORS.accent + '20', borderWidth: 1, borderColor: COLORS.accent, borderRadius: RADIUS.full, paddingHorizontal: 6, paddingVertical: 2 },
+  newBadgeTxt:{ fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 0.8 },
+
+  // e1RM
+  e1rmBox:     { backgroundColor: COLORS.background, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.md },
+  e1rmBoxLabel:{ fontSize: 10, color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 2 },
+  e1rmBoxVal:  { fontSize: 34, fontWeight: FONTS.weights.heavy, color: COLORS.accent, lineHeight: 40 },
+  e1rmBoxUnit: { fontSize: 16, color: COLORS.text.muted, fontWeight: FONTS.weights.regular },
+  liftPill:    { paddingVertical: 6, paddingHorizontal: 18, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  liftPillOn:  { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  liftPillTxt: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, color: COLORS.text.muted },
+  liftPillTxtOn:{ color: '#000' },
+
+  // Bodyweight
+  bwStatRow:  { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: COLORS.background, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.md },
+  bwStatLabel:{ fontSize: 10, color: COLORS.text.muted, letterSpacing: 0.5, marginBottom: 2 },
+  bwStatVal:  { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 30 },
+  bwUnit:     { fontSize: 13, fontWeight: FONTS.weights.regular, color: COLORS.text.muted },
+
+  // Pain
+  trendBadge: { flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.md },
+  trendTxt:   { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
+  locHeader:  { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, marginTop: SPACING.md, marginBottom: SPACING.sm },
+  locRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  locName:    { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, paddingRight: SPACING.sm },
+  locBadge:   { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
+  locCount:   { fontSize: 11, fontWeight: FONTS.weights.bold },
+
+  // Compliance
+  compRow:      { flexDirection: 'row', gap: SPACING.lg, alignItems: 'flex-start' },
+  compBreakdown:{ flex: 1, gap: SPACING.md },
+  compItem:     {},
+  compLabel:    { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary },
+  compRate:     { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold },
+  compBar:      { height: 6, backgroundColor: COLORS.border, borderRadius: RADIUS.full, overflow: 'hidden' },
+  compFill:     { height: '100%', borderRadius: RADIUS.full },
+
+  // Block Progress
+  blkStatRow:  { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: COLORS.background, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.md },
+  blkStatLabel:{ fontSize: 10, color: COLORS.text.muted, letterSpacing: 0.5, marginBottom: 2 },
+  blkStatVal:  { fontSize: 20, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  blkBarTrack: { height: 10, backgroundColor: COLORS.border, borderRadius: RADIUS.full, overflow: 'hidden' },
+  blkBarFill:  { height: '100%', backgroundColor: COLORS.accent, borderRadius: RADIUS.full },
+  blkBarLabel: { fontSize: 10, color: COLORS.text.muted },
+  milestone:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, backgroundColor: COLORS.accent + '14', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.accent + '40', marginTop: SPACING.md },
+  milestoneTxt:{ fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
 });

@@ -66,6 +66,14 @@ export const coachApi = {
     }),
 };
 
+// Analytics
+export const analyticsApi = {
+  overview:   () => api('/analytics/overview'),
+  volume:     () => api('/analytics/volume'),
+  pain:       () => api('/analytics/pain'),
+  compliance: () => api('/analytics/compliance'),
+};
+
 // Substitutions
 export const substitutionApi = {
   log: (entry: {

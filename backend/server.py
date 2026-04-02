@@ -522,6 +522,147 @@ Answer the question using the reference material where relevant. Cite the source
     response_text = await chat.send_message(UserMessage(text=request.message))
     return {"response": response_text, "sources": sources}
 
+# ── Analytics Endpoints ───────────────────────────────────────────────────────
+
+@api_router.get("/analytics/overview")
+async def get_analytics_overview():
+    all_logs = await db.log.find({}).to_list(5000)
+    profile = await db.profile.find_one({})
+    current_week = profile.get("currentWeek", 1) if profile else 1
+
+    training_days = len(set(d.get("date", "") for d in all_logs if d.get("date")))
+
+    deload_weeks_list = [4, 8, 12, 20, 24, 28, 32, 36, 40, 44, 48, 52]
+    prev_deloads = [w for w in deload_weeks_list if w < current_week]
+    block_start_week = prev_deloads[-1] if prev_deloads else 0
+
+    recent_rpe = [
+        d.get("rpe", 0) for d in all_logs
+        if d.get("week", 0) >= max(1, current_week - 7)
+        and d.get("rpe") is not None and d.get("rpe", 0) > 0
+    ]
+    avg_rpe = round(sum(recent_rpe) / len(recent_rpe), 1) if recent_rpe else 0.0
+
+    weeks_trained = set(d.get("week") for d in all_logs if d.get("week"))
+    weeks_count = max(len(weeks_trained), 1)
+    session_types_per_week: dict = {}
+    for d in all_logs:
+        w = d.get("week")
+        st = d.get("sessionType", "")
+        if w and st:
+            if w not in session_types_per_week:
+                session_types_per_week[w] = set()
+            session_types_per_week[w].add(st)
+    total_sessions = sum(len(v) for v in session_types_per_week.values())
+    expected_sessions = weeks_count * 4
+    compliance = min(100, round(total_sessions / expected_sessions * 100)) if expected_sessions > 0 else 0
+
+    block_logs = [d for d in all_logs if d.get("week", 0) > block_start_week]
+    pr_count = 0
+    for ex in TRACKED_EXERCISES:
+        pre_max = max(
+            (d.get("e1rm", 0) for d in all_logs if d.get("exercise") == ex and d.get("week", 0) <= block_start_week),
+            default=0
+        )
+        block_max = max(
+            (d.get("e1rm", 0) for d in block_logs if d.get("exercise") == ex),
+            default=0
+        )
+        if block_max > pre_max and pre_max > 0:
+            pr_count += 1
+
+    return {
+        "trainingDays": training_days,
+        "avgRPE": avg_rpe,
+        "compliance": compliance,
+        "prsThisBlock": pr_count
+    }
+
+
+@api_router.get("/analytics/volume")
+async def get_volume_trends():
+    profile = await db.profile.find_one({})
+    current_week = profile.get("currentWeek", 1) if profile else 1
+    start_week = max(1, current_week - 7)
+    result = []
+    for w in range(start_week, current_week + 1):
+        docs = await db.log.find({"week": w}).to_list(500)
+        total_sets = sum(int(d.get("sets", 1) or 1) for d in docs)
+        tonnage = sum(
+            float(d.get("weight", 0) or 0) * int(d.get("reps", 0) or 0) * int(d.get("sets", 1) or 1)
+            for d in docs
+        )
+        result.append({"week": w, "sets": total_sets, "tonnage": round(tonnage), "isCurrent": w == current_week})
+    return result
+
+
+@api_router.get("/analytics/pain")
+async def get_pain_analytics():
+    docs = await db.log.find({"pain": {"$gt": 0}}).sort("date", 1).to_list(500)
+    if not docs:
+        return {"hasPain": False, "locations": [], "trend": "clean", "weeklyData": []}
+    weekly: dict = {}
+    for d in docs:
+        w = d.get("week", 0)
+        if w not in weekly:
+            weekly[w] = []
+        weekly[w].append(d.get("pain", 0))
+    weekly_data = [
+        {"week": w, "avgPain": round(sum(v) / len(v), 1), "count": len(v)}
+        for w, v in sorted(weekly.items())
+    ]
+    if len(weekly_data) >= 2:
+        recent = weekly_data[-3:]
+        older = weekly_data[:-3]
+        recent_avg = sum(d["avgPain"] for d in recent) / len(recent)
+        older_avg = sum(d["avgPain"] for d in older) / len(older) if older else recent_avg
+        if recent_avg < older_avg * 0.9:
+            trend = "decreasing"
+        elif recent_avg > older_avg * 1.1:
+            trend = "increasing"
+        else:
+            trend = "stable"
+    else:
+        trend = "stable"
+    pain_by_ex: dict = {}
+    for d in docs:
+        ex = d.get("exercise", "Unknown")
+        pain_by_ex[ex] = pain_by_ex.get(ex, 0) + 1
+    top_locations = sorted(pain_by_ex.items(), key=lambda x: x[1], reverse=True)[:5]
+    return {
+        "hasPain": True,
+        "locations": [{"exercise": ex, "count": cnt} for ex, cnt in top_locations],
+        "trend": trend,
+        "weeklyData": weekly_data[-8:]
+    }
+
+
+@api_router.get("/analytics/compliance")
+async def get_compliance_breakdown():
+    profile = await db.profile.find_one({})
+    current_week = profile.get("currentWeek", 1) if profile else 1
+    docs = await db.log.find({"week": {"$gte": max(1, current_week - 7)}}).to_list(1000)
+    session_types = ["ME Lower", "ME Upper", "DE Lower", "DE Upper"]
+    by_type: dict = {st: set() for st in session_types}
+    for d in docs:
+        st = d.get("sessionType", "")
+        week = d.get("week")
+        if week:
+            for session_type in session_types:
+                if session_type.lower() in st.lower():
+                    by_type[session_type].add(week)
+    weeks_count = max(len(set(d.get("week") for d in docs if d.get("week"))), 1)
+    return [
+        {
+            "sessionType": st,
+            "completed": len(by_type[st]),
+            "expected": weeks_count,
+            "rate": min(100, round(len(by_type[st]) / weeks_count * 100))
+        }
+        for st in session_types
+    ]
+
+
 app.include_router(api_router)
 
 app.add_middleware(
