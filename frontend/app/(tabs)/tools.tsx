@@ -648,8 +648,9 @@ export default function LibraryScreen() {
             >
               <Text
                 style={{
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: '600',
+                  lineHeight: 18,
                   letterSpacing: 0.2,
                   color: isActive ? '#C9A84C' : '#8A8A95',
                 }}
@@ -773,11 +774,11 @@ const s = StyleSheet.create({
   searchInput:        { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.primary, paddingVertical: 0 },
 
   // Filter pills
-  filterScroll:       { maxHeight: 48 },
-  filterContent:      { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.sm, gap: SPACING.sm, alignItems: 'center' },
-  filterPill:         { paddingVertical: 7, paddingHorizontal: 16, borderRadius: RADIUS.full, borderWidth: 1, borderColor: '#2A2A30', backgroundColor: '#18181C' },
+  filterScroll:       { height: 56, marginBottom: 4 },
+  filterContent:      { paddingHorizontal: SPACING.lg, paddingVertical: 8, gap: SPACING.sm, alignItems: 'center' },
+  filterPill:         { paddingVertical: 10, paddingHorizontal: 16, borderRadius: RADIUS.full, borderWidth: 1, borderColor: '#2A2A30', backgroundColor: '#18181C', minHeight: 38, justifyContent: 'center', alignItems: 'center' },
   filterPillOn:       { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: '#C9A84C' },
-  filterPillTxt:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: '#F5F5F5', letterSpacing: 0.3 },
+  filterPillTxt:      { fontSize: 14, fontWeight: '600', color: '#8A8A95', letterSpacing: 0.2, lineHeight: 18 },
   filterPillTxtOn:    { color: '#C9A84C' },
 
   // Main scroll
