@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, ActivityIndicator, Animated, Dimensions,
+  SafeAreaView, ActivityIndicator, Animated, useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,9 +10,6 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { prApi, bwApi, analyticsApi, profileApi } from '../../src/utils/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const W = Dimensions.get('window').width;
-const CHART_W = W - SPACING.lg * 4; // section margins + section padding on both sides
-
 const TEAL  = '#4DCEA6';
 const RED   = '#E54D4D';
 const AMBER = '#F5A623';
@@ -53,6 +50,9 @@ function LineChart({ data, color = COLORS.accent, height = 160 }: {
   color?: string;
   height?: number;
 }) {
+  const { width } = useWindowDimensions();
+  const CHART_W = Math.max(100, width - SPACING.lg * 4);
+
   if (!data || data.length < 2) {
     return (
       <View style={{ height, justifyContent: 'center', alignItems: 'center' }}>
@@ -117,6 +117,9 @@ function BarChart({ data, color = COLORS.accent }: {
   data: { week: number; value: number; isCurrent: boolean }[];
   color?: string;
 }) {
+  const { width } = useWindowDimensions();
+  const CHART_W = Math.max(100, width - SPACING.lg * 4);
+
   if (!data || data.length === 0) return (
     <View style={{ height: 120, justifyContent: 'center', alignItems: 'center' }}>
       <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm }}>Log sessions to see volume</Text>
@@ -198,6 +201,8 @@ function CircularProgress({ size = 130, progress = 0, color = COLORS.accent }: {
 
 // ── Chart: MiniPainBars ───────────────────────────────────────────────────────
 function MiniPainBars({ data, color }: { data: { week: number; avgPain: number }[]; color: string }) {
+  const { width } = useWindowDimensions();
+  const CHART_W = Math.max(100, width - SPACING.lg * 4);
   if (!data || data.length === 0) return null;
   const H = 90, PAD_X = 8, PAD_T = 8, PAD_B = 22;
   const cH = H - PAD_T - PAD_B;
@@ -291,6 +296,9 @@ export default function TrackScreen() {
   const [profile,     setProfile]     = useState<any>(null);
   const [loading,     setLoading]     = useState(true);
 
+  // DEBUG
+  console.log('[Track] component rendering, loading:', loading);
+
   // Stagger animations
   const anims = useRef(Array.from({ length: SECTION_COUNT }, () => new Animated.Value(0))).current;
 
@@ -310,30 +318,43 @@ export default function TrackScreen() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, []));
 
-  async function loadAll() {
-    setLoading(true);
-    const [prData, bwHistory, profileData] = await Promise.all([
-      prApi.getAll().catch(() => []),
-      bwApi.getHistory().catch(() => []),
-      profileApi.get().catch(() => null),
-    ]);
-    setPrs(prData);
-    setBwData(bwHistory);
-    setProfile(profileData);
+  // Web fallback: useEffect fires on mount for direct URL navigation
+  React.useEffect(() => { loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const [ov, vol, pain, comp] = await Promise.all([
-      analyticsApi.overview().catch(() => null),
-      analyticsApi.volume().catch(() => []),
-      analyticsApi.pain().catch(() => null),
-      analyticsApi.compliance().catch(() => []),
-    ]);
-    setOverview(ov);
-    setVolumeData(vol);
-    setPainData(pain);
-    setCompliance(comp);
-    setLoading(false);
-    runAnims();
-    loadLift('Back Squat');
+  async function loadAll() {
+    console.log('[Track] loadAll starting');
+    setLoading(true);
+    try {
+      console.log('[Track] making API calls');
+      const [prData, bwHistory, profileData] = await Promise.all([
+        prApi.getAll().catch(e => { console.warn('[Track] prApi error', e); return []; }),
+        bwApi.getHistory().catch(e => { console.warn('[Track] bwApi error', e); return []; }),
+        profileApi.get().catch(e => { console.warn('[Track] profileApi error', e); return null; }),
+      ]);
+      console.log('[Track] first batch done, prData:', prData?.length);
+      setPrs(prData);
+      setBwData(bwHistory);
+      setProfile(profileData);
+
+      const [ov, vol, pain, comp] = await Promise.all([
+        analyticsApi.overview().catch(e => { console.warn('[Track] analytics overview error', e); return null; }),
+        analyticsApi.volume().catch(e => { console.warn('[Track] analytics volume error', e); return []; }),
+        analyticsApi.pain().catch(e => { console.warn('[Track] analytics pain error', e); return null; }),
+        analyticsApi.compliance().catch(e => { console.warn('[Track] analytics compliance error', e); return []; }),
+      ]);
+      console.log('[Track] second batch done');
+      setOverview(ov);
+      setVolumeData(vol);
+      setPainData(pain);
+      setCompliance(comp);
+    } catch (e) {
+      console.warn('[TrackScreen] loadAll error:', e);
+    } finally {
+      console.log('[Track] setting loading false');
+      setLoading(false);
+      runAnims();
+      loadLift('Back Squat');
+    }
   }
 
   async function loadLift(exercise: string) {
