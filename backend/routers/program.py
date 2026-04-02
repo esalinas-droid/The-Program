@@ -160,12 +160,34 @@ async def get_today_session():
     if not plan:
         raise HTTPException(status_code=404, detail="No plan found.")
 
-    # Find current phase → current block → first planned session
+    # Calculate today's day number (Monday=1, Tuesday=2, ... Sunday=7)
+    today_day = datetime.now().weekday() + 1  # weekday() returns 0=Mon
+
+    # Find current phase → current block → session matching today's day
     for phase in plan.phases:
         if phase.status == PhaseStatus.CURRENT:
             for block in phase.blocks:
                 if block.status == PhaseStatus.CURRENT:
                     for week in block.weeks:
+                        # First try: match today's exact day number
+                        for session in week.sessions:
+                            if session.dayNumber == today_day and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
+                                return {
+                                    "phase": phase.phaseName,
+                                    "block": block.blockName,
+                                    "week": f"Week {week.weekNumber}",
+                                    "session": session.model_dump(),
+                                }
+                        # Second try: find next upcoming planned session (for rest days)
+                        for session in week.sessions:
+                            if session.dayNumber >= today_day and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
+                                return {
+                                    "phase": phase.phaseName,
+                                    "block": block.blockName,
+                                    "week": f"Week {week.weekNumber}",
+                                    "session": session.model_dump(),
+                                }
+                        # Third try: first planned session in the week
                         for session in week.sessions:
                             if session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
                                 return {
