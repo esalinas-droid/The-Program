@@ -635,17 +635,30 @@ export default function LibraryScreen() {
         style={s.filterScroll}
         contentContainerStyle={s.filterContent}
       >
-        {FILTER_CATEGORIES.map(cat => (
-          <TouchableOpacity
-            key={cat}
-            style={[s.filterPill, activeFilter === cat && s.filterPillOn]}
-            onPress={() => setActiveFilter(cat)}
-          >
-            <Text style={[s.filterPillTxt, activeFilter === cat && s.filterPillTxtOn]}>
-              {cat}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {FILTER_CATEGORIES.map(cat => {
+          const isActive = activeFilter === cat;
+          return (
+            <TouchableOpacity
+              key={cat}
+              style={[
+                s.filterPill,
+                isActive ? s.filterPillOn : null,
+              ]}
+              onPress={() => setActiveFilter(cat)}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: '600',
+                  letterSpacing: 0.2,
+                  color: isActive ? '#C9A84C' : '#F5F5F5',
+                }}
+              >
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       {/* Main Content */}
