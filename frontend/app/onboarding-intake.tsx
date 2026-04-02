@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
+import { submitIntake } from '../services/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -215,37 +216,83 @@ export default function OnboardingIntake() {
   };
 
   // ── Save & complete ────────────────────────────────────────────────────────
+  const DAY_MAP: Record<number, string[]> = {
+    3: ['monday', 'wednesday', 'friday'],
+    4: ['monday', 'tuesday', 'thursday', 'friday'],
+    5: ['monday', 'tuesday', 'thursday', 'friday', 'saturday'],
+    6: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+  };
+
+  const GOAL_MAP: Record<string, string> = {
+    'Strength':            'strength',
+    'Hypertrophy':         'hypertrophy',
+    'Powerlifting':        'powerlifting',
+    'Strongman':           'strongman',
+    'Athletic Performance':'athletic',
+    'General Fitness':     'general',
+  };
+
   const handleComplete = async () => {
     setSaving(true);
-    const basePRs: Record<string, number> = {};
-    if (lifts.squat)    basePRs['Back Squat']   = parseFloat(lifts.squat)    || 0;
-    if (lifts.bench)    basePRs['Bench Press']   = parseFloat(lifts.bench)   || 0;
-    if (lifts.deadlift) basePRs['Deadlift']      = parseFloat(lifts.deadlift)|| 0;
-    if (lifts.ohp)      basePRs['OHP']           = parseFloat(lifts.ohp)     || 0;
+    try {
+      const currentLifts: Record<string, number> = {};
+      if (lifts.squat)    currentLifts['squat']    = parseFloat(lifts.squat)    || 0;
+      if (lifts.bench)    currentLifts['bench']    = parseFloat(lifts.bench)    || 0;
+      if (lifts.deadlift) currentLifts['deadlift'] = parseFloat(lifts.deadlift) || 0;
+      if (lifts.ohp)      currentLifts['ohp']      = parseFloat(lifts.ohp)      || 0;
 
-    await saveProfile({
-      goal,
-      experience,
-      basePRs,
-      units: liftUnit,
-      trainingDays,
-      injuryFlags: injuries.includes('None') ? [] : injuries,
-      gymTypes,
-      hasUpload,
-      currentWeek:      1,
-      programStartDate: new Date().toISOString(),
-      onboardingComplete: true,
-      notifications: {
-        dailyReminder:    true,
-        dailyReminderTime:'08:00',
-        deloadAlert:      true,
-        prAlert:          true,
-        weeklyCheckin:    true,
-      },
-      loseitConnected: false,
-    } as any);
+      const cleanInjuries = injuries.includes('None') ? [] : injuries;
 
-    router.replace('/(tabs)');
+      // 1. Save locally (existing behavior — keeps offline fallback)
+      await saveProfile({
+        goal,
+        experience,
+        basePRs: currentLifts,
+        units: liftUnit,
+        trainingDays,
+        injuryFlags: cleanInjuries,
+        gymTypes,
+        hasUpload,
+        currentWeek:      1,
+        programStartDate: new Date().toISOString(),
+        onboardingComplete: true,
+        notifications: {
+          dailyReminder:    true,
+          dailyReminderTime:'08:00',
+          deloadAlert:      true,
+          prAlert:          true,
+          weeklyCheckin:    true,
+        },
+        loseitConnected: false,
+      } as any);
+
+      // 2. Call backend — generate full 12-month plan
+      const response = await submitIntake({
+        name: experience ? `${experience} Athlete` : 'Athlete',
+        goal: GOAL_MAP[goal] || goal.toLowerCase(),
+        experience: experience.toLowerCase(),
+        currentLifts,
+        liftUnit,
+        trainingDays: DAY_MAP[trainingDays] || DAY_MAP[4],
+        injuries: cleanInjuries,
+        gymTypes,
+      });
+
+      // 3. Navigate to the reveal screen with plan data
+      router.replace({
+        pathname: '/program-reveal',
+        params: {
+          userId:  response.userId,
+          planId:  response.plan.planId,
+          planName: response.plan.planName,
+        },
+      });
+    } catch (_error) {
+      // API failure — still navigate forward so UX isn't blocked
+      router.replace('/(tabs)');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ── Step renderers ─────────────────────────────────────────────────────────

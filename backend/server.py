@@ -665,6 +665,14 @@ async def get_compliance_breakdown():
 
 app.include_router(api_router)
 
+# ── New program-generation router ─────────────────────────────────────────────
+try:
+    from routers.api import router as program_router
+    app.include_router(program_router, prefix="/api")
+    logger.info("Program router loaded successfully.")
+except Exception as _e:
+    logger.warning(f"Could not load program router: {_e}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

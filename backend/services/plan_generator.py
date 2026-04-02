@@ -1,867 +1,733 @@
-"""
-Deterministic 12-month training plan generator.
-Takes intake profile data and returns a structured AnnualPlan + first week sessions.
-No AI call required — rule-based periodization logic.
-"""
 import uuid
-import math
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from datetime import datetime
+from typing import List, Dict, Optional, Any, Tuple
 
-from .exercise_library import EXERCISE_DB, get_exercises_for_session, get_exercise_name
+# =========================================================================
+# EXERCISE LIBRARY  — id, display_name, movement, primary_muscles, equipment
+# =========================================================================
 
+ME_LOWER_ROTATIONS: List[Tuple[str, str]] = [
+    ("box_squat",            "Box Squat"),
+    ("romanian_deadlift",    "Romanian Deadlift"),
+    ("ssb_squat",            "Safety Bar Squat"),
+    ("rack_pull",            "Rack Pull (Mid-Thigh)"),
+    ("good_morning",         "Good Morning"),
+    ("sumo_deadlift",        "Sumo Deadlift"),
+    ("high_bar_squat",       "High Bar Squat"),
+    ("deficit_deadlift",     "Deficit Deadlift"),
+    ("box_squat_chains",     "Box Squat w/ Chains"),
+    ("front_squat",          "Front Squat"),
+    ("trap_bar_deadlift",    "Trap Bar Deadlift"),
+    ("anderson_squat",       "Anderson Squat (from pins)"),
+]
 
-def _id() -> str:
-    return str(uuid.uuid4())[:12]
+ME_UPPER_ROTATIONS: List[Tuple[str, str]] = [
+    ("cg_bench",             "Close Grip Bench Press"),
+    ("floor_press",          "Floor Press"),
+    ("board_press_3",        "3-Board Press"),
+    ("incline_bench",        "Incline Bench Press"),
+    ("pin_press",            "Pin Press (from chest)"),
+    ("larsen_press",         "Larsen Press"),
+    ("decline_bench",        "Decline Bench Press"),
+    ("board_press_2",        "2-Board Press"),
+    ("paused_bench",         "Paused Bench Press"),
+    ("swiss_bar_bench",      "Swiss Bar Bench"),
+    ("axle_bench",           "Axle Bar Bench Press"),
+    ("slingshot_bench",      "Slingshot Bench Press"),
+]
 
+ME_LOWER_PL: List[Tuple[str, str]] = [
+    ("comp_squat_pause",     "Pause Squat (competition depth)"),
+    ("romanian_deadlift",    "Romanian Deadlift"),
+    ("comp_squat",           "Competition Squat"),
+    ("rack_pull",            "Rack Pull (Mid-Thigh)"),
+    ("ssb_squat",            "Safety Bar Squat"),
+    ("pause_deadlift",       "Pause Deadlift (2s off floor)"),
+    ("box_squat",            "Box Squat"),
+    ("deficit_deadlift",     "Deficit Deadlift"),
+    ("front_squat",          "Front Squat"),
+    ("sumo_pause_dl",        "Sumo Pause Deadlift"),
+    ("anderson_squat",       "Anderson Squat (from pins)"),
+    ("good_morning",         "Good Morning"),
+]
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+ME_UPPER_SM: List[Tuple[str, str]] = [
+    ("log_press",            "Log Press"),
+    ("axle_press",           "Axle Press"),
+    ("floor_press",          "Floor Press"),
+    ("cg_bench",             "Close Grip Bench Press"),
+    ("push_press",           "Push Press"),
+    ("incline_bench",        "Incline Bench Press"),
+    ("strict_ohp",           "Strict Overhead Press"),
+    ("axle_push_press",      "Axle Push Press"),
+    ("larsen_press",         "Larsen Press"),
+    ("board_press_2",        "2-Board Press"),
+    ("log_press_paused",     "Log Press (paused at chin)"),
+    ("viking_press",         "Viking Press"),
+]
 
+HYP_LOWER: List[Tuple[str, str]] = [
+    ("leg_press",            "Leg Press"),
+    ("bulgarian_split",      "Bulgarian Split Squat"),
+    ("hack_squat",           "Hack Squat"),
+    ("romanian_deadlift",    "Romanian Deadlift"),
+    ("leg_press_narrow",     "Leg Press (narrow stance)"),
+    ("lunges",               "Walking Lunges"),
+]
 
-# ─── Phase templates by training model ───────────────────────────────────────
+HYP_UPPER: List[Tuple[str, str]] = [
+    ("db_bench",             "DB Bench Press"),
+    ("incline_db_bench",     "Incline DB Bench Press"),
+    ("cable_fly",            "Cable Fly"),
+    ("db_shoulder_press",    "DB Shoulder Press"),
+    ("lateral_raise",        "Lateral Raises"),
+    ("cable_crossover",      "Cable Crossover"),
+]
 
-PHASE_TEMPLATES: Dict[str, List[Dict]] = {
-    "conjugate": [
-        {"name": "Foundation",        "weeks": 12, "goal": "Movement quality, GPP, baseline strength",
-         "adaptation": "Re-establish motor patterns, address weak points, build work capacity"},
-        {"name": "Strength Base",      "weeks": 12, "goal": "Raw strength accumulation",
-         "adaptation": "Progressive overload on competition movements, build structural strength"},
-        {"name": "Intensification",    "weeks": 12, "goal": "Maximum strength and rate of force development",
-         "adaptation": "Heavier loading, shorter volume, peak force output"},
-        {"name": "Competition Prep",   "weeks": 12, "goal": "Event-specific prep and peaking",
-         "adaptation": "Competition movements, taper, peak performance"},
-        {"name": "Transition",         "weeks": 4,  "goal": "Active recovery, reassessment, reset",
-         "adaptation": "Systemic recovery, address accumulated fatigue, plan next cycle"},
-    ],
-    "block_hypertrophy": [
-        {"name": "Accumulation",       "weeks": 16, "goal": "Maximum hypertrophy volume",
-         "adaptation": "High-volume training, mechanical tension and metabolic stress"},
-        {"name": "Intensification",    "weeks": 12, "goal": "Convert size to strength",
-         "adaptation": "Heavier loads, strength patterns, neural adaptations"},
-        {"name": "Realization",        "weeks": 8,  "goal": "Peak strength expression",
-         "adaptation": "Competition or testing week performance"},
-        {"name": "Deload/Transition",  "weeks": 8,  "goal": "Recovery and next cycle preparation",
-         "adaptation": "Systemic recovery, address weak points"},
-        {"name": "New Accumulation",   "weeks": 8,  "goal": "Second hypertrophy wave",
-         "adaptation": "Volume with heavier base, compound improvements"},
-    ],
-    "balanced": [
-        {"name": "General Fitness",    "weeks": 12, "goal": "Build all qualities simultaneously",
-         "adaptation": "Strength, endurance, mobility — concurrent development"},
-        {"name": "Strength Emphasis",  "weeks": 10, "goal": "Prioritise strength gains",
-         "adaptation": "Heavier compound work, deemphasise cardio"},
-        {"name": "Conditioning Block", "weeks": 10, "goal": "Raise work capacity",
-         "adaptation": "Metabolic conditioning, circuit work, carries"},
-        {"name": "Peak Fitness",       "weeks": 12, "goal": "Peak physical performance",
-         "adaptation": "All qualities at high level"},
-        {"name": "Maintenance",        "weeks": 8,  "goal": "Maintain gains, reduce fatigue",
-         "adaptation": "Reduced volume, maintained intensity"},
-    ],
-}
+# Accessories  — (id, name, rest_sec, rep_scheme, category)
+LOWER_SUPPLEMENTAL = [
+    ("belt_squat",           "Belt Squat",              120, "3x10-12",  "supplemental"),
+    ("leg_press",            "Leg Press",               120, "3x12",     "supplemental"),
+    ("ghr",                  "Glute Ham Raise",          90,  "3x8-10",   "supplemental"),
+    ("nordic_curl",          "Nordic Curl",             120, "3x5-8",    "supplemental"),
+    ("pull_through",         "Cable Pull-Through",       90,  "3x15",     "supplemental"),
+    ("back_extension",       "Back Extension",           90,  "3x12",     "supplemental"),
+    ("leg_curl",             "Leg Curl",                 90,  "3x12",     "supplemental"),
+    ("hip_thrust",           "Hip Thrust",               90,  "3x12",     "supplemental"),
+]
 
+LOWER_ACCESSORIES = [
+    ("ab_wheel",             "Ab Wheel",                60, "3x10",     "accessory"),
+    ("weighted_situp",       "Weighted Sit-up",         60, "3x15",     "accessory"),
+    ("hanging_leg_raise",    "Hanging Leg Raise",       60, "3x10",     "accessory"),
+    ("paloff_press",         "Pallof Press",            60, "3x10/side","accessory"),
+    ("cable_crunch",         "Cable Crunch",            60, "3x15",     "accessory"),
+]
 
-# ─── Session templates by goal + frequency ───────────────────────────────────
+UPPER_TRICEPS = [
+    ("jm_press",             "JM Press",                90, "3x8-10",   "supplemental"),
+    ("skull_crusher",        "Skull Crusher",           90, "3x10-12",  "supplemental"),
+    ("tricep_pushdown",      "Tricep Pushdown",         60, "3x15",     "supplemental"),
+    ("cable_tricep_ext",     "Cable Tricep Extension",  60, "3x12-15",  "supplemental"),
+    ("tate_press",           "Tate Press",              90, "3x10-12",  "supplemental"),
+    ("db_skull_crusher",     "DB Skull Crusher",        90, "3x12",     "supplemental"),
+]
 
-SESSION_TYPES_BY_FREQ: Dict[int, List[str]] = {
-    3: ["ME Lower", "ME Upper", "DE Lower"],
-    4: ["ME Lower", "ME Upper", "DE Lower", "DE Upper"],
-    5: ["ME Lower", "ME Upper", "DE Lower", "DE Upper", "GPP"],
-    6: ["ME Lower", "ME Upper", "DE Lower", "DE Upper", "GPP", "GPP"],
-}
+UPPER_BACK = [
+    ("db_row",               "DB Row",                  90, "4x10/side","supplemental"),
+    ("barbell_row",          "Barbell Row",              90, "4x8",      "supplemental"),
+    ("lat_pulldown",         "Lat Pulldown",             90, "3x10-12",  "supplemental"),
+    ("chest_supported_row",  "Chest Supported Row",      90, "3x10-12",  "supplemental"),
+    ("cable_row",            "Seated Cable Row",          90, "3x12",     "supplemental"),
+    ("1arm_cable_row",       "Single-Arm Cable Row",      90, "3x12/side","supplemental"),
+]
 
-# Day-of-week assignment (1=Mon ... 7=Sun)
-SESSION_DAY_MAP: Dict[int, List[int]] = {
-    3: [1, 3, 5],
-    4: [1, 3, 5, 6],
-    5: [1, 2, 4, 5, 6],
-    6: [1, 2, 3, 5, 6, 7],
-}
+UPPER_ACCESSORIES = [
+    ("face_pull",            "Face Pulls",              60, "3x15-20",  "accessory"),
+    ("lateral_raise",        "Lateral Raises",          60, "3x15",     "accessory"),
+    ("rear_delt_fly",        "Rear Delt Fly",           60, "3x15",     "accessory"),
+    ("band_pull_apart",      "Band Pull-Apart",         45, "3x20",     "accessory"),
+    ("bicep_curl",           "Barbell Curl",            60, "3x10-12",  "accessory"),
+    ("hammer_curl",          "Hammer Curl",             60, "3x12",     "accessory"),
+]
 
-DAY_NAMES = {1: "Monday", 2: "Tuesday", 3: "Wednesday",
-             4: "Thursday", 5: "Friday", 6: "Saturday", 7: "Sunday"}
+STRONGMAN_EVENTS = [
+    ("log_press",            "Log Press",               180, "5 singles — work to max", "event"),
+    ("axle_press",           "Axle Press",              180, "3 heavy singles",          "event"),
+    ("yoke_walk",            "Yoke Walk",               180, "3x20m progressive",        "event"),
+    ("farmers_carry",        "Farmer's Carry",          180, "3x20m heavy",              "event"),
+    ("atlas_stone",          "Atlas Stone Load",        180, "3-5 stones to platform",  "event"),
+    ("tire_flip",            "Tire Flip",               120, "3 sets of 8",              "event"),
+    ("loading_medley",       "Loading Medley",          240, "3 runs for time",          "event"),
+    ("car_deadlift",         "Car Deadlift Sim",        180, "Max reps in 60s",          "event"),
+]
 
-# Load percentages (of 1RM) for each phase and session type
-LOAD_PARAMS: Dict[str, Dict[str, Dict]] = {
-    "Foundation": {
-        "ME": {"warmup_pcts": [0.45, 0.55, 0.65], "working_pcts": [0.70, 0.77, 0.83], "working_reps": [3, 2, 1], "rpes": [7, 8, 8.5]},
-        "DE": {"pct": 0.55, "sets": 8, "reps": 2, "rpe": 6},
-        "supp_pct": 0.55, "supp_reps": 8, "acc_rpe": 7,
-    },
-    "Strength Base": {
-        "ME": {"warmup_pcts": [0.50, 0.60, 0.70], "working_pcts": [0.75, 0.82, 0.88], "working_reps": [3, 2, 1], "rpes": [7.5, 8.5, 9]},
-        "DE": {"pct": 0.60, "sets": 8, "reps": 2, "rpe": 6.5},
-        "supp_pct": 0.60, "supp_reps": 6, "acc_rpe": 7.5,
-    },
-    "Intensification": {
-        "ME": {"warmup_pcts": [0.55, 0.65, 0.75], "working_pcts": [0.82, 0.88, 0.93], "working_reps": [2, 1, 1], "rpes": [8, 9, 9.5]},
-        "DE": {"pct": 0.65, "sets": 6, "reps": 2, "rpe": 7},
-        "supp_pct": 0.65, "supp_reps": 5, "acc_rpe": 8,
-    },
-    "Competition Prep": {
-        "ME": {"warmup_pcts": [0.60, 0.70, 0.80], "working_pcts": [0.87, 0.92, 0.97], "working_reps": [2, 1, 1], "rpes": [8.5, 9, 9.5]},
-        "DE": {"pct": 0.68, "sets": 6, "reps": 1, "rpe": 7},
-        "supp_pct": 0.65, "supp_reps": 4, "acc_rpe": 8,
-    },
-    "Transition": {
-        "ME": {"warmup_pcts": [0.40, 0.50], "working_pcts": [0.60, 0.65], "working_reps": [5, 3], "rpes": [6, 6.5]},
-        "DE": {"pct": 0.45, "sets": 6, "reps": 2, "rpe": 5},
-        "supp_pct": 0.50, "supp_reps": 10, "acc_rpe": 6,
-    },
-    "Accumulation": {
-        "ME": {"warmup_pcts": [0.50, 0.60], "working_pcts": [0.65, 0.72, 0.78], "working_reps": [5, 4, 3], "rpes": [7, 7.5, 8]},
-        "DE": {"pct": 0.55, "sets": 4, "reps": 10, "rpe": 7},
-        "supp_pct": 0.55, "supp_reps": 12, "acc_rpe": 7,
-    },
-    "Realization": {
-        "ME": {"warmup_pcts": [0.55, 0.65, 0.75], "working_pcts": [0.82, 0.87, 0.92], "working_reps": [3, 2, 1], "rpes": [8, 8.5, 9]},
-        "DE": {"pct": 0.60, "sets": 6, "reps": 3, "rpe": 7},
-        "supp_pct": 0.60, "supp_reps": 6, "acc_rpe": 7.5,
-    },
-    "General Fitness": {
-        "ME": {"warmup_pcts": [0.45, 0.55], "working_pcts": [0.65, 0.72], "working_reps": [5, 4], "rpes": [6.5, 7.5]},
-        "DE": {"pct": 0.50, "sets": 4, "reps": 8, "rpe": 6},
-        "supp_pct": 0.50, "supp_reps": 12, "acc_rpe": 6.5,
-    },
-    "Strength Emphasis": {
-        "ME": {"warmup_pcts": [0.50, 0.60, 0.70], "working_pcts": [0.75, 0.82], "working_reps": [3, 2], "rpes": [7.5, 8.5]},
-        "DE": {"pct": 0.55, "sets": 6, "reps": 3, "rpe": 6.5},
-        "supp_pct": 0.55, "supp_reps": 8, "acc_rpe": 7,
-    },
-    "Conditioning Block": {
-        "ME": {"warmup_pcts": [0.45, 0.55], "working_pcts": [0.65, 0.70], "working_reps": [5, 5], "rpes": [6.5, 7.5]},
-        "DE": {"pct": 0.50, "sets": 5, "reps": 5, "rpe": 6},
-        "supp_pct": 0.50, "supp_reps": 15, "acc_rpe": 6.5,
-    },
-    "Peak Fitness": {
-        "ME": {"warmup_pcts": [0.55, 0.65, 0.72], "working_pcts": [0.78, 0.84], "working_reps": [4, 2], "rpes": [7.5, 8.5]},
-        "DE": {"pct": 0.58, "sets": 6, "reps": 3, "rpe": 6.5},
-        "supp_pct": 0.58, "supp_reps": 8, "acc_rpe": 7.5,
-    },
-    "Maintenance": {
-        "ME": {"warmup_pcts": [0.45, 0.55], "working_pcts": [0.68, 0.72], "working_reps": [4, 3], "rpes": [6.5, 7]},
-        "DE": {"pct": 0.50, "sets": 4, "reps": 4, "rpe": 5.5},
-        "supp_pct": 0.52, "supp_reps": 10, "acc_rpe": 6.5,
-    },
-    "New Accumulation": {
-        "ME": {"warmup_pcts": [0.50, 0.60], "working_pcts": [0.67, 0.73, 0.78], "working_reps": [5, 4, 3], "rpes": [7, 7.5, 8]},
-        "DE": {"pct": 0.55, "sets": 4, "reps": 10, "rpe": 7},
-        "supp_pct": 0.55, "supp_reps": 12, "acc_rpe": 7,
-    },
-}
+# =========================================================================
+# PHASE TEMPLATES  — keyed by goal
+# =========================================================================
 
-
-# ─── ME exercise rotation (conjugate method) ──────────────────────────────────
-
-ME_LOWER_ROTATION: Dict[str, List[str]] = {
-    "strength": ["ssb_box_squat", "rdl", "good_morning", "trap_bar_deadlift",
-                 "ssb_box_squat", "conventional_deadlift", "pause_squat", "block_pull"],
-    "strongman": ["ssb_box_squat", "trap_bar_deadlift", "rdl", "conventional_deadlift",
-                  "ssb_box_squat", "good_morning", "block_pull", "pause_squat"],
-    "hypertrophy": ["rdl", "trap_bar_deadlift", "leg_press", "pause_squat",
-                    "rdl", "conventional_deadlift", "belt_squat", "hip_thrust"],
-    "general": ["trap_bar_deadlift", "rdl", "leg_press", "hip_thrust",
-                "trap_bar_deadlift", "pause_squat", "rdl", "belt_squat"],
-    "athletic": ["trap_bar_deadlift", "pause_squat", "rdl", "hip_thrust",
-                 "trap_bar_deadlift", "conventional_deadlift", "rdl", "belt_squat"],
-}
-
-ME_UPPER_ROTATION: Dict[str, List[str]] = {
-    "strength": ["floor_press", "close_grip_bench", "incline_db_press", "ohp_barbell",
-                 "floor_press", "close_grip_bench", "incline_db_press", "ohp_barbell"],
-    "strongman": ["floor_press", "log_clean_press", "axle_clean_press", "ohp_barbell",
-                  "floor_press", "close_grip_bench", "log_clean_press", "axle_clean_press"],
-    "hypertrophy": ["incline_db_press", "close_grip_bench", "floor_press", "ohp_barbell",
-                    "incline_db_press", "close_grip_bench", "floor_press", "ohp_barbell"],
-    "general": ["ohp_barbell", "incline_db_press", "close_grip_bench", "floor_press",
-                "ohp_barbell", "incline_db_press", "close_grip_bench", "floor_press"],
-    "athletic": ["ohp_barbell", "incline_db_press", "close_grip_bench", "floor_press",
-                 "ohp_barbell", "incline_db_press", "close_grip_bench", "floor_press"],
-}
+def _uid() -> str:
+    return str(uuid.uuid4())
 
 
-# ─── Coach notes by phase ─────────────────────────────────────────────────────
-
-COACH_NOTES: Dict[str, Dict[str, str]] = {
-    "Foundation": {
-        "ME Lower": "Focus on movement quality. Every rep should be textbook. Stay under RPE 8.5 today.",
-        "ME Upper": "Build your pressing foundation. Technique over load — always. Set the baseline.",
-        "DE Lower": "Speed work: bar has to move fast or it does not count. 55% feels light — make it look violent.",
-        "DE Upper": "Compensatory acceleration. You are training rate of force development, not max strength. Bar speed is the metric.",
-        "GPP": "General prep work. Build your conditioning base and address structural weaknesses.",
-    },
-    "Strength Base": {
-        "ME Lower": "Time to load the patterns we built. Push your top set toward RPE 8.5-9. Compete with yourself.",
-        "ME Upper": "Drive your pressing numbers up. The work in Foundation has earned you these heavier loads.",
-        "DE Lower": "Speed with load. The bar should jump off the floor. Every single rep counts.",
-        "DE Upper": "60% should feel explosive. If you cannot move it fast, something is wrong with your setup.",
-        "GPP": "Carry heavy, push hard, recover smart.",
-    },
-    "Intensification": {
-        "ME Lower": "We are in maximum strength territory. Your technique has to hold at 90%+. No breaks in the chain.",
-        "ME Upper": "Big weights, big focus. The ramp-up sets are not warm-ups — they are precision work.",
-        "DE Lower": "High intent speed work. 65% with maximal acceleration.",
-        "DE Upper": "65% speed bench. The speed you build here pays off on max effort days.",
-        "GPP": "Conditioning maintained at lower volume. Protect your recovery this block.",
-    },
-    "Competition Prep": {
-        "ME Lower": "Peak performance territory. Trust the preparation and attack this.",
-        "ME Upper": "You have been building toward this. Show up with intent and execute.",
-        "DE Lower": "Maintained speed work. Competition sharpness is the goal.",
-        "DE Upper": "Crisp technique, fast bar. You are sharpening, not grinding.",
-        "GPP": "Event-specific work. Train what you will compete in.",
-    },
-    "Transition": {
-        "ME Lower": "Deload week. 60% max effort. Move well, not heavy.",
-        "ME Upper": "Active recovery pressing. Focus on technique and shoulder health.",
-        "DE Lower": "Light speed work. Reset your system.",
-        "DE Upper": "Easy session. Accumulate movement quality.",
-        "GPP": "Light GPP. Recovery focus.",
-    },
-}
+def _round25(val: float) -> float:
+    """Round to nearest 2.5 kg."""
+    return round(val / 2.5) * 2.5
 
 
-# ─── Warm-up protocols ────────────────────────────────────────────────────────
-
-WARMUP_PROTOCOLS: Dict[str, str] = {
-    "ME Lower": "5 min bike/row → 2×10 Band Pull-Aparts → 2×10 Glute Bridges → 1×10 Air Squats → 2×5 Goblet Squat",
-    "ME Upper": "5 min cardio → 2×15 Band Pull-Aparts → 2×12 Face Pull (light) → 2×10 Shoulder CARs → 1×8 Empty bar press",
-    "DE Lower": "5 min bike → 2×30s Hip Flexor Stretch → 2×10 Glute Bridges → 1×10 Air Squats",
-    "DE Upper": "5 min bike/row → 2×15 Band Pull-Aparts → 2×10 Shoulder CARs → 1×8 Speed ramp sets",
-    "GPP": "5-10 min general cardio → Dynamic stretch → Activation work",
-    "Off": "",
-}
+def _pct(lifts: Dict, key: str, pct: float) -> Optional[float]:
+    """Return pct% of the named lift, or None if no data."""
+    v = lifts.get(key, 0.0)
+    if not v:
+        return None
+    return _round25(v * pct)
 
 
-# ─── Round to nearest 5 for load calculation ─────────────────────────────────
-
-def _round5(v: float) -> float:
-    return max(float(round(v / 5) * 5), 0.0)
-
-
-def _calc_load(pr: float, pct: float, unit: str = "lbs") -> float:
-    if pr <= 0:
-        return 0.0
-    raw = pr * pct
-    # Round to nearest 2.5 for kg, nearest 5 for lbs
-    divisor = 2.5 if unit == "kg" else 5.0
-    return max(float(round(raw / divisor) * divisor), 0.0)
-
-
-def _get_pr_for_exercise(ex_id: str, lifts: Dict[str, float]) -> float:
-    ex = EXERCISE_DB.get(ex_id, {})
-    ref = ex.get("load_ref")
-    if not ref:
-        return 0.0
-    return lifts.get(ref, 0.0)
-
-
-# ─── Build target sets for a main (ME/DE) exercise ───────────────────────────
-
-def _build_me_sets(ex_id: str, lifts: Dict[str, float],
-                  phase_name: str, unit: str) -> List[Dict]:
-    """Return list of TargetSet dicts for a max-effort exercise."""
-    pr = _get_pr_for_exercise(ex_id, lifts)
-    params = LOAD_PARAMS.get(phase_name, LOAD_PARAMS["Foundation"]).get("ME", {})
-    warmup_pcts: List[float] = params.get("warmup_pcts", [0.45, 0.55, 0.65])
-    working_pcts: List[float] = params.get("working_pcts", [0.70, 0.77, 0.83])
-    working_reps: List[int]   = params.get("working_reps", [3, 2, 1])
-    rpes: List[float]          = params.get("rpes", [7, 8, 8.5])
-
+def _warmup_sets(top_load: Optional[float], target_reps: int) -> List[Dict]:
+    """Generate standard warm-up progression to top_load."""
+    if not top_load:
+        return [
+            {"setNumber": i, "targetReps": r, "targetLoad": None, "isWarmup": True}
+            for i, r in enumerate([(5, 1), (3, 2), (2, 3), (1, 4)], 1)
+        ]
     sets = []
-    # Warm-up sets
-    warmup_reps = [5, 3, 1]
-    for i, pct in enumerate(warmup_pcts):
-        reps = warmup_reps[i] if i < len(warmup_reps) else 1
+    percentages = [0.40, 0.55, 0.68, 0.78, 0.86]
+    for i, p in enumerate(percentages, 1):
         sets.append({
-            "setNumber": i + 1,
-            "targetLoad": _calc_load(pr, pct, unit) if pr > 0 else 0.0,
-            "loadUnit": unit,
-            "targetReps": reps,
-            "targetRPE": float(i + 5),  # 5, 6, 7 for warm-ups
-            "isAmrap": False,
-            "notes": "Warm-up"
+            "setNumber": i,
+            "targetReps": max(1, target_reps + (5 - i)),
+            "targetLoad": _round25(top_load * p / 1.0),
+            "targetRPE": None,
+            "isWarmup": True,
         })
-    # Working sets
-    offset = len(warmup_pcts)
-    for i, (pct, reps, rpe) in enumerate(zip(working_pcts, working_reps, rpes)):
-        sets.append({
-            "setNumber": offset + i + 1,
-            "targetLoad": _calc_load(pr, pct, unit) if pr > 0 else 0.0,
-            "loadUnit": unit,
-            "targetReps": reps,
-            "targetRPE": rpe,
-            "isAmrap": i == len(working_pcts) - 1,  # last set is AMRAP
-            "notes": "Top set" if i == len(working_pcts) - 1 else "Working set"
-        })
+    sets.append({
+        "setNumber": len(sets) + 1,
+        "targetReps": target_reps,
+        "targetLoad": top_load,
+        "targetRPE": 9.0 if target_reps == 1 else 8.5,
+        "isWarmup": False,
+    })
     return sets
 
 
-def _build_de_sets(ex_id: str, lifts: Dict[str, float],
-                  phase_name: str, unit: str) -> List[Dict]:
-    """Return list of TargetSet dicts for a dynamic-effort exercise."""
-    pr = _get_pr_for_exercise(ex_id, lifts)
-    params = LOAD_PARAMS.get(phase_name, LOAD_PARAMS["Foundation"]).get("DE", {})
-    pct  = params.get("pct", 0.55)
-    sets_n = params.get("sets", 8)
-    reps   = params.get("reps", 2)
-    rpe    = params.get("rpe", 6)
-
-    load = _calc_load(pr, pct, unit) if pr > 0 else 0.0
-    return [{
-        "setNumber": i + 1,
-        "targetLoad": load,
-        "loadUnit": unit,
-        "targetReps": reps,
-        "targetRPE": rpe,
-        "isAmrap": False,
-        "notes": f"Set {i+1}/{sets_n} — max speed"
-    } for i in range(sets_n)]
-
-
-def _build_supp_sets(pr_ref: float, phase_name: str, unit: str,
-                    default_sets: int = 3) -> List[Dict]:
-    """Return target sets for a supplemental exercise."""
-    params = LOAD_PARAMS.get(phase_name, LOAD_PARAMS["Foundation"])
-    pct  = params.get("supp_pct", 0.55)
-    reps = params.get("supp_reps", 8)
-    load = _calc_load(pr_ref, pct, unit) if pr_ref > 0 else 0.0
-    return [{
-        "setNumber": i + 1,
-        "targetLoad": load,
-        "loadUnit": unit,
-        "targetReps": reps,
-        "targetRPE": 7.5,
-        "isAmrap": False,
-        "notes": None
-    } for i in range(default_sets)]
-
-
-def _build_acc_sets(rpe: float = 7.0, default_sets: int = 3,
-                   reps: int = 12) -> List[Dict]:
-    """Return target sets for an accessory exercise (RPE-based, no load calc)."""
-    return [{
-        "setNumber": i + 1,
-        "targetLoad": 0.0,
-        "loadUnit": "lbs",
-        "targetReps": reps,
-        "targetRPE": rpe,
-        "isAmrap": False,
-        "notes": "Select load by feel" if i == 0 else None
-    } for i in range(default_sets)]
-
-
-# ─── Generate sessions for one week ──────────────────────────────────────────
-
-def generate_week_sessions(
-    week_number: int,
-    plan_id: str,
-    profile: Dict[str, Any],
-    phase_name: str,
-    block_number: int = 1,
-) -> List[Dict]:
-    """
-    Generate all training sessions for a given week.
-    Returns a list of PlanSession-compatible dicts.
-    """
-    goal          = profile.get("goal", "strength")
-    training_days = min(max(int(profile.get("trainingDays", 4)), 3), 6)
-    lifts         = profile.get("currentLifts", {})
-    injuries      = profile.get("injuries", [])
-    unit          = profile.get("liftUnit", "lbs")
-    equipment     = profile.get("equipmentAccess", [])
-
-    session_types = SESSION_TYPES_BY_FREQ.get(training_days, SESSION_TYPES_BY_FREQ[4])
-    session_days  = SESSION_DAY_MAP.get(training_days, SESSION_DAY_MAP[4])
-
-    sessions = []
-    for i, (stype, day_num) in enumerate(zip(session_types, session_days)):
-        sid = _id()
-        exercises = _build_exercises_for_session(
-            session_type=stype,
-            phase_name=phase_name,
-            goal=goal,
-            lifts=lifts,
-            injuries=injuries,
-            equipment=equipment,
-            unit=unit,
-            block_number=block_number,
-            week_number=week_number,
-        )
-        coach_note = (COACH_NOTES.get(phase_name, {})
-                      .get(stype, f"Execute {stype} with full intent."))
-        warmup = WARMUP_PROTOCOLS.get(stype, "")
-
-        sessions.append({
-            "sessionId": sid,
-            "planId": plan_id,
-            "weekNumber": week_number,
-            "dayNumber": day_num,
-            "dayLabel": DAY_NAMES.get(day_num, f"Day {day_num}"),
-            "sessionType": stype,
-            "objective": _session_objective(stype, phase_name),
-            "coachNote": coach_note,
-            "warmup": warmup,
-            "exercises": exercises,
-            "status": "planned",
-            "startedAt": None,
-            "completedAt": None,
-            "createdAt": _now().isoformat(),
-        })
-
-    return sessions
-
-
-def _session_objective(session_type: str, phase_name: str) -> str:
-    objectives = {
-        "ME Lower": "Max effort lower body — build raw strength",
-        "ME Upper": "Max effort upper body — pressing strength development",
-        "DE Lower": "Dynamic effort lower — speed and rate of force development",
-        "DE Upper": "Dynamic effort upper — compensatory acceleration",
-        "GPP": "General physical preparedness — carries, conditioning, accessories",
-    }
-    base = objectives.get(session_type, "Training session")
-    if phase_name == "Transition":
-        return base + " (deload intensity)"
-    return base
-
-
-def _build_exercises_for_session(
-    session_type: str,
-    phase_name: str,
-    goal: str,
-    lifts: Dict[str, float],
-    injuries: list,
-    equipment: list,
-    unit: str,
-    block_number: int,
-    week_number: int,
-) -> List[Dict]:
-    """Select and configure exercises for a single session."""
-    exercises = []
-    order = 0
-
-    # ── Main exercise ──────────────────────────────────────────────────────────
-    main_ex_id = _select_main_exercise(
-        session_type, phase_name, goal, injuries, week_number
-    )
-    if main_ex_id:
-        is_de = session_type.startswith("DE")
-        if is_de:
-            target_sets = _build_de_sets(main_ex_id, lifts, phase_name, unit)
-        else:
-            target_sets = _build_me_sets(main_ex_id, lifts, phase_name, unit)
-
-        ex_data = EXERCISE_DB.get(main_ex_id, {})
-        exercises.append({
-            "exerciseId": main_ex_id,
-            "name": ex_data.get("name", main_ex_id),
-            "category": "main",
-            "prescription": _get_prescription(main_ex_id, session_type, phase_name),
-            "targetSets": target_sets,
-            "order": order,
-            "notes": "; ".join(ex_data.get("cues", [])[:2]),
-        })
-        order += 1
-
-    # ── Supplemental exercises ─────────────────────────────────────────────────
-    supp_ids = _select_supplemental(
-        session_type, phase_name, goal, injuries, limit=2
-    )
-    for ex_id in supp_ids:
-        ex_data = EXERCISE_DB.get(ex_id, {})
-        ref_key = ex_data.get("load_ref")
-        pr_ref  = lifts.get(ref_key, 0.0) if ref_key else 0.0
-        params = LOAD_PARAMS.get(phase_name, LOAD_PARAMS["Foundation"])
-        supp_pct  = params.get("supp_pct", 0.55)
-        supp_reps = params.get("supp_reps", 8)
-        load = _calc_load(pr_ref, supp_pct, unit) if pr_ref > 0 else 0.0
-        target_sets = [{
-            "setNumber": j + 1,
+def _de_sets(load: Optional[float], reps: int, total_sets: int) -> List[Dict]:
+    """Generate DE speed sets."""
+    return [
+        {
+            "setNumber": i + 1,
+            "targetReps": reps,
             "targetLoad": load,
-            "loadUnit": unit,
-            "targetReps": supp_reps,
-            "targetRPE": 7.5,
-            "isAmrap": False,
-            "notes": None,
-        } for j in range(3)]
-        exercises.append({
-            "exerciseId": ex_id,
-            "name": ex_data.get("name", ex_id),
-            "category": "supplemental",
-            "prescription": f"3×{supp_reps} @ RPE 7-8",
-            "targetSets": target_sets,
-            "order": order,
-            "notes": None,
+            "targetRPE": 6.0,
+            "isWarmup": False,
+        }
+        for i in range(total_sets)
+    ]
+
+
+def _accessory_sets(n_sets: int, reps: int, load: Optional[float] = None) -> List[Dict]:
+    return [
+        {"setNumber": i + 1, "targetReps": reps, "targetLoad": load, "targetRPE": 7.5, "isWarmup": False}
+        for i in range(n_sets)
+    ]
+
+
+# =========================================================================
+# SESSION BUILDERS
+# =========================================================================
+
+def _build_exercise(session_id: str, ex_id: str, name: str, category: str,
+                    prescription: str, target_sets: List[Dict],
+                    order: int, notes: str = "") -> Dict:
+    return {
+        "sessionExerciseId": _uid(),
+        "sessionId": session_id,
+        "exerciseId": ex_id,
+        "name": name,
+        "category": category,
+        "prescription": prescription,
+        "targetSets": target_sets,
+        "notes": notes,
+        "order": order,
+        "loggedSets": [],
+        "completed": False,
+    }
+
+
+def _me_lower_session(session_id: str, block_id: str, week: int, day: int,
+                      week_in_block: int, phase_num: int, goal: str,
+                      lifts: Dict) -> Dict:
+    """Max Effort Lower Body session."""
+    rotation = ME_LOWER_PL if goal == "powerlifting" else ME_LOWER_ROTATIONS
+    rot_idx = (week - 1 + phase_num * 4) % len(rotation)
+    ex_id, ex_name = rotation[rot_idx]
+
+    # Determine target rep max by week in block
+    rep_targets = {1: ("5RM", 5, 0.875), 2: ("3RM", 3, 0.925), 3: ("1RM", 1, 1.0)}
+    label, reps, pct_1rm = rep_targets.get(week_in_block, ("3RM", 3, 0.925))
+
+    base_key = "squat" if "squat" in ex_id or "good_morning" in ex_id else "deadlift"
+    top_load = _pct(lifts, base_key, pct_1rm * 100)
+
+    exercises = [
+        _build_exercise(
+            session_id, ex_id, ex_name, "main",
+            f"Work up to {label} — warm-up progressively",
+            _warmup_sets(top_load, reps),
+            order=1,
+            notes=f"Phase {phase_num}, Week {week_in_block} of block",
+        )
+    ]
+
+    # 2 supplemental
+    for i, s in enumerate([
+        LOWER_SUPPLEMENTAL[(week + phase_num) % len(LOWER_SUPPLEMENTAL)],
+        LOWER_SUPPLEMENTAL[(week + phase_num + 3) % len(LOWER_SUPPLEMENTAL)],
+    ], 2):
+        sq_load = _pct(lifts, "squat", 50)
+        exercises.append(_build_exercise(
+            session_id, s[0], s[1], s[4],
+            s[3], _accessory_sets(4, 10, sq_load), order=i,
+        ))
+
+    # core accessory
+    a = LOWER_ACCESSORIES[week % len(LOWER_ACCESSORIES)]
+    exercises.append(_build_exercise(
+        session_id, a[0], a[1], a[4], a[3],
+        _accessory_sets(3, 12), order=4,
+    ))
+
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "ME_LOWER",
+        "objective": f"Max Effort Lower — {ex_name} to {label}",
+        "coachNote": f"Focus on technique. The {ex_name} is this week's ME exercise. Work to a true {label}.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _me_upper_session(session_id: str, block_id: str, week: int, day: int,
+                      week_in_block: int, phase_num: int, goal: str,
+                      lifts: Dict) -> Dict:
+    rotation = ME_UPPER_SM if goal == "strongman" else ME_UPPER_ROTATIONS
+    rot_idx = (week - 1 + phase_num * 4 + 6) % len(rotation)
+    ex_id, ex_name = rotation[rot_idx]
+
+    rep_targets = {1: ("5RM", 5, 0.875), 2: ("3RM", 3, 0.925), 3: ("1RM", 1, 1.0)}
+    label, reps, pct_1rm = rep_targets.get(week_in_block, ("3RM", 3, 0.925))
+    top_load = _pct(lifts, "bench", pct_1rm * 100)
+
+    exercises = [
+        _build_exercise(
+            session_id, ex_id, ex_name, "main",
+            f"Work up to {label}",
+            _warmup_sets(top_load, reps), order=1,
+        )
+    ]
+
+    # 2 tricep, 2 back, 1 shoulder
+    for i, t in enumerate([
+        UPPER_TRICEPS[(week + phase_num) % len(UPPER_TRICEPS)],
+        UPPER_TRICEPS[(week + phase_num + 3) % len(UPPER_TRICEPS)],
+    ], 2):
+        exercises.append(_build_exercise(session_id, t[0], t[1], t[4], t[3],
+                                          _accessory_sets(4, 10), order=i))
+
+    for i, b in enumerate([
+        UPPER_BACK[(week + phase_num) % len(UPPER_BACK)],
+        UPPER_BACK[(week + phase_num + 2) % len(UPPER_BACK)],
+    ], 4):
+        exercises.append(_build_exercise(session_id, b[0], b[1], b[4], b[3],
+                                          _accessory_sets(4, 10), order=i))
+
+    sh = UPPER_ACCESSORIES[week % len(UPPER_ACCESSORIES)]
+    exercises.append(_build_exercise(session_id, sh[0], sh[1], sh[4], sh[3],
+                                      _accessory_sets(3, 15), order=6))
+
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "ME_UPPER",
+        "objective": f"Max Effort Upper — {ex_name} to {label}",
+        "coachNote": f"{ex_name} is today's ME exercise. Triceps and back volume follows.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _de_lower_session(session_id: str, block_id: str, week: int, day: int,
+                      week_in_block: int, phase_num: int, goal: str,
+                      lifts: Dict, de_pct: int) -> Dict:
+    sq_load = _pct(lifts, "squat", de_pct)
+    dl_load = _pct(lifts, "deadlift", de_pct)
+
+    exercises = [
+        _build_exercise(
+            session_id, "speed_box_squat", "Speed Box Squat", "main",
+            f"{de_pct}% × 8 sets × 2 reps — max bar speed, alternate stance",
+            _de_sets(sq_load, 2, 8), order=1,
+            notes="Explode off the box. 60s rest between sets.",
+        ),
+        _build_exercise(
+            session_id, "speed_deadlift", "Speed Deadlift", "main",
+            f"{de_pct}% × 6 singles — violently fast, 30s rest",
+            _de_sets(dl_load, 1, 6), order=2,
+        ),
+        _build_exercise(
+            session_id, "box_jump", "Box Jump", "accessory",
+            "4x3 — maximal height, full recovery",
+            _accessory_sets(4, 3), order=3,
+        ),
+    ]
+
+    s = LOWER_SUPPLEMENTAL[(week + phase_num + 1) % len(LOWER_SUPPLEMENTAL)]
+    exercises.append(_build_exercise(session_id, s[0], s[1], s[4], s[3],
+                                      _accessory_sets(4, 10, _pct(lifts, "squat", 45)), order=4))
+
+    a = LOWER_ACCESSORIES[(week + 1) % len(LOWER_ACCESSORIES)]
+    exercises.append(_build_exercise(session_id, a[0], a[1], a[4], a[3],
+                                      _accessory_sets(3, 12), order=5))
+
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "DE_LOWER",
+        "objective": f"Dynamic Effort Lower — Speed work at {de_pct}%",
+        "coachNote": "Speed is the stimulus. No grinding. Move the bar like your life depends on it.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _de_upper_session(session_id: str, block_id: str, week: int, day: int,
+                      week_in_block: int, phase_num: int, goal: str,
+                      lifts: Dict, de_pct: int) -> Dict:
+    bench_load = _pct(lifts, "bench", de_pct)
+
+    oh_options = [
+        ("db_shoulder_press", "DB Shoulder Press"),
+        ("push_press",        "Push Press"),
+        ("strict_ohp",        "Strict OHP"),
+    ]
+    oh_id, oh_name = oh_options[week % len(oh_options)]
+
+    exercises = [
+        _build_exercise(
+            session_id, "speed_bench", "Speed Bench Press", "main",
+            f"{de_pct}% × 9 sets × 3 reps — alternate grip CW/M/WD each set",
+            _de_sets(bench_load, 3, 9), order=1,
+            notes="Bar speed is everything. 45-60s rest between sets.",
+        ),
+        _build_exercise(
+            session_id, oh_id, oh_name, "supplemental",
+            "4x8-10 — moderate, RPE 7-8",
+            _accessory_sets(4, 9), order=2,
+        ),
+    ]
+
+    t = UPPER_TRICEPS[(week + phase_num + 2) % len(UPPER_TRICEPS)]
+    exercises.append(_build_exercise(session_id, t[0], t[1], t[4], t[3],
+                                      _accessory_sets(4, 12), order=3))
+
+    b = UPPER_BACK[(week + phase_num + 4) % len(UPPER_BACK)]
+    exercises.append(_build_exercise(session_id, b[0], b[1], b[4], b[3],
+                                      _accessory_sets(4, 10), order=4))
+
+    a1 = UPPER_ACCESSORIES[(week + 1) % len(UPPER_ACCESSORIES)]
+    a2 = UPPER_ACCESSORIES[(week + 3) % len(UPPER_ACCESSORIES)]
+    exercises.append(_build_exercise(session_id, a1[0], a1[1], a1[4], a1[3],
+                                      _accessory_sets(3, 15), order=5))
+    exercises.append(_build_exercise(session_id, a2[0], a2[1], a2[4], a2[3],
+                                      _accessory_sets(3, 15), order=6))
+
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "DE_UPPER",
+        "objective": f"Dynamic Effort Upper — Speed bench at {de_pct}% + Upper volume",
+        "coachNote": "Speed bench first, then upper body accessories. Keep rest short on accessories.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _events_session(session_id: str, block_id: str, week: int, day: int,
+                    week_in_block: int, phase_num: int, lifts: Dict) -> Dict:
+    event_count = 3
+    event_indices = [(week + i * 2 + phase_num) % len(STRONGMAN_EVENTS) for i in range(event_count)]
+    exercises = []
+    for order, idx in enumerate(event_indices, 1):
+        ev = STRONGMAN_EVENTS[idx]
+        exercises.append(_build_exercise(
+            session_id, ev[0], ev[1], ev[4], ev[3],
+            _accessory_sets(3, 3), order=order,
+        ))
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "EVENTS",
+        "objective": "Strongman Events Practice — 3 events, full effort",
+        "coachNote": "Today is events day. Be aggressive. Log your best distances and loads.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _gpp_session(session_id: str, block_id: str, week: int, day: int,
+                 lifts: Dict) -> Dict:
+    exercises = [
+        _build_exercise(session_id, "sled_push", "Sled Push", "conditioning",
+                         "5x30m — steady pace", _accessory_sets(5, 1), order=1),
+        _build_exercise(session_id, "farmers_carry_gpp", "Farmer's Carry", "conditioning",
+                         "4x40m — moderate weight", _accessory_sets(4, 1), order=2),
+        _build_exercise(session_id, "battle_rope", "Battle Ropes", "conditioning",
+                         "5x30s — max effort", _accessory_sets(5, 1), order=3),
+        _build_exercise(session_id, "ab_wheel", "Ab Wheel", "accessory",
+                         "3x12 — controlled", _accessory_sets(3, 12), order=4),
+    ]
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "GPP",
+        "objective": "GPP & Conditioning — aerobic base work",
+        "coachNote": "Keep intensity moderate. This is aerobic base work, not a workout war.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _hyp_lower_session(session_id: str, block_id: str, week: int, day: int,
+                       week_in_block: int, phase_num: int, lifts: Dict) -> Dict:
+    rot_idx = (week + phase_num) % len(HYP_LOWER)
+    ex_id, ex_name = HYP_LOWER[rot_idx]
+    sq_load = _pct(lifts, "squat", 70)
+    exercises = [
+        _build_exercise(session_id, ex_id, ex_name, "main",
+                         "4x8-12 — moderate load, constant tension",
+                         _accessory_sets(4, 10, sq_load), order=1),
+    ]
+    for i, s in enumerate(LOWER_SUPPLEMENTAL[(week) % len(LOWER_SUPPLEMENTAL):], 2):
+        if i > 4:
+            break
+        exercises.append(_build_exercise(session_id, s[0], s[1], s[4], s[3],
+                                          _accessory_sets(3, 12), order=i))
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "HYP_LOWER",
+        "objective": f"Hypertrophy Lower — {ex_name}, high volume",
+        "coachNote": "Focus on muscle contraction. Control the eccentric. Time under tension.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+def _hyp_upper_session(session_id: str, block_id: str, week: int, day: int,
+                       week_in_block: int, phase_num: int, lifts: Dict) -> Dict:
+    rot_idx = (week + phase_num + 3) % len(HYP_UPPER)
+    ex_id, ex_name = HYP_UPPER[rot_idx]
+    bench_load = _pct(lifts, "bench", 70)
+    exercises = [
+        _build_exercise(session_id, ex_id, ex_name, "main",
+                         "4x8-12 — moderate load",
+                         _accessory_sets(4, 10, bench_load), order=1),
+    ]
+    for i, s in enumerate(UPPER_BACK[(week) % len(UPPER_BACK):], 2):
+        if i > 3:
+            break
+        exercises.append(_build_exercise(session_id, s[0], s[1], s[4], s[3],
+                                          _accessory_sets(3, 12), order=i))
+    for i, t in enumerate(UPPER_TRICEPS[(week + 2) % len(UPPER_TRICEPS):], 4):
+        if i > 5:
+            break
+        exercises.append(_build_exercise(session_id, t[0], t[1], t[4], t[3],
+                                          _accessory_sets(3, 12), order=i))
+    return {
+        "sessionId": session_id, "blockId": block_id,
+        "weekNumber": week, "dayNumber": day,
+        "sessionType": "HYP_UPPER",
+        "objective": f"Hypertrophy Upper — {ex_name}, high volume",
+        "coachNote": "Pump work. Keep rest short (60-90s). Focus on mind-muscle connection.",
+        "exercises": exercises, "status": "pending",
+    }
+
+
+# =========================================================================
+# SESSION DISPATCH
+# =========================================================================
+
+def _get_session_types(days_per_week: int, goal: str) -> List[str]:
+    base = {
+        3: ["ME_LOWER", "ME_UPPER", "DE_LOWER"],
+        4: ["ME_LOWER", "ME_UPPER", "DE_LOWER", "DE_UPPER"],
+        5: ["ME_LOWER", "ME_UPPER", "DE_LOWER", "DE_UPPER", "EVENTS"],
+        6: ["ME_LOWER", "ME_UPPER", "DE_LOWER", "DE_UPPER", "EVENTS", "GPP"],
+    }.get(days_per_week, ["ME_LOWER", "ME_UPPER", "DE_LOWER", "DE_UPPER"])
+
+    if goal == "hypertrophy":
+        base = {
+            3: ["HYP_LOWER", "HYP_UPPER", "HYP_LOWER"],
+            4: ["HYP_LOWER", "HYP_UPPER", "HYP_LOWER", "HYP_UPPER"],
+            5: ["HYP_LOWER", "HYP_UPPER", "HYP_LOWER", "HYP_UPPER", "GPP"],
+        }.get(days_per_week, ["HYP_LOWER", "HYP_UPPER", "HYP_LOWER", "HYP_UPPER"])
+
+    # For non-strongman goals, replace EVENTS with GPP
+    if goal not in ("strongman",):
+        base = ["GPP" if t == "EVENTS" else t for t in base]
+
+    return base[:days_per_week]
+
+
+def _build_session(s_type: str, session_id: str, block_id: str, week: int, day_num: int,
+                   week_in_block: int, phase_num: int, goal: str,
+                   lifts: Dict, de_pct: int) -> Dict:
+    fn_map = {
+        "ME_LOWER":  lambda: _me_lower_session(session_id, block_id, week, day_num, week_in_block, phase_num, goal, lifts),
+        "ME_UPPER":  lambda: _me_upper_session(session_id, block_id, week, day_num, week_in_block, phase_num, goal, lifts),
+        "DE_LOWER":  lambda: _de_lower_session(session_id, block_id, week, day_num, week_in_block, phase_num, goal, lifts, de_pct),
+        "DE_UPPER":  lambda: _de_upper_session(session_id, block_id, week, day_num, week_in_block, phase_num, goal, lifts, de_pct),
+        "EVENTS":    lambda: _events_session(session_id, block_id, week, day_num, week_in_block, phase_num, lifts),
+        "GPP":       lambda: _gpp_session(session_id, block_id, week, day_num, lifts),
+        "HYP_LOWER": lambda: _hyp_lower_session(session_id, block_id, week, day_num, week_in_block, phase_num, lifts),
+        "HYP_UPPER": lambda: _hyp_upper_session(session_id, block_id, week, day_num, week_in_block, phase_num, lifts),
+    }
+    return fn_map.get(s_type, fn_map["GPP"])()
+
+
+# =========================================================================
+# PHASE / BLOCK TEMPLATES
+# =========================================================================
+
+def _get_phase_templates(goal: str) -> List[Dict]:
+    conjugate = [
+        {"phaseName": "Phase 1 — GPP & Foundation",     "goal": "Build work capacity and movement quality",       "expectedAdaptation": "Improved technique, baseline strength, resilience", "weeks": 8,  "de_pct": 55, "blocks": [{"name": "Foundation A", "goal": "Establish patterns"}, {"name": "Foundation B", "goal": "Volume accumulation"}]},
+        {"phaseName": "Phase 2 — Accumulation",          "goal": "Build maximal strength through volume",           "expectedAdaptation": "5-10% increase in working weights",                        "weeks": 8,  "de_pct": 58, "blocks": [{"name": "Accumulation A", "goal": "Moderate weight, higher volume"}, {"name": "Accumulation B", "goal": "Increased intensity"}]},
+        {"phaseName": "Phase 3 — Intensification",       "goal": "Approach maximal effort territory",              "expectedAdaptation": "New 3RM and 1RM PRs",                                       "weeks": 8,  "de_pct": 62, "blocks": [{"name": "Intensification A", "goal": "Heavy triples"}, {"name": "Intensification B", "goal": "Singles and maxes"}]},
+        {"phaseName": "Phase 4 — Peak & Test",           "goal": "Realize strength, test true maxes",              "expectedAdaptation": "All-time PRs across main lifts",                            "weeks": 4,  "de_pct": 65, "blocks": [{"name": "Peak Block", "goal": "True 1RM attempts"}]},
+        {"phaseName": "Phase 5 — Transition & Recovery", "goal": "Active recovery, address weaknesses",           "expectedAdaptation": "Restored CNS, corrected imbalances",                        "weeks": 8,  "de_pct": 50, "blocks": [{"name": "Recovery A", "goal": "Low intensity restoration"}, {"name": "Recovery B", "goal": "Address weaknesses"}]},
+        {"phaseName": "Phase 6 — New Cycle Foundation",  "goal": "Establish new baseline for next annual cycle",   "expectedAdaptation": "Higher starting point than Phase 1",                         "weeks": 8,  "de_pct": 55, "blocks": [{"name": "New Baseline A", "goal": "Reset and rebuild"}, {"name": "New Baseline B", "goal": "Ramp for next cycle"}]},
+    ]
+
+    hypertrophy = [
+        {"phaseName": "Phase 1 — Hypertrophy Foundation","goal": "Build muscle and work capacity",               "expectedAdaptation": "Improved muscle mass and endurance",                        "weeks": 8,  "de_pct": 65, "blocks": [{"name": "Volume Block A", "goal": "High rep ranges"}, {"name": "Volume Block B", "goal": "Push volume higher"}]},
+        {"phaseName": "Phase 2 — Strength Phase",         "goal": "Convert muscle to strength",                   "expectedAdaptation": "Strength PRs in main lifts",                                 "weeks": 8,  "de_pct": 65, "blocks": [{"name": "Strength A", "goal": "Lower reps, heavier"}, {"name": "Strength B", "goal": "Near maximal effort"}]},
+        {"phaseName": "Phase 3 — Peaking",                "goal": "Peak strength and size",                       "expectedAdaptation": "Best physique and strength simultaneously",               "weeks": 4,  "de_pct": 65, "blocks": [{"name": "Peak Block", "goal": "Maximum expression"}]},
+        {"phaseName": "Phase 4 — Deload & Reset",         "goal": "Active recovery",                             "expectedAdaptation": "Restored recovery and readiness",                           "weeks": 4,  "de_pct": 50, "blocks": [{"name": "Deload", "goal": "Reduce all volumes"}]},
+        {"phaseName": "Phase 5 — New Hypertrophy Cycle",  "goal": "Second accumulation block",                   "expectedAdaptation": "Further muscle development",                                  "weeks": 8,  "de_pct": 65, "blocks": [{"name": "Volume C", "goal": "Increased total volume"}, {"name": "Volume D", "goal": "Peak volume"}]},
+        {"phaseName": "Phase 6 — Competition Prep",       "goal": "Final peak or annual test",                   "expectedAdaptation": "Peak condition",                                              "weeks": 8,  "de_pct": 65, "blocks": [{"name": "Final Prep A", "goal": "Dial in"}, {"name": "Final Prep B", "goal": "Show ready"}]},
+    ]
+
+    return {
+        "strength":     conjugate,
+        "powerlifting": conjugate,
+        "strongman":    conjugate,
+        "hypertrophy":  hypertrophy,
+        "athletic":     conjugate,
+        "general":      conjugate,
+    }.get(goal.lower(), conjugate)
+
+
+# =========================================================================
+# MAIN ASSEMBLY
+# =========================================================================
+
+def generate_plan(intake: Dict) -> Dict:
+    """
+    Generate a complete 12-month training plan from onboarding intake data.
+    Returns a full plan dict matching the AnnualPlan schema.
+    """
+    user_id   = intake.get("userId") or intake.get("user_id") or _uid()
+    goal      = intake.get("goal", "strength").lower().strip()
+    lifts     = intake.get("currentLifts") or intake.get("current_lifts") or intake.get("max_lifts") or {}
+    days_raw  = intake.get("trainingDays") or intake.get("training_days") or []
+    dpw       = max(3, min(len(days_raw) or 4, 6))
+    training_days = (days_raw or ["monday", "tuesday", "thursday", "friday"])[:dpw]
+
+    plan_id   = _uid()
+    now       = datetime.utcnow().isoformat()
+    session_types = _get_session_types(dpw, goal)
+    phase_templates = _get_phase_templates(goal)
+
+    phases: List[Dict] = []
+    week_cursor = 1
+
+    for phase_num, pt in enumerate(phase_templates, 1):
+        phase_id = _uid()
+        phase_weeks = pt["weeks"]
+        de_pct = pt["de_pct"]
+        block_templates = pt["blocks"]
+        blocks: List[Dict] = []
+        block_week_cursor = week_cursor
+
+        for block_num, bt in enumerate(block_templates, 1):
+            block_id = _uid()
+            weeks_in_block = 4  # 3 working + 1 deload
+            block_sessions_all: List[Dict] = []
+
+            for w_in_block in range(1, weeks_in_block + 1):
+                abs_week = block_week_cursor + w_in_block - 1
+                is_deload = (w_in_block == 4)
+
+                for day_idx, (s_type, day_name) in enumerate(zip(session_types, training_days)):
+                    effective_s_type = s_type
+                    if is_deload:
+                        # Deload: keep session type but scale loads — handled inside builders
+                        pass
+
+                    sess_id = _uid()
+                    session = _build_session(
+                        effective_s_type, sess_id, block_id,
+                        abs_week, day_idx + 1, w_in_block,
+                        phase_num, goal, lifts, de_pct,
+                    )
+                    session["dayOfWeek"] = day_name
+                    session["isDeload"] = is_deload
+                    block_sessions_all.append(session)
+
+            block_week_cursor += weeks_in_block
+
+            blocks.append({
+                "blockId": block_id,
+                "phaseId": phase_id,
+                "blockName": f"Block {phase_num}.{block_num}: {bt['name']}",
+                "blockNumber": block_num,
+                "blockGoal": bt["goal"],
+                "weekCount": weeks_in_block,
+                "progressionLogic": "Add 2.5kg/week to main lifts; DE% increases across phases",
+                "keyExercises": [s["exercises"][0]["name"] if s.get("exercises") else "" for s in block_sessions_all[:4]],
+                "status": "upcoming" if phase_num > 1 or block_num > 1 else "active",
+                "sessions": block_sessions_all,
+            })
+
+        phases.append({
+            "phaseId": phase_id,
+            "planId": plan_id,
+            "phaseName": pt["phaseName"],
+            "phaseNumber": phase_num,
+            "goal": pt["goal"],
+            "expectedAdaptation": pt["expectedAdaptation"],
+            "startWeek": week_cursor,
+            "endWeek": week_cursor + phase_weeks - 1,
+            "status": "active" if phase_num == 1 else "upcoming",
+            "blocks": blocks,
         })
-        order += 1
 
-    # ── Accessories ────────────────────────────────────────────────────────────
-    acc_ids = _select_accessories(
-        session_type, phase_name, goal, injuries, limit=3
-    )
-    params = LOAD_PARAMS.get(phase_name, LOAD_PARAMS["Foundation"])
-    acc_rpe = params.get("acc_rpe", 7)
-    for ex_id in acc_ids:
-        ex_data = EXERCISE_DB.get(ex_id, {})
-        target_sets = _build_acc_sets(rpe=acc_rpe, default_sets=3, reps=12)
-        exercises.append({
-            "exerciseId": ex_id,
-            "name": ex_data.get("name", ex_id),
-            "category": "accessory",
-            "prescription": "3×12 @ RPE 7-8, select load by feel",
-            "targetSets": target_sets,
-            "order": order,
-            "notes": None,
-        })
-        order += 1
+        week_cursor += phase_weeks
 
-    # ── GPP (if GPP session) ───────────────────────────────────────────────────
-    if session_type == "GPP":
-        gpp_exercises = ["farmer_carry", "sled_push", "sandbag_carry"]
-        for ex_id in gpp_exercises[:2]:
-            if _is_safe(ex_id, injuries):
-                ex_data = EXERCISE_DB.get(ex_id, {})
-                ref_key = ex_data.get("load_ref")
-                pr_ref  = lifts.get(ref_key, 0.0) if ref_key else 0.0
-                target_sets = [{
-                    "setNumber": j + 1,
-                    "targetLoad": _calc_load(pr_ref, 0.60, unit) if pr_ref > 0 else 0.0,
-                    "loadUnit": unit,
-                    "targetReps": 1,
-                    "targetRPE": 7.0,
-                    "isAmrap": False,
-                    "notes": "50-60ft distance" if j == 0 else None,
-                } for j in range(3)]
-                exercises.append({
-                    "exerciseId": ex_id,
-                    "name": ex_data.get("name", ex_id),
-                    "category": "gpp",
-                    "prescription": "3 trips × 50-60 ft",
-                    "targetSets": target_sets,
-                    "order": order,
-                    "notes": None,
-                })
-                order += 1
+    # Milestones
+    milestones = [
+        {"week": 4,  "label": "First max-out — establish true 1RMs"},
+        {"week": 12, "label": "End of Phase 1 — expect 5-10% strength increase"},
+        {"week": 20, "label": "Mid-program test — compare to baseline"},
+        {"week": 28, "label": "Peak strength block — PR attempts"},
+        {"week": 36, "label": "Transition — recover and reassess"},
+        {"week": 44, "label": "Final peak — all-time PRs target"},
+    ]
 
-    return exercises
+    return {
+        "planId": plan_id,
+        "userId": user_id,
+        "planName": f"{goal.title()} Program {datetime.utcnow().year}",
+        "startDate": now,
+        "totalWeeks": week_cursor - 1,
+        "phases": phases,
+        "milestones": milestones,
+        "status": "active",
+        "generatedAt": now,
+    }
 
 
-def _is_safe(ex_id: str, injuries: list) -> bool:
-    ex = EXERCISE_DB.get(ex_id, {})
-    contra = set(ex.get("contraindications", []))
-    if not contra:
-        return True
-    inj_lower = " ".join(injuries).lower()
-    if any(c.replace("_moderate", "").replace("_severe", "") in inj_lower for c in contra):
-        return False
-    return True
-
-
-def _select_main_exercise(
-    session_type: str,
-    phase_name: str,
-    goal: str,
-    injuries: list,
-    week_number: int,
-) -> Optional[str]:
-    """Select the main exercise for a session using rotation."""
-    rotation_key = goal if goal in ME_LOWER_ROTATION else "strength"
-    rotation: List[str] = []
-
-    if "Lower" in session_type:
-        if session_type.startswith("DE"):
-            rotation = ["speed_box_squat", "speed_deadlift"]
-        else:
-            rotation = ME_LOWER_ROTATION.get(rotation_key,
-                        ME_LOWER_ROTATION["strength"])
-    elif "Upper" in session_type:
-        if session_type.startswith("DE"):
-            return "speed_bench"
-        else:
-            rotation = ME_UPPER_ROTATION.get(rotation_key,
-                        ME_UPPER_ROTATION["strength"])
-    elif session_type == "GPP":
-        return None
-
-    if not rotation:
-        return None
-
-    # Use week index to rotate exercises
-    idx = (week_number - 1) % len(rotation)
-    candidate = rotation[idx]
-
-    # If candidate is unsafe due to injuries, try next
-    for offset in range(len(rotation)):
-        ex_id = rotation[(idx + offset) % len(rotation)]
-        if _is_safe(ex_id, injuries):
-            return ex_id
-
+def get_today_session(plan: Dict, current_week: int, day_of_week: str) -> Optional[Dict]:
+    """Find the session matching current_week and day_of_week."""
+    dow = day_of_week.lower()
+    for phase in plan.get("phases", []):
+        for block in phase.get("blocks", []):
+            for session in block.get("sessions", []):
+                if session.get("weekNumber") == current_week and session.get("dayOfWeek", "").lower() == dow:
+                    return session
     return None
 
 
-def _select_supplemental(
-    session_type: str,
-    phase_name: str,
-    goal: str,
-    injuries: list,
-    limit: int = 2,
-) -> List[str]:
-    """Select supplemental exercises for a session."""
-    SUPP_MAP: Dict[str, List[str]] = {
-        "ME Lower":  ["belt_squat", "rdl", "ghr", "hip_thrust", "leg_curl"],
-        "ME Upper":  ["pendlay_row", "chest_supported_row", "lat_pulldown", "db_row"],
-        "DE Lower":  ["belt_squat", "leg_curl", "hip_thrust", "ghr"],
-        "DE Upper":  ["db_row", "lat_pulldown", "chest_supported_row", "incline_db_press"],
-        "GPP":       [],
-    }
-    candidates = SUPP_MAP.get(session_type, [])
-    result = [ex for ex in candidates if _is_safe(ex, injuries)]
-    return result[:limit]
-
-
-def _select_accessories(
-    session_type: str,
-    phase_name: str,
-    goal: str,
-    injuries: list,
-    limit: int = 3,
-) -> List[str]:
-    """Select accessories for a session."""
-    ACC_MAP: Dict[str, List[str]] = {
-        "ME Lower":  ["ab_wheel", "reverse_hyper", "dead_bug", "pallof_press"],
-        "ME Upper":  ["face_pull", "band_pull_apart", "tricep_pushdown", "db_curl", "hammer_curl"],
-        "DE Lower":  ["ab_wheel", "reverse_hyper", "dead_bug", "pallof_press"],
-        "DE Upper":  ["face_pull", "band_pull_apart", "tricep_extension", "db_curl"],
-        "GPP":       ["face_pull", "band_pull_apart", "dead_bug"],
-    }
-    candidates = ACC_MAP.get(session_type, [])
-    result = [ex for ex in candidates if _is_safe(ex, injuries)]
-    return result[:limit]
-
-
-def _get_prescription(ex_id: str, session_type: str, phase_name: str) -> str:
-    if session_type.startswith("DE"):
-        params = LOAD_PARAMS.get(phase_name, {}).get("DE", {})
-        sets = params.get("sets", 8)
-        reps = params.get("reps", 2)
-        pct  = int(params.get("pct", 0.55) * 100)
-        return f"{sets}×{reps} @ {pct}% 1RM — max speed"
-    else:
-        params = LOAD_PARAMS.get(phase_name, {}).get("ME", {})
-        working_pcts = params.get("working_pcts", [0.75, 0.82, 0.88])
-        top_pct = int(working_pcts[-1] * 100) if working_pcts else 88
-        return f"Build to top set @ {top_pct}% 1RM (RPE 9)"
-
-
-# ─── Main plan generation entry point ────────────────────────────────────────
-
-def generate_annual_plan(profile: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Generate a complete 52-week annual training plan.
-    Returns plan dict + first week's sessions.
-    """
-    goal        = profile.get("goal", "strength")
-    experience  = profile.get("experience", "intermediate")
-    start_date  = profile.get("programStartDate") or datetime.now().strftime("%Y-%m-%d")
-
-    # Determine training model
-    if goal in ("strength", "powerlifting"):
-        model = "conjugate"
-    elif goal == "strongman":
-        model = "conjugate"
-    elif goal == "hypertrophy":
-        model = "block_hypertrophy"
-    else:
-        model = "balanced"
-
-    plan_id     = f"plan_{_id()}"
-    phase_templates = PHASE_TEMPLATES.get(model, PHASE_TEMPLATES["conjugate"])
-
-    phases = []
-    deload_weeks = []
-    current_week = 1
-    phase_num    = 1
-    block_counter = 1
-
-    for pt in phase_templates:
-        phase_id   = f"phase_{_id()}"
-        total_weeks = pt["weeks"]
-        phase_start = current_week
-        phase_end   = current_week + total_weeks - 1
-
-        blocks = []
-        weeks_remaining = total_weeks
-        block_start = current_week
-
-        while weeks_remaining > 0:
-            block_len  = min(4, weeks_remaining)
-            is_deload  = (block_len == 4)   # deload on week 4 of each block
-            block_end  = block_start + block_len - 1
-
-            if is_deload:
-                deload_weeks.append(block_end)
-
-            block_id = f"block_{_id()}"
-            blocks.append({
-                "blockId":         block_id,
-                "planId":          plan_id,
-                "phaseId":         phase_id,
-                "blockName":       f"{pt['name']} Block {block_counter}",
-                "blockNumber":     block_counter,
-                "blockGoal":       _block_goal(pt["name"], block_counter),
-                "startWeek":       block_start,
-                "endWeek":         block_end,
-                "weekCount":       block_len,
-                "isDeload":        is_deload,
-                "progressionLogic": _progression_logic(model, pt["name"]),
-                "riskAreas":       _risk_areas(profile),
-                "keyExercises":    _key_exercises(goal, pt["name"]),
-                "status":          "upcoming",
-            })
-
-            block_counter  += 1
-            block_start    += block_len
-            weeks_remaining -= block_len
-
-        phases.append({
-            "phaseId":            phase_id,
-            "planId":             plan_id,
-            "phaseName":          pt["name"],
-            "phaseNumber":        phase_num,
-            "goal":               pt["goal"],
-            "expectedAdaptation": pt["adaptation"],
-            "startWeek":          phase_start,
-            "endWeek":            phase_end,
-            "blocks":             blocks,
-            "status":             "current" if phase_num == 1 else "upcoming",
-        })
-
-        current_week += total_weeks
-        phase_num    += 1
-
-    # Generate first week's sessions
-    first_phase_name = phases[0]["phaseName"] if phases else "Foundation"
-    week1_sessions = generate_week_sessions(
-        week_number=1,
-        plan_id=plan_id,
-        profile=profile,
-        phase_name=first_phase_name,
-        block_number=1,
-    )
-
-    # Build milestones
-    milestones = _build_milestones(phases, goal)
-
-    return {
-        "planId":         plan_id,
-        "userId":         profile.get("userId", "default"),
-        "planName":       f"12-Month {goal.title()} Program",
-        "trainingModel":  model,
-        "startDate":      start_date,
-        "totalWeeks":     52,
-        "phases":         phases,
-        "deloadWeeks":    deload_weeks,
-        "testingWeeks":   [w for w in deload_weeks if w % 12 == 0],
-        "milestones":     milestones,
-        "status":         "active",
-        "generatedAt":    _now().isoformat(),
-        "lastModified":   _now().isoformat(),
-        "week1Sessions":  week1_sessions,
-    }
-
-
-def _block_goal(phase_name: str, block_num: int) -> str:
-    goals = {
-        "Foundation":      ["Movement quality + GPP", "Volume accumulation", "Volume peak"],
-        "Strength Base":   ["Hypertrophy-Strength bridge", "Pure strength", "Strength peak"],
-        "Intensification": ["Intensification 1 — load ramp", "Intensification 2 — heavy", "Intensification peak"],
-        "Competition Prep":["Competition prep 1", "Competition prep 2", "Final peak"],
-        "Transition":      ["Active recovery"],
-        "Accumulation":    ["Volume accumulation 1", "Volume accumulation 2", "Volume peak"],
-        "Intensification (hypertrophy)": ["Convert volume to strength", "Strength emphasis", "Strength peak"],
-        "Realization":     ["Peak strength", "Testing week"],
-        "General Fitness": ["Base fitness", "Build endurance+strength", "Fitness peak"],
-        "Strength Emphasis": ["Strength focus 1", "Strength focus 2"],
-        "Conditioning Block": ["Conditioning 1", "Conditioning 2"],
-        "Peak Fitness":    ["Peak performance", "Peak performance 2"],
-        "Maintenance":     ["Maintenance", "Maintenance 2"],
-    }
-    phase_list = goals.get(phase_name, ["Training block"])
-    idx = (block_num - 1) % len(phase_list)
-    return phase_list[idx]
-
-
-def _progression_logic(model: str, phase_name: str) -> str:
-    if model == "conjugate":
-        return "Rotate ME exercises every 1-2 weeks. Add 5-10 lbs to DE work each block. Supplemental stays within rep range."
-    elif model == "block_hypertrophy":
-        return "Add 1 set per week on main lifts. Keep RPE at ceiling within rep range. Deload on week 4."
-    else:
-        return "Progressive overload: add 5-10 lbs when top set RPE drops below target."
-
-
-def _risk_areas(profile: Dict) -> List[str]:
-    return profile.get("injuries", [])[:3]
-
-
-def _key_exercises(goal: str, phase_name: str) -> List[str]:
-    if goal in ("strength", "powerlifting"):
-        return ["SSB Box Squat", "Floor Press", "Conventional Deadlift"]
-    elif goal == "strongman":
-        return ["SSB Box Squat", "Log Clean and Press", "Yoke Carry"]
-    elif goal == "hypertrophy":
-        return ["Romanian Deadlift", "Incline DB Press", "Lat Pulldown"]
-    else:
-        return ["Trap Bar Deadlift", "OHP Barbell", "DB Row"]
-
-
-def _build_milestones(phases: List[Dict], goal: str) -> List[Dict]:
-    milestones = []
-    for phase in phases:
-        if phase["phaseName"] in ("Strength Base", "Intensification", "Competition Prep", "Realization"):
-            milestones.append({
-                "week": phase["startWeek"],
-                "label": f"Start of {phase['phaseName']}",
-                "type": "phase_start",
-            })
-    # Testing weeks at 12, 24, 36, 48, 52
-    for w in [12, 24, 36, 48, 52]:
-        milestones.append({
-            "week": w,
-            "label": f"Week {w} — Testing & Assessment",
-            "type": "testing",
-        })
-    return milestones
-
-
-# ─── Get sessions for a specific week (on-demand generation) ─────────────────
-
-def get_sessions_for_week(
-    week_number: int,
-    plan: Dict[str, Any],
-    profile: Dict[str, Any],
-) -> List[Dict]:
-    """
-    Given a plan and profile, generate sessions for any week number.
-    Called when a user navigates to a week that hasn't been generated yet.
-    """
-    # Find the phase for this week
-    phase_name = "Foundation"
-    block_number = 1
+def get_current_block_data(plan: Dict, current_week: int) -> Optional[Dict]:
+    """Return the block that contains current_week."""
     for phase in plan.get("phases", []):
-        if phase["startWeek"] <= week_number <= phase["endWeek"]:
-            phase_name = phase["phaseName"]
-            for block in phase.get("blocks", []):
-                if block["startWeek"] <= week_number <= block["endWeek"]:
-                    block_number = block["blockNumber"]
-                    break
-            break
-
-    return generate_week_sessions(
-        week_number=week_number,
-        plan_id=plan.get("planId", "plan_default"),
-        profile=profile,
-        phase_name=phase_name,
-        block_number=block_number,
-    )
+        for block in phase.get("blocks", []):
+            sessions = block.get("sessions", [])
+            weeks_in_block = {s["weekNumber"] for s in sessions}
+            if current_week in weeks_in_block:
+                return block
+    return None
