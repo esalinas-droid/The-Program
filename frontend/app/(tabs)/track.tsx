@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, FlatList, ActivityIndicator, Dimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { prApi, bwApi } from '../../src/utils/api';
+import { prApi, bwApi, programApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
 import { PRRecord } from '../../src/types';
 
@@ -23,6 +23,7 @@ export default function TrackScreen() {
   const [bwHistory, setBwHistory] = useState<any[]>([]);
   const [selectedEx, setSelectedEx] = useState<string | null>(null);
   const [exHistory, setExHistory] = useState<any[]>([]);
+  const [compliance, setCompliance] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any>(null);
 
@@ -35,6 +36,13 @@ export default function TrackScreen() {
         setPrs(prData);
         setBwHistory(bwData);
       } catch {}
+
+      // Also try fetching from program API for compliance data
+      try {
+        const comp = await programApi.getCompliance();
+        setCompliance(comp);
+      } catch { /* No AI plan data yet */ }
+
       setLoading(false);
     })();
   }, []));

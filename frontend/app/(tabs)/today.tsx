@@ -4,9 +4,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi } from '../../src/utils/api';
+import { logApi, programApi } from '../../src/utils/api';
 import { getProgramSession, getWeekSessions, getTodayDayName } from '../../src/data/programData';
-import { ProgramSession } from '../../src/types';
+import { ProgramSession, TodaySessionResponse } from '../../src/types';
 
 const TRAINING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -34,10 +34,11 @@ export default function TodayScreen() {
   const router = useRouter();
   const [week, setWeek] = useState(1);
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
+  const [apiSession, setApiSession] = useState<TodaySessionResponse | null>(null);
   const [weekSessions, setWeekSessions] = useState<ProgramSession[]>([]);
   const [loggedDays, setLoggedDays] = useState<Record<string, string>>({});
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ warmup: true, activation: true, rampup: true, suppl: true, acc: true, gpp: true, notes: true });
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ warmup: true, activation: true, rampup: true, suppl: true, acc: true, gpp: true, notes: true, aiExercises: false });
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(useCallback(() => {
@@ -49,6 +50,13 @@ export default function TodayScreen() {
       const today = getTodayDayName();
       setTodaySession(getProgramSession(w, today === 'Sunday' ? 'Monday' : today));
       setWeekSessions(getWeekSessions(w));
+
+      // Try fetching AI-generated session from program API
+      try {
+        const session = await programApi.getTodaySession();
+        setApiSession(session);
+      } catch { /* No AI plan yet — use local data */ }
+
       try {
         const entries = await logApi.list({ week: w });
         const dayMap: Record<string, string> = {};
@@ -177,6 +185,39 @@ export default function TodayScreen() {
         <CollapsibleSection title="COACHING NOTES" sectionKey="notes" collapsed={collapsed} onToggle={toggleSection} testID="notes-section">
           <Text style={s.protocolText}>{todaySession.coachingNotes}</Text>
         </CollapsibleSection>
+
+        {/* AI-Generated Exercise Detail (from program API) */}
+        {apiSession && (
+          <CollapsibleSection title="AI PROGRAM — EXERCISE TARGETS" sectionKey="aiExercises" collapsed={collapsed} onToggle={toggleSection} testID="ai-exercises-section">
+            <Text style={{ color: COLORS.accentBlue, fontSize: 10, fontWeight: '800' as any, letterSpacing: 1, marginBottom: 8 }}>{apiSession.session.sessionType} · {apiSession.phase}</Text>
+            <Text style={{ color: COLORS.text.secondary, fontSize: 13, marginBottom: 12, lineHeight: 18 }}>{apiSession.session.coachNote}</Text>
+            {apiSession.session.exercises.map((ex, i) => (
+              <View key={i} style={{ marginBottom: 12, paddingBottom: 10, borderBottomWidth: i < apiSession.session.exercises.length - 1 ? 1 : 0, borderBottomColor: COLORS.border }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: COLORS.text.primary, fontWeight: '700' as any, fontSize: 14 }}>{ex.name}</Text>
+                  <Text style={{ color: COLORS.accent, fontSize: 11, fontWeight: '600' as any }}>{ex.prescription}</Text>
+                </View>
+                <Text style={{ color: COLORS.text.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>{ex.category}</Text>
+                {ex.targetSets.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    {ex.targetSets.slice(0, 6).map((set, j) => (
+                      <View key={j} style={{ backgroundColor: set.setType === 'work' ? COLORS.sessions.me_upper.bg : COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                        <Text style={{ color: set.setType === 'work' ? COLORS.accent : COLORS.text.muted, fontSize: 10, fontWeight: '600' as any }}>
+                          {set.targetLoad || '—'} × {set.targetReps}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {ex.cues.length > 0 && (
+                  <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 4, fontStyle: 'italic' }}>
+                    {ex.cues.slice(0, 2).join(' · ')}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </CollapsibleSection>
+        )}
 
         {/* Log This Session Button */}
         <TouchableOpacity
