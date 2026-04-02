@@ -2,6 +2,11 @@ import { Tabs } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS } from '../../src/constants/theme';
 
+// Ensure navigation state initializes for all tabs when accessed directly via URL
+export const unstable_settings = {
+  initialRouteName: 'index',
+};
+
 export default function TabLayout() {
   return (
     <Tabs

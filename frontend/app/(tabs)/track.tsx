@@ -319,7 +319,12 @@ export default function TrackScreen() {
   useFocusEffect(useCallback(() => { loadAll(); }, []));
 
   // Web fallback: useEffect fires on mount for direct URL navigation
-  React.useEffect(() => { loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // Safety-net: always clear loading after 8s regardless of network state
+    const safetyTimer = setTimeout(() => setLoading(false), 8000);
+    loadAll().finally(() => clearTimeout(safetyTimer));
+    return () => clearTimeout(safetyTimer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     console.log('[Track] loadAll starting');
