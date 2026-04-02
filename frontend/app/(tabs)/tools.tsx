@@ -762,10 +762,10 @@ const s = StyleSheet.create({
   // Filter pills
   filterScroll:       { maxHeight: 48 },
   filterContent:      { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.sm, gap: SPACING.sm, alignItems: 'center' },
-  filterPill:         { paddingVertical: 7, paddingHorizontal: 16, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
-  filterPillOn:       { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  filterPillTxt:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: COLORS.text.muted, letterSpacing: 0.3 },
-  filterPillTxtOn:    { color: '#000' },
+  filterPill:         { paddingVertical: 7, paddingHorizontal: 16, borderRadius: RADIUS.full, borderWidth: 1, borderColor: '#2A2A30', backgroundColor: '#18181C' },
+  filterPillOn:       { backgroundColor: 'rgba(201,168,76,0.12)', borderColor: '#C9A84C' },
+  filterPillTxt:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: '#F5F5F5', letterSpacing: 0.3 },
+  filterPillTxtOn:    { color: '#C9A84C' },
 
   // Main scroll
   scrollContent:      { paddingTop: SPACING.sm },
