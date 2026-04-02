@@ -23,7 +23,7 @@ export default function Index() {
     );
   }
 
-  if (!onboarded) return <Redirect href="/onboarding" />;
+  if (!onboarded) return <Redirect href="/onboarding-intake" />;
   return <Redirect href="/(tabs)" />;
 }
 
