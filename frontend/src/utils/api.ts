@@ -114,3 +114,23 @@ export const programApi = {
   confirmFacts: (facts: Array<{ type: string; value: string }>) =>
     api('/uploads/confirm', { method: 'POST', body: JSON.stringify({ facts }) }),
 };
+
+// Analytics
+export const analyticsApi = {
+  overview: () => api('/analytics/overview'),
+  volume:   () => api('/analytics/volume'),
+  pain:     () => api('/analytics/pain'),
+  compliance: () => api('/analytics/compliance'),
+};
+
+// Substitutions
+export const substitutionApi = {
+  log: (data: {
+    date: string; week: number; day: string; sessionType: string;
+    originalExercise: string; replacementExercise: string; reason: string;
+  }) => api('/substitutions', { method: 'POST', body: JSON.stringify(data) }),
+  list: (week?: number) => {
+    const qs = week != null ? `?week=${week}` : '';
+    return api(`/substitutions${qs}`);
+  },
+};

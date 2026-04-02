@@ -654,7 +654,15 @@ export default function TodayScreen() {
 
   const handleFinish = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    router.push('/(tabs)');
+    router.push({
+      pathname: '/review',
+      params: {
+        setsLogged:  String(loggedCount),
+        totalSets:   String(totalSets),
+        sessionType: sessionType,
+        week:        String(week),
+      },
+    } as any);
   };
 
   // ── Injury warnings ──────────────────────────────────────────────────────────

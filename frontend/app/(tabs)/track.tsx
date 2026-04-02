@@ -296,9 +296,6 @@ export default function TrackScreen() {
   const [profile,     setProfile]     = useState<any>(null);
   const [loading,     setLoading]     = useState(true);
 
-  // DEBUG
-  console.log('[Track] component rendering, loading:', loading);
-
   // Stagger animations
   const anims = useRef(Array.from({ length: SECTION_COUNT }, () => new Animated.Value(0))).current;
 
@@ -318,39 +315,24 @@ export default function TrackScreen() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, []));
 
-  // Web fallback: useEffect fires on mount for direct URL navigation
-  useEffect(() => {
-    // Safety-net: always clear loading after 5s regardless of network state
-    const safetyTimer = setTimeout(() => {
-      console.log('[Track] SAFETY TIMER FIRED');
-      setLoading(false);
-    }, 5000);
-    loadAll();
-    return () => clearTimeout(safetyTimer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   async function loadAll() {
-    console.log('[Track] loadAll starting');
     setLoading(true);
     try {
-      console.log('[Track] making API calls');
       const [prData, bwHistory, profileData] = await Promise.all([
-        prApi.getAll().catch(e => { console.warn('[Track] prApi error', e); return []; }),
-        bwApi.getHistory().catch(e => { console.warn('[Track] bwApi error', e); return []; }),
-        profileApi.get().catch(e => { console.warn('[Track] profileApi error', e); return null; }),
+        prApi.getAll().catch(() => []),
+        bwApi.getHistory().catch(() => []),
+        profileApi.get().catch(() => null),
       ]);
-      console.log('[Track] first batch done, prData:', prData?.length);
       setPrs(prData);
       setBwData(bwHistory);
       setProfile(profileData);
 
       const [ov, vol, pain, comp] = await Promise.all([
-        analyticsApi.overview().catch(e => { console.warn('[Track] analytics overview error', e); return null; }),
-        analyticsApi.volume().catch(e => { console.warn('[Track] analytics volume error', e); return []; }),
-        analyticsApi.pain().catch(e => { console.warn('[Track] analytics pain error', e); return null; }),
-        analyticsApi.compliance().catch(e => { console.warn('[Track] analytics compliance error', e); return []; }),
+        analyticsApi.overview().catch(() => null),
+        analyticsApi.volume().catch(() => []),
+        analyticsApi.pain().catch(() => null),
+        analyticsApi.compliance().catch(() => []),
       ]);
-      console.log('[Track] second batch done');
       setOverview(ov);
       setVolumeData(vol);
       setPainData(pain);
@@ -358,7 +340,6 @@ export default function TrackScreen() {
     } catch (e) {
       console.warn('[TrackScreen] loadAll error:', e);
     } finally {
-      console.log('[Track] setting loading false');
       setLoading(false);
       runAnims();
       loadLift('Back Squat');

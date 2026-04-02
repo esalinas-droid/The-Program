@@ -10,8 +10,6 @@ from datetime import datetime, timezone
 import os
 import logging
 from pathlib import Path
-from routers.program import program_router
-
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -671,15 +669,6 @@ async def get_compliance_breakdown():
 
 app.include_router(api_router)
 app.include_router(program_router)
-app.include_router(program_router)
-
-# ── New program-generation router ─────────────────────────────────────────────
-try:
-    from routers.api import router as program_router
-    app.include_router(program_router, prefix="/api")
-    logger.info("Program router loaded successfully.")
-except Exception as _e:
-    logger.warning(f"Could not load program router: {_e}")
 
 app.add_middleware(
     CORSMiddleware,

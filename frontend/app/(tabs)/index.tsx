@@ -399,6 +399,17 @@ function E1RMCard({ label, data, units }: { label: string; data: any; units: str
   );
 }
 
+function StatBox({ label, value, color, testID }: {
+  label: string; value: string; color?: string; testID?: string;
+}) {
+  return (
+    <View testID={testID} style={s.statBox}>
+      <Text style={[s.statBoxValue, color ? { color } : {}]}>{value}</Text>
+      <Text style={s.statBoxLabel}>{label}</Text>
+    </View>
+  );
+}
+
 function QuickAction({ icon, label, onPress, accent }: {
   icon: string; label: string; onPress: () => void; accent?: boolean;
 }) {
@@ -469,6 +480,12 @@ const s = StyleSheet.create({
   sectionRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm },
   sectionTitle: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2 },
   sectionSub:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+
+  // Stats grid (2×2 boxes)
+  statsGrid:      { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
+  statBox:        { flex: 1, minWidth: '45%', backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
+  statBoxValue:   { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 26, marginBottom: 2 },
+  statBoxLabel:   { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
 
   // Stats pills
   statsRow:         { flexDirection: 'row', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
