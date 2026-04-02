@@ -8,14 +8,14 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi } from '../../src/utils/api';
+import { substitutionApi, programApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName } from '../../src/data/programData';
 import { getBlock } from '../../src/utils/calculations';
 import {
   ADJUST_REASONS, REASON_ICONS, AdjustReason, Alternative,
   getAlternatives, extractExerciseName,
 } from '../../src/data/substitutions';
-import { ProgramSession } from '../../src/types';
+import { ProgramSession, TodaySessionResponse } from '../../src/types';
 
 // ── Additional palette ────────────────────────────────────────────────────────
 const TEAL = '#4DCEA6';
@@ -546,6 +546,7 @@ export default function TodayScreen() {
   // Session data
   const [week, setWeek]               = useState(1);
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
+  const [apiSession, setApiSession]   = useState<TodaySessionResponse | null>(null);
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
 
@@ -578,6 +579,13 @@ export default function TodayScreen() {
       const day  = todayName === 'Sunday' ? 'Monday' : todayName;
       const sess = getProgramSession(w, day);
       setTodaySession(sess);
+
+      // Try AI-generated session from program API (graceful fallback)
+      try {
+        const session = await programApi.getTodaySession();
+        setApiSession(session);
+      } catch { /* No AI plan yet — use local data */ }
+
       setLoading(false);
     })();
   }, []));
@@ -720,6 +728,45 @@ export default function TodayScreen() {
           <Text style={s.coachText}>{coachNote}</Text>
         </View>
 
+        {/* ── AI PROGRAM — EXERCISE TARGETS (appears once annual plan exists) ── */}
+        {apiSession && (
+          <View style={s.aiPanel}>
+            <View style={s.aiPanelHeader}>
+              <MaterialCommunityIcons name="brain" size={13} color={COLORS.accentBlue} />
+              <Text style={s.aiPanelTitle}>AI PROGRAM — EXERCISE TARGETS</Text>
+              <View style={s.aiPanelBadge}>
+                <Text style={s.aiPanelBadgeText}>{apiSession.session.sessionType}</Text>
+              </View>
+            </View>
+            {apiSession.session.coachNote ? (
+              <Text style={s.aiCoachNote}>{apiSession.session.coachNote}</Text>
+            ) : null}
+            {apiSession.session.exercises.map((ex, i) => (
+              <View key={i} style={[s.aiExRow, i < apiSession.session.exercises.length - 1 && s.aiExRowBorder]}>
+                <View style={s.aiExTop}>
+                  <Text style={s.aiExName}>{ex.name}</Text>
+                  <Text style={s.aiExPrescription}>{ex.prescription}</Text>
+                </View>
+                <Text style={s.aiExCategory}>{ex.category.toUpperCase()}</Text>
+                {ex.targetSets.length > 0 && (
+                  <View style={s.aiSetBadges}>
+                    {ex.targetSets.slice(0, 6).map((set, j) => (
+                      <View key={j} style={[s.aiSetBadge, (set as any).setType === 'work' && s.aiSetBadgeWork]}>
+                        <Text style={[s.aiSetBadgeText, (set as any).setType === 'work' && s.aiSetBadgeWorkText]}>
+                          {(set as any).targetLoad || '—'} × {(set as any).targetReps ?? (set as any).reps ?? '—'}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {ex.cues.length > 0 && (
+                  <Text style={s.aiExCues}>{ex.cues.slice(0, 2).join(' · ')}</Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* ── WARM-UP SECTION ── */}
         <TouchableOpacity
           style={s.warmupBar}
@@ -859,6 +906,26 @@ const s = StyleSheet.create({
   coachAvatarIcon:{ fontSize: 13, color: COLORS.accent },
   coachLabel:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5 },
   coachText:    { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
+
+  // AI Program panel (visible when annual plan exists)
+  aiPanel:        { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.accentBlue + '50', borderLeftWidth: 3, borderLeftColor: COLORS.accentBlue, overflow: 'hidden' },
+  aiPanelHeader:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  aiPanelTitle:   { flex: 1, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accentBlue, letterSpacing: 1 },
+  aiPanelBadge:   { backgroundColor: COLORS.accentBlue + '25', paddingHorizontal: SPACING.sm, paddingVertical: 2, borderRadius: RADIUS.sm },
+  aiPanelBadgeText: { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.accentBlue, letterSpacing: 0.8 },
+  aiCoachNote:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, fontStyle: 'italic', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  aiExRow:        { padding: SPACING.md },
+  aiExRowBorder:  { borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  aiExTop:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  aiExName:       { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, color: COLORS.text.primary },
+  aiExPrescription: { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  aiExCategory:   { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1, marginBottom: SPACING.sm },
+  aiSetBadges:    { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginBottom: SPACING.xs },
+  aiSetBadge:     { backgroundColor: COLORS.background, borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 3, borderWidth: 1, borderColor: COLORS.border },
+  aiSetBadgeWork: { backgroundColor: COLORS.accent + '15', borderColor: COLORS.accent + '50' },
+  aiSetBadgeText: { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  aiSetBadgeWorkText: { color: COLORS.accent },
+  aiExCues:       { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic' },
 
   // Warm-up section
   warmupBar:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: SPACING.lg, marginBottom: 0, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
