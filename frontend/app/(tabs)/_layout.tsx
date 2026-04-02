@@ -45,15 +45,11 @@ export default function TabLayout() {
         tabBarTestID: 'tab-track',
       }} />
       <Tabs.Screen name="tools" options={{
-        title: 'Library',
-        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="book-open-variant" size={24} color={color} />,
+        title: 'Tools',
+        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="toolbox-outline" size={24} color={color} />,
         tabBarTestID: 'tab-tools',
       }} />
-      <Tabs.Screen name="changes" options={{
-        title: 'Changes',
-        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="history" size={24} color={color} />,
-        tabBarTestID: 'tab-changes',
-      }} />
+      <Tabs.Screen name="changes" options={{ href: null }} />
     </Tabs>
   );
 }
