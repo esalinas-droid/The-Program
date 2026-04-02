@@ -320,9 +320,12 @@ export default function TrackScreen() {
 
   // Web fallback: useEffect fires on mount for direct URL navigation
   useEffect(() => {
-    // Safety-net: always clear loading after 8s regardless of network state
-    const safetyTimer = setTimeout(() => setLoading(false), 8000);
-    loadAll().finally(() => clearTimeout(safetyTimer));
+    // Safety-net: always clear loading after 5s regardless of network state
+    const safetyTimer = setTimeout(() => {
+      console.log('[Track] SAFETY TIMER FIRED');
+      setLoading(false);
+    }, 5000);
+    loadAll();
     return () => clearTimeout(safetyTimer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
