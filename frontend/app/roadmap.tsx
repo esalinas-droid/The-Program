@@ -475,10 +475,10 @@ export default function RoadmapScreen() {
             {/* CTA */}
             <TouchableOpacity
               style={s.viewSessionBtn}
-              onPress={() => router.push('/(tabs)/today')}
+              onPress={() => router.push('/current-block' as any)}
               activeOpacity={0.85}
             >
-              <Text style={s.viewSessionBtnText}>View Current Session</Text>
+              <Text style={s.viewSessionBtnText}>View Current Block</Text>
               <MaterialCommunityIcons name="arrow-right" size={16} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
