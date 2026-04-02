@@ -11,43 +11,52 @@ from models.schemas import (
     IntakeRequest, IntakeResponse,
     UserProfile,
     LogSetRequest, FinishSessionRequest, AdjustExerciseRequest,
-    WorkoutLog,
 )
 from services.plan_generator import generate_plan, get_today_session, get_current_block_data
+from database import db
 
 router = APIRouter()
 
-# =======================================================================
-# IN-MEMORY STORAGE  (replaced with MongoDB in production)
-# =======================================================================
-_profiles: Dict[str, dict]   = {}   # userId  -> profile dict
-_plans:    Dict[str, dict]   = {}   # userId  -> plan dict
-_active:   Dict[str, dict]   = {}   # userId  -> {sessionId, exercise_sets{}}
-_logs:     List[dict]        = []
-_changes:  List[dict]        = []
-_prs:      Dict[str, dict]   = {}   # userId -> {exerciseId -> best_estimated_1rm}
-_pain_log: List[dict]        = []
+# ── MongoDB Collections ───────────────────────────────────────────────────────
+profiles_col = db.program_profiles
+plans_col    = db.program_plans
+active_col   = db.program_active_sessions
+logs_col     = db.program_logs
+changes_col  = db.program_changes
+prs_col      = db.program_prs
+pain_col     = db.program_pain_log
 
 
-# -----------------------------------------------------------------------
-# HELPERS
-# -----------------------------------------------------------------------
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _strip_id(doc: Any) -> Any:
+    """Remove MongoDB _id field from a document dict."""
+    if isinstance(doc, dict) and '_id' in doc:
+        doc.pop('_id', None)
+    return doc
+
 
 def _epley_1rm(weight: float, reps: int) -> float:
     return weight * (1 + reps / 30) if reps > 1 else weight
 
 
-def _check_pr(user_id: str, ex_id: str, weight: float, reps: int) -> bool:
-    est = _epley_1rm(weight, reps)
-    user_prs = _prs.setdefault(user_id, {})
-    if ex_id not in user_prs or est > user_prs[ex_id]["estimated1RM"]:
-        user_prs[ex_id] = {
-            "exerciseId": ex_id,
-            "estimated1RM": round(est, 1),
-            "actualWeight": weight,
-            "actualReps": reps,
-            "date": datetime.utcnow().isoformat(),
-        }
+async def _check_and_save_pr(user_id: str, ex_id: str, weight: float, reps: int) -> bool:
+    """Check if this is a new PR; if so, upsert into MongoDB and return True."""
+    est = round(_epley_1rm(weight, reps), 1)
+    existing = await prs_col.find_one({"userId": user_id, "exerciseId": ex_id})
+    if not existing or est > (existing.get("estimated1RM") or 0):
+        await prs_col.update_one(
+            {"userId": user_id, "exerciseId": ex_id},
+            {"$set": {
+                "userId": user_id,
+                "exerciseId": ex_id,
+                "estimated1RM": est,
+                "actualWeight": weight,
+                "actualReps": reps,
+                "date": datetime.utcnow().isoformat(),
+            }},
+            upsert=True,
+        )
         return True
     return False
 
@@ -78,12 +87,13 @@ async def submit_intake(body: IntakeRequest):
         "currentWeek": 1,
         "createdAt": now,
     }
-    _profiles[user_id] = profile
+    await profiles_col.insert_one(dict(profile))
 
     intake_dict = body.dict()
     intake_dict["userId"] = user_id
     plan = generate_plan(intake_dict)
-    _plans[user_id] = plan
+
+    await plans_col.insert_one(dict(plan))
 
     return IntakeResponse(
         userId=user_id,
@@ -95,20 +105,22 @@ async def submit_intake(body: IntakeRequest):
 
 @router.get("/profile")
 async def get_profile(userId: str = Query(...)):
-    p = _profiles.get(userId)
+    p = await profiles_col.find_one({"userId": userId})
     if not p:
         raise HTTPException(404, "Profile not found")
-    return p
+    return _strip_id(dict(p))
 
 
 @router.put("/profile")
 async def update_profile(body: dict, userId: str = Query(...)):
-    if userId not in _profiles:
+    existing = await profiles_col.find_one({"userId": userId})
+    if not existing:
         raise HTTPException(404, "Profile not found")
     body.pop("userId", None)
     body["updatedAt"] = datetime.utcnow().isoformat()
-    _profiles[userId].update(body)
-    return _profiles[userId]
+    await profiles_col.update_one({"userId": userId}, {"$set": body})
+    updated = await profiles_col.find_one({"userId": userId})
+    return _strip_id(dict(updated))
 
 
 # =======================================================================
@@ -118,11 +130,13 @@ async def update_profile(body: dict, userId: str = Query(...)):
 @router.get("/plan/year")
 async def get_year_plan(userId: str = Query(...)):
     """Return annual plan with phase/block summaries (exercises omitted for performance)."""
-    plan = _plans.get(userId)
-    if not plan:
+    raw = await plans_col.find_one({"userId": userId})
+    if not raw:
         raise HTTPException(404, "Plan not found. Complete onboarding first.")
+    plan = dict(raw)
+    plan.pop("_id", None)
 
-    # Lightweight version — strip session exercises to reduce payload
+    # Lightweight version — strip session exercises for performance
     summary_phases = []
     for phase in plan.get("phases", []):
         summary_blocks = []
@@ -164,12 +178,14 @@ async def get_year_plan(userId: str = Query(...)):
 @router.get("/plan/block/current")
 async def get_current_block(userId: str = Query(...)):
     """Return the current training block including full session + exercise data."""
-    profile = _profiles.get(userId)
+    profile = await profiles_col.find_one({"userId": userId})
     if not profile:
         raise HTTPException(404, "Profile not found")
-    plan = _plans.get(userId)
-    if not plan:
+    raw = await plans_col.find_one({"userId": userId})
+    if not raw:
         raise HTTPException(404, "Plan not found")
+    plan = dict(raw)
+    plan.pop("_id", None)
 
     current_week = profile.get("currentWeek", 1)
     block = get_current_block_data(plan, current_week)
@@ -185,12 +201,14 @@ async def get_today_session_api(
     dayOverride: Optional[str] = Query(None),
 ):
     """Return today's training session with full exercise prescriptions."""
-    profile = _profiles.get(userId)
+    profile = await profiles_col.find_one({"userId": userId})
     if not profile:
         raise HTTPException(404, "Profile not found")
-    plan = _plans.get(userId)
-    if not plan:
+    raw = await plans_col.find_one({"userId": userId})
+    if not raw:
         raise HTTPException(404, "Plan not found. Complete onboarding to generate a plan.")
+    plan = dict(raw)
+    plan.pop("_id", None)
 
     current_week = weekOverride or profile.get("currentWeek", 1)
     today = dayOverride or date.today().strftime("%A").lower()
@@ -216,9 +234,10 @@ async def get_today_session_api(
 
 @router.get("/plan/week/{week_number}")
 async def get_week_sessions(week_number: int, userId: str = Query(...)):
-    plan = _plans.get(userId)
-    if not plan:
+    raw = await plans_col.find_one({"userId": userId})
+    if not raw:
         raise HTTPException(404, "Plan not found")
+    plan = dict(raw); plan.pop("_id", None)
     for phase in plan.get("phases", []):
         for block in phase.get("blocks", []):
             week_sessions = [s for s in block.get("sessions", []) if s["weekNumber"] == week_number]
@@ -234,10 +253,12 @@ async def get_week_sessions(week_number: int, userId: str = Query(...)):
 
 @router.post("/plan/advance-week")
 async def advance_week(userId: str = Query(...)):
-    if userId not in _profiles:
+    profile = await profiles_col.find_one({"userId": userId})
+    if not profile:
         raise HTTPException(404, "Profile not found")
-    _profiles[userId]["currentWeek"] = _profiles[userId].get("currentWeek", 1) + 1
-    return {"currentWeek": _profiles[userId]["currentWeek"]}
+    new_week = profile.get("currentWeek", 1) + 1
+    await profiles_col.update_one({"userId": userId}, {"$set": {"currentWeek": new_week}})
+    return {"currentWeek": new_week}
 
 
 # =======================================================================
@@ -248,9 +269,6 @@ async def advance_week(userId: str = Query(...)):
 async def log_set(body: LogSetRequest, userId: str = Query(...)):
     """Log a single set. Auto-detects PRs."""
     now = datetime.utcnow().isoformat()
-    user_active = _active.setdefault(userId, {})
-    sess_data = user_active.setdefault(body.sessionId, {"sets": [], "startedAt": now})
-
     set_entry = {
         "sessionExerciseId": body.sessionExerciseId,
         "setNumber": body.setNumber,
@@ -261,37 +279,55 @@ async def log_set(body: LogSetRequest, userId: str = Query(...)):
         "notes": body.notes,
         "timestamp": now,
     }
-    sess_data["sets"].append(set_entry)
+
+    await active_col.update_one(
+        {"userId": userId, "sessionId": body.sessionId},
+        {
+            "$push": {"sets": set_entry},
+            "$setOnInsert": {"startedAt": now, "userId": userId, "sessionId": body.sessionId},
+        },
+        upsert=True,
+    )
 
     is_pr = False
     if body.actualLoad and body.actualReps:
-        is_pr = _check_pr(userId, body.sessionExerciseId, body.actualLoad, body.actualReps)
-
+        is_pr = await _check_and_save_pr(
+            userId, body.sessionExerciseId, body.actualLoad, body.actualReps
+        )
         if body.painScore and body.painScore >= 4:
-            _pain_log.append({
-                "userId": userId, "exerciseId": body.sessionExerciseId,
-                "score": body.painScore, "timestamp": now,
+            await pain_col.insert_one({
+                "userId": userId,
+                "exerciseId": body.sessionExerciseId,
+                "score": body.painScore,
+                "timestamp": now,
             })
 
-    return {"success": True, "isPR": is_pr, "message": "Set logged" + (" — NEW PR!" if is_pr else "")}
+    return {
+        "success": True,
+        "isPR": is_pr,
+        "message": "Set logged" + (" — NEW PR!" if is_pr else ""),
+    }
 
 
 @router.post("/session/finish")
 async def finish_session(body: FinishSessionRequest, userId: str = Query(...)):
     """Complete a session. Returns summary with wins and flags."""
     now = datetime.utcnow().isoformat()
-    sess_data = _active.get(userId, {}).get(body.sessionId, {"sets": []})
-    sets = sess_data.get("sets", [])
+    active_doc = await active_col.find_one({"userId": userId, "sessionId": body.sessionId})
+    sets = active_doc.get("sets", []) if active_doc else []
 
-    # Tally stats
     total_volume = sum(
         (s.get("actualLoad") or 0) * (s.get("actualReps") or 0) for s in sets
     )
-    pr_exercises = [
-        s["sessionExerciseId"] for s in sets
-        if s.get("actualLoad") and s.get("actualReps")
-        and _check_pr(userId, s["sessionExerciseId"], s["actualLoad"], s["actualReps"])
-    ]
+    pr_exercises: List[str] = []
+    for s in sets:
+        if s.get("actualLoad") and s.get("actualReps"):
+            is_pr = await _check_and_save_pr(
+                userId, s["sessionExerciseId"], s["actualLoad"], s["actualReps"]
+            )
+            if is_pr:
+                pr_exercises.append(s["sessionExerciseId"])
+
     pain_flags = [s for s in sets if (s.get("painScore") or 0) >= 5]
 
     log = {
@@ -306,11 +342,8 @@ async def finish_session(body: FinishSessionRequest, userId: str = Query(...)):
         "notes": body.notes,
         "completedAt": now,
     }
-    _logs.append(log)
-
-    # Clean up active session
-    if userId in _active and body.sessionId in _active[userId]:
-        del _active[userId][body.sessionId]
+    await logs_col.insert_one(dict(log))
+    await active_col.delete_one({"userId": userId, "sessionId": body.sessionId})
 
     return {
         "success": True,
@@ -336,7 +369,7 @@ async def finish_session(body: FinishSessionRequest, userId: str = Query(...)):
 
 @router.post("/session/adjust-exercise")
 async def adjust_exercise(body: AdjustExerciseRequest, userId: str = Query(...)):
-    """Return 3 exercise alternatives given exercise + reason."""
+    """Return exercise alternatives given exercise + reason."""
     from services.plan_generator import (
         ME_LOWER_ROTATIONS, ME_UPPER_ROTATIONS,
         LOWER_SUPPLEMENTAL, UPPER_BACK, UPPER_TRICEPS,
@@ -345,7 +378,6 @@ async def adjust_exercise(body: AdjustExerciseRequest, userId: str = Query(...))
     reason = body.reason.lower()
     ex_id  = body.sessionExerciseId.lower()
 
-    # Simple heuristic: pick alternatives from the same pool
     if any(k in ex_id for k in ["squat", "deadlift", "pull", "good_morning"]):
         pool = [(x[0], x[1]) for x in ME_LOWER_ROTATIONS]
     elif any(k in ex_id for k in ["bench", "press", "floor"]):
@@ -357,7 +389,6 @@ async def adjust_exercise(body: AdjustExerciseRequest, userId: str = Query(...))
     else:
         pool = [(x[0], x[1]) for x in LOWER_SUPPLEMENTAL]
 
-    # Filter out the original exercise
     alternatives = [p for p in pool if p[0] != ex_id][:3]
 
     change_doc = {
@@ -370,12 +401,10 @@ async def adjust_exercise(body: AdjustExerciseRequest, userId: str = Query(...))
         "explanation": f"User requested {reason} — {len(alternatives)} alternatives provided",
         "timestamp": datetime.utcnow().isoformat(),
     }
-    _changes.append(change_doc)
+    await changes_col.insert_one(dict(change_doc))
 
     return {
-        "alternatives": [
-            {"exerciseId": a[0], "name": a[1]} for a in alternatives
-        ],
+        "alternatives": [{"exerciseId": a[0], "name": a[1]} for a in alternatives],
         "change": change_doc,
     }
 
@@ -386,14 +415,14 @@ async def adjust_exercise(body: AdjustExerciseRequest, userId: str = Query(...))
 
 @router.get("/coach/change-log")
 async def get_change_log(userId: str = Query(...), limit: int = Query(20)):
-    user_changes = [c for c in _changes if c.get("userId") == userId]
-    return {"changes": user_changes[-limit:][::-1], "total": len(user_changes)}
+    docs = await changes_col.find({"userId": userId}).sort("timestamp", -1).limit(limit).to_list(limit)
+    return {"changes": [_strip_id(dict(d)) for d in docs], "total": len(docs)}
 
 
 @router.get("/coach/workout-history")
 async def get_workout_history(userId: str = Query(...), limit: int = Query(10)):
-    user_logs = [l for l in _logs if l.get("userId") == userId]
-    return {"logs": user_logs[-limit:][::-1], "total": len(user_logs)}
+    docs = await logs_col.find({"userId": userId}).sort("completedAt", -1).limit(limit).to_list(limit)
+    return {"logs": [_strip_id(dict(d)) for d in docs], "total": len(docs)}
 
 
 # =======================================================================
@@ -402,8 +431,8 @@ async def get_workout_history(userId: str = Query(...), limit: int = Query(10)):
 
 @router.get("/progress/prs")
 async def get_prs(userId: str = Query(...)):
-    user_prs = _prs.get(userId, {})
-    pr_list = sorted(user_prs.values(), key=lambda x: x["exerciseId"])
+    docs = await prs_col.find({"userId": userId}).to_list(500)
+    pr_list = sorted([_strip_id(dict(d)) for d in docs], key=lambda x: x.get("exerciseId", ""))
     return {"prs": pr_list, "total": len(pr_list)}
 
 
@@ -411,8 +440,8 @@ async def get_prs(userId: str = Query(...)):
 async def record_pr(body: dict, userId: str = Query(...)):
     ex_id = body.get("exerciseId", "")
     value = float(body.get("value", 0))
-    user_prs = _prs.setdefault(userId, {})
-    user_prs[ex_id] = {
+    pr = {
+        "userId": userId,
         "exerciseId": ex_id,
         "estimated1RM": value,
         "actualWeight": value,
@@ -420,10 +449,15 @@ async def record_pr(body: dict, userId: str = Query(...)):
         "date": datetime.utcnow().isoformat(),
         "notes": body.get("notes", ""),
     }
-    return {"success": True, "pr": user_prs[ex_id]}
+    await prs_col.update_one(
+        {"userId": userId, "exerciseId": ex_id},
+        {"$set": pr},
+        upsert=True,
+    )
+    return {"success": True, "pr": pr}
 
 
 @router.get("/progress/pain-log")
 async def get_pain_log(userId: str = Query(...)):
-    user_pain = [p for p in _pain_log if p.get("userId") == userId]
-    return {"entries": user_pain, "total": len(user_pain)}
+    docs = await pain_col.find({"userId": userId}).sort("timestamp", -1).to_list(200)
+    return {"entries": [_strip_id(dict(d)) for d in docs], "total": len(docs)}
