@@ -610,7 +610,7 @@ export default function TodayScreen() {
   const block        = getBlock(week);
   const blockLabel   = BLOCK_LABELS[block] || `BLOCK ${block}`;
   const dayNum       = DAY_NUM[todayName] || 1;
-  const sessionType  = todaySession?.sessionType || 'Max Effort Upper';
+  const sessionType  = apiSession?.session?.sessionType || todaySession?.sessionType || 'Max Effort Upper';
   const sessionObj   = SESSION_OBJECTIVES[sessionType] || todaySession?.intentRPETarget || '';
   const coachNote    = todaySession?.coachingNotes
     || "Drive through today's session with full intent. Build deliberately to your peak and leave no doubt in those supplemental sets.";
