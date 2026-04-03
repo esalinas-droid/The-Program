@@ -887,6 +887,144 @@ class ApplyRecommendationRequest(BaseModel):
     exercises: List[dict] = []  # [{original, replacement, reason}]
 
 
+# ── Injury → Exercise Restriction Map ────────────────────────────────────────
+_INJURY_MAP = {
+    "bicep": {
+        "restrict_keywords": [
+            "barbell curl", "ez-bar curl", "ez curl", "dumbbell curl",
+            "chin-up", "chin up", "supinated row", "underhand row",
+            "preacher curl", "incline curl", "hammer curl",
+        ],
+        "main_swap":         ("Neutral Grip Pull-Down",            "reduces bicep tendon load"),
+        "supplemental_swaps": {
+            "chin-up":        ("Lat Pull-Down (Neutral Grip)",     "removes bicep peak load"),
+            "chin up":        ("Lat Pull-Down (Neutral Grip)",     "removes bicep peak load"),
+            "supinated row":  ("Pronated Grip Row",                "removes supination stress"),
+            "underhand row":  ("Pronated Grip Row",                "removes supination stress"),
+        },
+        "accessory_swaps": {
+            "barbell curl":   ("Eccentric Hammer Curl @50%",       "eccentric loading for tendon healing"),
+            "ez-bar curl":    ("Reverse Curl @50%",                "reduces bicep tendon stress"),
+            "ez curl":        ("Reverse Curl @50%",                "reduces bicep tendon stress"),
+            "dumbbell curl":  ("Eccentric Hammer Curl @50%",       "eccentric loading for tendon healing"),
+            "preacher curl":  ("Eccentric Reverse Curl",           "controlled eccentric for tendon"),
+            "incline curl":   ("Wrist Roller Eccentric",           "forearm/tendon rehab"),
+            "hammer curl":    ("Eccentric Hammer Curl @50%",       "eccentric loading for tendon healing"),
+        },
+        "prehab_to_add": [
+            {"name": "Band Bicep Curl (Eccentric Focus)", "prescription": "3x15", "notes": "Slow 4-sec lowering, tendon prehab"},
+            {"name": "Reverse Wrist Curl",               "prescription": "3x20", "notes": "Forearm/tendon health, light weight"},
+        ],
+    },
+    "shoulder": {
+        "restrict_keywords": [
+            "overhead press", "military press", "push press", "z-press",
+            "behind the neck", "upright row", "wide-grip bench", "wide grip bench",
+        ],
+        "main_swap":         ("Landmine Press",                    "reduces shoulder impingement"),
+        "supplemental_swaps": {
+            "overhead press": ("Landmine Press",                   "eliminates overhead impingement"),
+            "military press": ("Landmine Press",                   "eliminates overhead impingement"),
+            "push press":     ("Dumbbell Push Press (Neutral)",    "neutral grip reduces impingement"),
+            "z-press":        ("Seated Dumbbell Press",            "controlled shoulder-safe press"),
+            "upright row":    ("Face Pull",                        "removes impingement pattern"),
+        },
+        "accessory_swaps": {
+            "behind the neck": ("Face Pull",                       "posterior shoulder health"),
+            "wide-grip bench": ("Close Grip Bench Press",          "reduces shoulder stress"),
+            "wide grip bench": ("Close Grip Bench Press",          "reduces shoulder stress"),
+        },
+        "prehab_to_add": [
+            {"name": "Band External Rotation",  "prescription": "3x20", "notes": "Rotator cuff health"},
+            {"name": "Face Pull",               "prescription": "4x15", "notes": "Rear delt + external rotation prehab"},
+        ],
+    },
+    "lower back": {
+        "restrict_keywords": [
+            "conventional deadlift", "good morning", "stiff leg",
+            "romanian deadlift", "rdl", "back extension", "hyperextension",
+        ],
+        "main_swap":         ("Trap Bar Deadlift",                 "neutral spine, reduces lumbar stress"),
+        "supplemental_swaps": {
+            "conventional deadlift": ("Trap Bar Deadlift",         "neutral spine, less lumbar stress"),
+            "romanian deadlift":     ("Belt Squat",                "removes spinal compression"),
+            "rdl":                   ("Belt Squat",                "removes spinal compression"),
+            "stiff leg":             ("Nordic Hamstring Curl",     "reduces lumbar load"),
+        },
+        "accessory_swaps": {
+            "good morning":    ("Reverse Hyper",                   "decompresses lumbar spine"),
+            "back extension":  ("Reverse Hyper",                   "decompresses lumbar spine"),
+            "hyperextension":  ("McGill Big 3 Circuit",            "spine rehab protocol"),
+        },
+        "prehab_to_add": [
+            {"name": "McGill Bird-Dog", "prescription": "3x10 (per side)", "notes": "Lumbar stability, spine safe"},
+            {"name": "Reverse Hyper",  "prescription": "3x15",            "notes": "Lumbar decompression + glute activation"},
+        ],
+    },
+    "knee": {
+        "restrict_keywords": [
+            "deep squat", "lunge", "leg extension", "full squat",
+            "below parallel squat", "olympic squat", "front squat",
+        ],
+        "main_swap":         ("Box Squat (Above Parallel)",        "reduces knee flexion stress"),
+        "supplemental_swaps": {
+            "lunge":           ("Reverse Lunge (Short Step)",      "less knee shear than forward lunge"),
+            "front squat":     ("Goblet Squat to Box",             "box limits depth for knee safety"),
+            "olympic squat":   ("Box Squat (Above Parallel)",      "limits depth for knee protection"),
+        },
+        "accessory_swaps": {
+            "deep squat":      ("Belt Squat",                      "unloads spine and knee"),
+            "leg extension":   ("Terminal Knee Extension",         "VMO activation, lower knee stress"),
+            "full squat":      ("Box Squat (Above Parallel)",      "limits depth for knee protection"),
+        },
+        "prehab_to_add": [
+            {"name": "Terminal Knee Extension (Band)", "prescription": "3x20", "notes": "VMO + patellar tracking rehab"},
+            {"name": "Calf Raise (Eccentric)",         "prescription": "3x15", "notes": "Tendon health, load management"},
+        ],
+    },
+}
+
+_INJURY_ALIAS = {
+    "bicep tendonitis": "bicep", "biceps": "bicep", "bicep strain": "bicep",
+    "bicep tendon": "bicep", "elbow pain": "bicep", "elbow tendonitis": "bicep",
+    "shoulder impingement": "shoulder", "shoulder pain": "shoulder",
+    "rotator cuff": "shoulder", "shoulder injury": "shoulder",
+    "low back": "lower back", "lumbar": "lower back", "back pain": "lower back",
+    "si joint": "lower back", "disc herniation": "lower back",
+    "knee pain": "knee", "patellar tendonitis": "knee", "patellar": "knee",
+    "knee tendonitis": "knee", "it band": "knee", "patella": "knee",
+}
+
+
+def _detect_injury_type(text: str) -> Optional[str]:
+    text_lower = text.lower()
+    for alias, injury_type in _INJURY_ALIAS.items():
+        if alias in text_lower:
+            return injury_type
+    for injury_type in _INJURY_MAP:
+        if injury_type in text_lower:
+            return injury_type
+    return None
+
+
+def _find_current_block(plan, current_week: int):
+    from models.schemas import PhaseStatus
+    for phase in plan.phases:
+        for block in phase.blocks:
+            if block.status == PhaseStatus.CURRENT:
+                return block
+    for phase in plan.phases:
+        for block in phase.blocks:
+            if block.weeks:
+                min_w = min(w.weekNumber for w in block.weeks)
+                max_w = max(w.weekNumber for w in block.weeks)
+                if min_w <= current_week <= max_w:
+                    return block
+    if plan.phases and plan.phases[0].blocks:
+        return plan.phases[0].blocks[0]
+    return None
+
+
 @api_router.post("/coach/apply-recommendation")
 async def apply_recommendation(body: ApplyRecommendationRequest):
     try:
@@ -895,80 +1033,156 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
         raise HTTPException(status_code=422, detail="Invalid conversation_id format")
 
     profile = await db.profile.find_one({})
-    week = profile.get("currentWeek", 1) if profile else 1
+    current_week = profile.get("currentWeek", 1) if profile else 1
     now = datetime.now(timezone.utc)
 
-    # ── Ensure plan is in memory (reload from MongoDB profile if server restarted) ──
     plan_available = await _ensure_plan_loaded()
 
-    # ── Apply exercise swaps to the active in-memory plan ────────────────────
+    changes_by_category: dict = {"main": [], "supplemental": [], "accessory": [], "prehab": []}
     total_swapped = 0
-    changes_applied = []
+    current_block = None
 
-    if body.exercises and plan_available:
+    if plan_available:
         plan = _prog_store["plans"].get(_PROG_USER)
         if plan:
-            for swap in body.exercises:
-                original_raw = (swap.get("original") or "").strip()
-                replacement = (swap.get("replacement") or "").strip()
-                reason = (swap.get("reason") or body.summary or "coach recommendation").strip()
-                if not original_raw or not replacement:
-                    continue
+            current_block = _find_current_block(plan, current_week)
+            if current_block:
+                full_text    = f"{body.summary} {body.details}".lower()
+                injury_type  = _detect_injury_type(full_text)
+                injury_cfg   = _INJURY_MAP.get(injury_type) if injury_type else None
+                prehab_added: set = set()
 
-                original_lower = original_raw.lower()
-                # Fuzzy keywords: full phrase + individual words > 3 chars
-                keywords = [original_lower] + [w for w in original_lower.split() if len(w) > 3]
+                for week_obj in current_block.weeks:
+                    for session in week_obj.sessions:
+                        for ex in list(session.exercises):
+                            ex_lower = ex.name.lower()
+                            cat      = ex.category.value if hasattr(ex.category, "value") else str(ex.category)
+                            swapped  = False
 
-                session_count = 0
-                for phase in plan.phases:
-                    for block in phase.blocks:
-                        for week_obj in block.weeks:
-                            for session in week_obj.sessions:
-                                for ex in session.exercises:
-                                    ex_lower = ex.name.lower()
-                                    if any(kw in ex_lower for kw in keywords):
-                                        ex.name = replacement
-                                        ex.notes = (
-                                            f"Coach sub: {reason}"
-                                            if not ex.notes
-                                            else f"{ex.notes} | Coach: {reason}"
+                            # ── 1. AI-specified explicit swaps ──────────────
+                            for swap in body.exercises:
+                                orig = (swap.get("original") or "").strip().lower()
+                                repl = (swap.get("replacement") or "").strip()
+                                rsn  = (swap.get("reason") or body.summary).strip()
+                                if not orig or not repl:
+                                    continue
+                                kws = [orig] + [w for w in orig.split() if len(w) > 3]
+                                if any(kw in ex_lower for kw in kws):
+                                    old = ex.name
+                                    ex.name = repl
+                                    ex.adjustedFrom = old
+                                    ex.adjustmentReason = rsn
+                                    ex.notes = f"Coach: {rsn}" if not ex.notes else f"{ex.notes} | Coach: {rsn}"
+                                    dest = cat if cat in changes_by_category else "main"
+                                    changes_by_category[dest].append({
+                                        "from": old, "to": repl, "reason": rsn,
+                                        "session": session.sessionType.value if hasattr(session.sessionType, "value") else str(session.sessionType),
+                                        "week": week_obj.weekNumber,
+                                    })
+                                    total_swapped += 1
+                                    swapped = True
+                                    break
+
+                            if swapped or not injury_cfg:
+                                continue
+
+                            # ── 2. Injury-map swaps by category ─────────────
+                            restrict = injury_cfg.get("restrict_keywords", [])
+                            if not any(rk in ex_lower for rk in restrict):
+                                continue
+
+                            new_name, swap_reason = None, ""
+                            if cat == "main":
+                                pair = injury_cfg.get("main_swap")
+                                if pair:
+                                    new_name, swap_reason = pair
+                            elif cat == "supplemental":
+                                for kw, (r, rs) in injury_cfg.get("supplemental_swaps", {}).items():
+                                    if kw in ex_lower:
+                                        new_name, swap_reason = r, rs
+                                        break
+                            elif cat == "accessory":
+                                for kw, (r, rs) in injury_cfg.get("accessory_swaps", {}).items():
+                                    if kw in ex_lower:
+                                        new_name, swap_reason = r, rs
+                                        break
+
+                            if new_name and new_name.lower() != ex_lower:
+                                old = ex.name
+                                ex.name = new_name
+                                ex.adjustedFrom = old
+                                ex.adjustmentReason = swap_reason
+                                ex.notes = f"Coach ({injury_type}): {swap_reason}"
+                                dest = cat if cat in changes_by_category else "accessory"
+                                changes_by_category[dest].append({
+                                    "from": old, "to": new_name, "reason": swap_reason,
+                                    "session": session.sessionType.value if hasattr(session.sessionType, "value") else str(session.sessionType),
+                                    "week": week_obj.weekNumber,
+                                })
+                                total_swapped += 1
+
+                        # ── 3. Add prehab (once per week, first relevant session only) ──
+                        if injury_cfg:
+                            stype = session.sessionType.value if hasattr(session.sessionType, "value") else str(session.sessionType)
+                            stype_lower = stype.lower()
+                            is_upper = "upper" in stype_lower
+                            is_lower = "lower" in stype_lower
+                            injury_is_upper = injury_type in ("bicep", "shoulder")
+                            injury_is_lower = injury_type in ("lower back", "knee")
+                            relevant = (
+                                (injury_is_upper and is_upper) or
+                                (injury_is_lower and is_lower) or
+                                (not injury_is_upper and not injury_is_lower)
+                            )
+                            # Add prehab once per week (first relevant session)
+                            if relevant and week_obj.weekNumber not in prehab_added:
+                                from models.schemas import SessionExercise as SE, ExerciseCategory as EC, TargetSet as TS
+                                for i, pb in enumerate(injury_cfg.get("prehab_to_add", [])):
+                                    if not any(pb["name"].lower() in e.name.lower() for e in session.exercises):
+                                        sets_str = pb["prescription"].split("x")[0] if "x" in pb["prescription"] else "3"
+                                        reps_str = pb["prescription"].split("x")[-1].strip() if "x" in pb["prescription"] else "15"
+                                        # Remove non-numeric from reps string
+                                        import re as _re2
+                                        reps_clean = _re2.sub(r'[^0-9]', '', reps_str) or "15"
+                                        sets_clean = _re2.sub(r'[^0-9]', '', sets_str) or "3"
+                                        pb_ex = SE(
+                                            sessionExerciseId=_prog_id(), name=pb["name"],
+                                            category=EC.PREHAB, prescription=pb["prescription"],
+                                            notes=pb["notes"], order=len(session.exercises) + i + 1,
+                                            targetSets=[TS(setNumber=j+1, targetReps=reps_clean, setType="work") for j in range(int(sets_clean))],
                                         )
-                                        session_count += 1
+                                        session.exercises.append(pb_ex)
+                                        changes_by_category["prehab"].append({
+                                            "from": "(none)", "to": pb["name"], "reason": pb["notes"],
+                                            "session": stype, "week": week_obj.weekNumber,
+                                        })
                                         total_swapped += 1
+                                prehab_added.add(week_obj.weekNumber)
 
-                if session_count > 0:
-                    changes_applied.append({
-                        "original": original_raw,
-                        "replacement": replacement,
-                        "sessions_updated": session_count,
-                    })
-                    _prog_store["changes"].append(_ProgramChange(
-                        changeId=_prog_id(), userId=_PROG_USER,
-                        triggerType=_ChangeTrigger.USER_REQUEST,
-                        scope=_ChangeScope.YEAR,
-                        oldValue=original_raw,
-                        newValue=replacement,
-                        explanation=f"Coach: swap {original_raw} → {replacement}. {reason}",
-                    ))
-
-    # ── Always log to MongoDB substitutions ──────────────────────────────────
-    if changes_applied:
-        for ch in changes_applied:
+    # ── Log to MongoDB ────────────────────────────────────────────────────────
+    all_changes = [ch for lst in changes_by_category.values() for ch in lst]
+    if all_changes:
+        for ch in all_changes:
+            cat_label = next((cat for cat, lst in changes_by_category.items() if ch in lst), "general")
             await db.substitutions.insert_one({
                 "timestamp": now, "date": now.strftime("%Y-%m-%d"),
-                "week": week, "day": "Coach Recommendation",
-                "sessionType": "Program Update",
-                "originalExercise": ch["original"],
-                "replacementExercise": ch["replacement"],
-                "reason": body.details or body.summary,
-                "conversationId": body.conversation_id,
-                "sessionsUpdated": ch["sessions_updated"],
+                "week": current_week, "day": "Coach Recommendation",
+                "sessionType": ch.get("session", "Program Update"),
+                "originalExercise": ch["from"], "replacementExercise": ch["to"],
+                "reason": ch["reason"], "category": cat_label,
+                "conversationId": body.conversation_id, "blockWeek": ch.get("week"),
             })
+        _prog_store["changes"].append(_ProgramChange(
+            changeId=_prog_id(), userId=_PROG_USER,
+            triggerType=_ChangeTrigger.USER_REQUEST, scope=_ChangeScope.BLOCK,
+            oldValue="; ".join(c["from"] for c in all_changes[:5]),
+            newValue="; ".join(c["to"] for c in all_changes[:5]),
+            explanation=f"Coach applied to current block: {body.summary}",
+        ))
     else:
-        # Fallback: log the general recommendation even without specific exercise swaps
         await db.substitutions.insert_one({
             "timestamp": now, "date": now.strftime("%Y-%m-%d"),
-            "week": week, "day": "Coach Recommendation",
+            "week": current_week, "day": "Coach Recommendation",
             "sessionType": "Program Update",
             "originalExercise": "General Recommendation",
             "replacementExercise": body.summary,
@@ -977,21 +1191,34 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
         })
 
     await db.conversations.update_one(
-        {"_id": conv_oid},
-        {"$set": {"recommendationApplied": True, "updatedAt": now}}
+        {"_id": conv_oid}, {"$set": {"recommendationApplied": True, "updatedAt": now}}
     )
 
-    msg = (
-        f"Applied! {total_swapped} exercise{'s' if total_swapped != 1 else ''} updated across your program."
-        if total_swapped > 0
-        else "Recommendation logged to your program changelog."
-    )
+    # ── Build summary ─────────────────────────────────────────────────────────
+    n_main = len(changes_by_category["main"])
+    n_supp = len(changes_by_category["supplemental"])
+    n_acc  = len(changes_by_category["accessory"])
+    n_pre  = len(changes_by_category["prehab"])
+    parts  = []
+    if n_main: parts.append(f"{n_main} main lift{'s' if n_main>1 else ''}")
+    if n_supp: parts.append(f"{n_supp} supplemental")
+    if n_acc:  parts.append(f"{n_acc} accessory")
+    if n_pre:  parts.append(f"{n_pre} prehab added")
+
+    if current_block and current_block.weeks:
+        min_w = min(w.weekNumber for w in current_block.weeks)
+        max_w = max(w.weekNumber for w in current_block.weeks)
+        scope = f"current block (wks {min_w}–{max_w})"
+    else:
+        scope = "current block"
+
+    msg = f"Applied to {scope}: {', '.join(parts)} updated." if parts else "Logged to your program changelog."
 
     return {
-        "success": True,
-        "message": msg,
+        "success": True, "message": msg,
         "exercises_swapped": total_swapped,
-        "changes": changes_applied,
+        "changes_by_category": changes_by_category,
+        "changes": all_changes,
     }
 
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
