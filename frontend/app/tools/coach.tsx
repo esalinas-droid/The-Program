@@ -1,14 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  SafeAreaView, KeyboardAvoidingView, Platform, Animated,
+  SafeAreaView, KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
+  Alert, ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { coachApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
-import { getBlock, getBlockName, getPhase } from '../../src/utils/calculations';
+import { getBlock, getPhase } from '../../src/utils/calculations';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface ProgramChange {
+  type: string;
+  summary: string;
+  details: string;
+}
 
 interface Message {
   id: string;
@@ -16,11 +24,37 @@ interface Message {
   content: string;
   sources?: { title: string; page: string | number; preview: string }[];
   timestamp: Date;
+  hasProgramChange?: boolean;
+  programChange?: ProgramChange | null;
 }
 
+interface ConversationSummary {
+  id: string;
+  title: string;
+  hasProgramChange: boolean;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function formatTime(date: Date): string {
   if (!date || !(date instanceof Date) || isNaN(date.getTime())) return '';
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function formatRelativeDate(isoString: string): string {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours < 24) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+  if (diffHours < 48) return 'Yesterday';
+  if (diffHours < 168) return `${Math.floor(diffHours / 24)}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 const STARTERS = [
@@ -30,13 +64,7 @@ const STARTERS = [
   { category: 'TECHNIQUE',   icon: 'weight-lifter',              q: "What's the best accessory for hip drive?" },
 ];
 
-const MOTIVATIONAL = [
-  "The bar doesn't lie.",
-  "Built, not bought.",
-  "Strong enough to carry more.",
-  "Every rep is a decision.",
-];
-
+// ── Main Screen ───────────────────────────────────────────────────────────────
 export default function CoachScreen() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -44,35 +72,135 @@ export default function CoachScreen() {
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [inputFocused, setInputFocused] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   useEffect(() => {
     getProfile().then(setProfile);
+    loadConversations();
   }, []);
+
+  const loadConversations = async () => {
+    try {
+      const data = await coachApi.getConversations();
+      setConversations(data || []);
+    } catch {
+      // silently fail
+    }
+  };
+
+  const startNewConversation = () => {
+    setMessages([]);
+    setConversationId(null);
+    setShowHistory(false);
+  };
+
+  const openConversation = async (conv: ConversationSummary) => {
+    setLoadingHistory(true);
+    try {
+      const data = await coachApi.getConversation(conv.id);
+      const msgs: Message[] = (data.messages || []).map((m: any, i: number) => ({
+        id: `hist-${i}`,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        sources: [],
+        timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+        hasProgramChange: m.hasProgramChange || false,
+        programChange: m.programChange || null,
+      }));
+      setMessages(msgs);
+      setConversationId(conv.id);
+      setShowHistory(false);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200);
+    } catch {
+      Alert.alert('Error', 'Could not load conversation.');
+    }
+    setLoadingHistory(false);
+  };
+
+  const deleteConversation = async (id: string) => {
+    Alert.alert('Delete Conversation', 'Remove this conversation from history?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await coachApi.deleteConversation(id);
+            setConversations(prev => prev.filter(c => c.id !== id));
+            if (conversationId === id) startNewConversation();
+          } catch {
+            Alert.alert('Error', 'Could not delete conversation.');
+          }
+        },
+      },
+    ]);
+  };
+
+  async function applyRecommendation(message: Message) {
+    if (!message.programChange || !conversationId) return;
+    setApplyingId(message.id);
+    try {
+      await coachApi.applyRecommendation(
+        conversationId,
+        message.programChange.summary,
+        message.programChange.details
+      );
+      Alert.alert(
+        'Applied!',
+        'This recommendation has been logged to your program changelog.',
+        [{ text: 'View Changelog', onPress: () => router.push('/tools/changelog') }, { text: 'OK' }]
+      );
+    } catch {
+      Alert.alert('Error', 'Could not apply recommendation. Try again.');
+    }
+    setApplyingId(null);
+  }
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: new Date() };
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      timestamp: new Date(),
+    };
     const history = messages.map(m => ({ role: m.role, content: m.content }));
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+
     try {
-      const result = await coachApi.chat(trimmed, history);
+      const result = await coachApi.chat(trimmed, history, conversationId);
+
+      // Update conversationId from response
+      if (result.conversation_id && result.conversation_id !== conversationId) {
+        setConversationId(result.conversation_id);
+        // Refresh conversation list for new conversations
+        loadConversations();
+      }
+
       const assistantMsg: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
         content: result.response || 'No response received.',
         sources: result.sources || [],
         timestamp: new Date(),
+        hasProgramChange: result.has_program_change || false,
+        programChange: result.program_change || null,
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch {
       setMessages(prev => [...prev, {
         id: `e-${Date.now()}`, role: 'assistant',
-        content: 'Connection error. Check your network and try again.', sources: [],
+        content: 'Connection error. Check your network and try again.',
+        sources: [],
         timestamp: new Date(),
       }]);
     }
@@ -82,19 +210,39 @@ export default function CoachScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
         {/* ── Header ── */}
         <View style={s.header}>
-          <TouchableOpacity testID="coach-back-btn" onPress={() => router.back()} style={s.backBtn}>
+          <TouchableOpacity testID="coach-back-btn" onPress={() => router.back()} style={s.iconBtn}>
             <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.text.secondary} />
           </TouchableOpacity>
+
           <View style={s.headerCenter}>
             <View style={s.headerIconBadge}>
               <MaterialCommunityIcons name="brain" size={18} color={COLORS.accent} />
             </View>
-            <Text style={s.title}>Your AI Strength Coach</Text>
+            <Text style={s.title}>Pocket Coach</Text>
           </View>
-          <View style={{ width: 40 }} />
+
+          <View style={s.headerRight}>
+            {messages.length > 0 && (
+              <TouchableOpacity style={s.iconBtn} onPress={startNewConversation}>
+                <MaterialCommunityIcons name="plus-circle-outline" size={22} color={COLORS.text.secondary} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={s.iconBtn} onPress={() => setShowHistory(true)}>
+              <MaterialCommunityIcons name="history" size={22} color={COLORS.text.secondary} />
+              {conversations.length > 0 && (
+                <View style={s.historyBadge}>
+                  <Text style={s.historyBadgeText}>{conversations.length > 9 ? '9+' : conversations.length}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Messages ── */}
@@ -106,7 +254,13 @@ export default function CoachScreen() {
           style={s.list}
           contentContainerStyle={s.listContent}
           ListEmptyComponent={<StarterPrompts onSelect={sendMessage} profile={profile} />}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item }) => (
+            <MessageBubble
+              message={item}
+              onApply={() => applyRecommendation(item)}
+              applying={applyingId === item.id}
+            />
+          )}
           ListFooterComponent={loading ? <LoadingDots /> : null}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
         />
@@ -134,13 +288,155 @@ export default function CoachScreen() {
             onPress={() => sendMessage(input)}
             disabled={!input.trim() || loading}
           >
-            <MaterialCommunityIcons name="send" size={20} color={!input.trim() || loading ? COLORS.text.muted : COLORS.primary} />
+            <MaterialCommunityIcons
+              name="send"
+              size={20}
+              color={!input.trim() || loading ? COLORS.text.muted : COLORS.primary}
+            />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* ── Conversation History Modal ── */}
+      <ConversationHistoryModal
+        visible={showHistory}
+        conversations={conversations}
+        loading={loadingHistory}
+        onClose={() => setShowHistory(false)}
+        onSelect={openConversation}
+        onDelete={deleteConversation}
+        onNew={startNewConversation}
+      />
     </SafeAreaView>
   );
 }
+
+// ── Conversation History Modal ────────────────────────────────────────────────
+function ConversationHistoryModal({
+  visible, conversations, loading, onClose, onSelect, onDelete, onNew
+}: {
+  visible: boolean;
+  conversations: ConversationSummary[];
+  loading: boolean;
+  onClose: () => void;
+  onSelect: (c: ConversationSummary) => void;
+  onDelete: (id: string) => void;
+  onNew: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={hm.container}>
+        {/* Header */}
+        <View style={hm.header}>
+          <Text style={hm.title}>Conversation History</Text>
+          <TouchableOpacity onPress={onClose} style={hm.closeBtn}>
+            <MaterialCommunityIcons name="close" size={22} color={COLORS.text.secondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* New Conversation button */}
+        <TouchableOpacity style={hm.newBtn} onPress={onNew} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="plus-circle-outline" size={18} color={COLORS.primary} />
+          <Text style={hm.newBtnText}>New Conversation</Text>
+        </TouchableOpacity>
+
+        {loading && (
+          <View style={hm.loadingRow}>
+            <ActivityIndicator color={COLORS.accent} />
+          </View>
+        )}
+
+        {!loading && conversations.length === 0 && (
+          <View style={hm.emptyState}>
+            <MaterialCommunityIcons name="chat-outline" size={40} color={COLORS.text.muted} />
+            <Text style={hm.emptyText}>No past conversations yet</Text>
+            <Text style={hm.emptySub}>Start a conversation with your coach</Text>
+          </View>
+        )}
+
+        <ScrollView style={hm.list} showsVerticalScrollIndicator={false}>
+          {conversations.map(conv => (
+            <TouchableOpacity
+              key={conv.id}
+              style={hm.convItem}
+              onPress={() => onSelect(conv)}
+              activeOpacity={0.7}
+            >
+              <View style={hm.convIcon}>
+                <MaterialCommunityIcons
+                  name={conv.hasProgramChange ? 'lightning-bolt' : 'chat-outline'}
+                  size={16}
+                  color={conv.hasProgramChange ? COLORS.accent : COLORS.text.muted}
+                />
+              </View>
+              <View style={hm.convInfo}>
+                <Text style={hm.convTitle} numberOfLines={2}>{conv.title}</Text>
+                <Text style={hm.convMeta}>
+                  {conv.messageCount} messages · {formatRelativeDate(conv.updatedAt)}
+                  {conv.hasProgramChange && <Text style={hm.convTag}>  · Has recommendation</Text>}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={hm.deleteBtn}
+                onPress={() => onDelete(conv.id)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <MaterialCommunityIcons name="trash-can-outline" size={16} color={COLORS.text.muted} />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+const hm = StyleSheet.create({
+  container:  { flex: 1, backgroundColor: COLORS.background },
+  header:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.lg, paddingTop: SPACING.xl, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  title:      { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.primary },
+  closeBtn:   { padding: 4 },
+  newBtn:     { flexDirection: 'row', alignItems: 'center', gap: 10, margin: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.accent, paddingVertical: SPACING.md, paddingHorizontal: SPACING.lg },
+  newBtnText: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold as any, color: COLORS.primary },
+  loadingRow: { alignItems: 'center', padding: SPACING.xl },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xxl, gap: SPACING.md },
+  emptyText:  { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold as any, color: COLORS.text.secondary },
+  emptySub:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, textAlign: 'center' },
+  list:       { flex: 1, padding: SPACING.lg },
+  convItem:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
+  convIcon:   { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center' },
+  convInfo:   { flex: 1, gap: 3 },
+  convTitle:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold as any, color: COLORS.text.primary, lineHeight: 20 },
+  convMeta:   { fontSize: 11, color: COLORS.text.muted },
+  convTag:    { color: COLORS.accent },
+  deleteBtn:  { padding: 6 },
+});
+
+// ── Loading dots ──────────────────────────────────────────────────────────────
+function LoadingDots() {
+  const [dotCount, setDotCount] = useState(1);
+  useEffect(() => {
+    const interval = setInterval(() => setDotCount(p => (p % 3) + 1), 500);
+    return () => clearInterval(interval);
+  }, []);
+  return (
+    <View style={ld.row}>
+      <View style={ld.avatar}>
+        <MaterialCommunityIcons name="brain" size={13} color={COLORS.accent} />
+      </View>
+      <View style={ld.bubble}>
+        <Text style={ld.text}>{'Thinking' + '.'.repeat(dotCount)}</Text>
+      </View>
+    </View>
+  );
+}
+const ld = StyleSheet.create({
+  row:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, gap: SPACING.sm },
+  avatar: { width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(201, 168, 76, 0.12)', borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.3)', justifyContent: 'center', alignItems: 'center' },
+  bubble: { backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
+  text:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontStyle: 'italic' },
+});
 
 // ── Inline markdown formatter ─────────────────────────────────────────────────
 function InlineText({ text, style }: { text: string; style?: any }): React.ReactElement {
@@ -166,10 +462,11 @@ function InlineText({ text, style }: { text: string; style?: any }): React.React
   if (lastIndex < text.length) parts.push({ content: text.slice(lastIndex) });
 
   return (
-    <Text style={style}>
+    <Text style={style} selectable>
       {parts.map((part, i) => (
         <Text
           key={i}
+          selectable
           style={[
             part.bold  && { fontWeight: '700' as const, color: COLORS.accent },
             part.italic && { fontStyle: 'italic' as const, color: COLORS.text.secondary },
@@ -210,7 +507,7 @@ function MarkdownText({ content }: { content: string }) {
       <View key={`nl${key++}`} style={md.listGroup}>
         {numbered.map((item, i) => (
           <View key={i} style={md.numberedRow}>
-            <Text style={md.numberedNum}>{item.n}.</Text>
+            <Text style={md.numberedNum} selectable>{item.n}.</Text>
             <InlineText text={item.text} style={md.numberedText} />
           </View>
         ))}
@@ -225,13 +522,13 @@ function MarkdownText({ content }: { content: string }) {
 
     if (t.startsWith('# ')) {
       flushBullets(); flushNumbered();
-      elements.push(<Text key={`h1${key++}`} style={md.h1}>{t.slice(2)}</Text>);
+      elements.push(<Text key={`h1${key++}`} style={md.h1} selectable>{t.slice(2)}</Text>);
     } else if (t.startsWith('## ')) {
       flushBullets(); flushNumbered();
-      elements.push(<Text key={`h2${key++}`} style={md.h2}>{t.slice(3)}</Text>);
+      elements.push(<Text key={`h2${key++}`} style={md.h2} selectable>{t.slice(3)}</Text>);
     } else if (t.startsWith('### ')) {
       flushBullets(); flushNumbered();
-      elements.push(<Text key={`h3${key++}`} style={md.h3}>{t.slice(4)}</Text>);
+      elements.push(<Text key={`h3${key++}`} style={md.h3} selectable>{t.slice(4)}</Text>);
     } else if (t.startsWith('- ') || t.startsWith('* ') || t.startsWith('• ')) {
       flushNumbered();
       bullets.push(t.slice(2));
@@ -286,17 +583,25 @@ const md = StyleSheet.create({
   warningText: { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 21 },
 });
 
-// ── Message bubble (user + coach) ─────────────────────────────────────────────
-function MessageBubble({ message }: { message: Message }) {
-  const isUser     = message.role === 'user';
-  const timeStr    = formatTime(message.timestamp);
-  const srcCount   = message.sources?.length ?? 0;
+// ── Message bubble ─────────────────────────────────────────────────────────────
+function MessageBubble({
+  message,
+  onApply,
+  applying,
+}: {
+  message: Message;
+  onApply: () => void;
+  applying: boolean;
+}) {
+  const isUser  = message.role === 'user';
+  const timeStr = formatTime(message.timestamp);
+  const srcCount = message.sources?.length ?? 0;
 
   if (isUser) {
     return (
       <View style={mb.userRow}>
         <View style={mb.userBubble}>
-          <Text style={mb.userText}>{message.content}</Text>
+          <Text style={mb.userText} selectable>{message.content}</Text>
           <Text style={mb.timestamp}>{timeStr}</Text>
         </View>
       </View>
@@ -328,6 +633,34 @@ function MessageBubble({ message }: { message: Message }) {
         )}
 
         <Text style={mb.timestamp}>{timeStr}</Text>
+
+        {/* Apply to My Program button */}
+        {message.hasProgramChange && message.programChange && (
+          <View style={mb.applySection}>
+            <View style={mb.applyDivider} />
+            <View style={mb.applyBanner}>
+              <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
+              <Text style={mb.applyBannerText} numberOfLines={2}>
+                {message.programChange.summary}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[mb.applyBtn, applying && mb.applyBtnDisabled]}
+              onPress={onApply}
+              disabled={applying}
+              activeOpacity={0.8}
+            >
+              {applying ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="check-circle-outline" size={16} color={COLORS.primary} />
+                  <Text style={mb.applyBtnText}>Apply to My Program</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -372,8 +705,26 @@ const mb = StyleSheet.create({
   sourcesRow:  { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: SPACING.md, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
   sourcesText: { fontSize: 10, color: COLORS.text.muted },
   timestamp:   { fontSize: 10, color: COLORS.text.muted, marginTop: 6, textAlign: 'right' },
+
+  // Apply to My Program section
+  applySection:      { marginTop: SPACING.md },
+  applyDivider:      { height: 1, backgroundColor: COLORS.border, marginBottom: SPACING.md },
+  applyBanner:       { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: 'rgba(201, 168, 76, 0.07)', borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.sm },
+  applyBannerText:   { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 18 },
+  applyBtn:          {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: COLORS.surfaceHighlight,
+    borderRadius: RADIUS.xl,
+    paddingVertical: SPACING.sm + 2,
+    paddingHorizontal: SPACING.lg,
+    borderWidth: 1.5,
+    borderColor: COLORS.accent,
+  },
+  applyBtnDisabled:  { opacity: 0.5 },
+  applyBtnText:      { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: COLORS.primary },
 });
 
+// ── Starter prompts ───────────────────────────────────────────────────────────
 function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => void; profile: any }) {
   const week  = profile?.currentWeek || 1;
   const block = getBlock(week);
@@ -435,213 +786,90 @@ function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => voi
 
 const sp = StyleSheet.create({
   wrapper:     { padding: SPACING.xl, alignItems: 'center', paddingBottom: SPACING.md },
-
-  // Icon
   iconRing: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 88, height: 88, borderRadius: 44,
     backgroundColor: COLORS.surfaceHighlight,
-    borderWidth: 2,
-    borderColor: COLORS.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderWidth: 2, borderColor: COLORS.accent,
+    justifyContent: 'center', alignItems: 'center',
     marginBottom: SPACING.lg,
   },
-
-  // Title & description
-  title: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: SPACING.md, textAlign: 'center' },
+  title: { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.primary, marginBottom: SPACING.md, textAlign: 'center' },
   sub:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, textAlign: 'center', lineHeight: 22, marginBottom: SPACING.lg },
-
-  // Context banner
   contextBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    width: '100%',
+    flexDirection: 'row', alignItems: 'flex-start', width: '100%',
     backgroundColor: 'rgba(201, 168, 76, 0.06)',
-    borderLeftWidth: 3,
-    borderLeftColor: COLORS.accent,
+    borderLeftWidth: 3, borderLeftColor: COLORS.accent,
     borderRadius: RADIUS.md,
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md, paddingHorizontal: SPACING.md,
     marginBottom: SPACING.xl,
   },
   contextText:      { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20 },
-  contextHighlight: { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
-
-  // Suggested label
+  contextHighlight: { color: COLORS.accent, fontWeight: FONTS.weights.semibold as any },
   suggestLabel: {
-    fontSize: 10,
-    fontWeight: FONTS.weights.heavy,
-    color: COLORS.text.muted,
-    letterSpacing: 2,
-    alignSelf: 'flex-start',
-    marginBottom: SPACING.sm,
+    fontSize: 10, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.muted,
+    letterSpacing: 2, alignSelf: 'flex-start', marginBottom: SPACING.sm,
   },
-
-  // Question chips (gold-bordered cards)
   chip: {
-    width: '100%',
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.md,
-    marginBottom: SPACING.sm,
-    borderWidth: 1.5,
-    borderColor: COLORS.accent,
-    gap: 6,
+    width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl,
+    padding: SPACING.md, marginBottom: SPACING.sm,
+    borderWidth: 1.5, borderColor: COLORS.accent, gap: 6,
   },
-  chipCategoryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  chipCategory: {
-    fontSize: 9,
-    fontWeight: FONTS.weights.heavy,
-    color: COLORS.accent,
-    letterSpacing: 1.5,
-  },
-  chipBottom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: SPACING.sm,
-  },
-  chipText: {
-    flex: 1,
-    color: COLORS.text.primary,
-    fontSize: FONTS.sizes.sm,
-    fontWeight: FONTS.weights.medium,
-    lineHeight: 20,
-  },
-
-  // Footer
-  footer: {
-    fontSize: FONTS.sizes.xs,
-    color: COLORS.text.muted,
-    textAlign: 'center',
-    marginTop: SPACING.lg,
-    letterSpacing: 0.3,
-  },
+  chipCategoryRow: { flexDirection: 'row', alignItems: 'center' },
+  chipCategory:    { fontSize: 9, fontWeight: FONTS.weights.heavy as any, color: COLORS.accent, letterSpacing: 1.5 },
+  chipBottom:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  chipText:        { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.primary, lineHeight: 21, paddingRight: SPACING.sm },
+  footer:          { fontSize: 10, color: COLORS.text.muted, marginTop: SPACING.xl, textAlign: 'center' },
 });
 
-function LoadingDots() {
-  const dots = [
-    useRef(new Animated.Value(0.25)).current,
-    useRef(new Animated.Value(0.25)).current,
-    useRef(new Animated.Value(0.25)).current,
-  ];
-
-  useEffect(() => {
-    const anims = dots.map((dot, i) =>
-      Animated.sequence([
-        Animated.delay(i * 180),
-        Animated.loop(Animated.sequence([
-          Animated.timing(dot, { toValue: 1,    duration: 340, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.25, duration: 340, useNativeDriver: true }),
-        ])),
-      ])
-    );
-    Animated.parallel(anims).start();
-    return () => dots.forEach(d => d.stopAnimation());
-  }, []);
-
-  return (
-    <View style={ld.row}>
-      <View style={ld.card}>
-        <View style={ld.header}>
-          <View style={ld.avatar}>
-            <MaterialCommunityIcons name="brain" size={13} color={COLORS.accent} />
-          </View>
-          <Text style={ld.label}>Coach</Text>
-        </View>
-        <View style={ld.dotsRow}>
-          {dots.map((dot, i) => (
-            <Animated.View key={i} style={[ld.dot, { opacity: dot }]} />
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-const ld = StyleSheet.create({
-  row:     { paddingHorizontal: SPACING.lg, marginBottom: SPACING.lg },
-  card: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    borderTopWidth: 1,    borderTopColor: COLORS.border,
-    borderRightWidth: 1,  borderRightColor: COLORS.border,
-    borderBottomWidth: 1, borderBottomColor: COLORS.border,
-    borderLeftWidth: 3,   borderLeftColor: COLORS.accent,
-  },
-  header:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: SPACING.sm },
-  avatar:  { width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(201, 168, 76, 0.12)', borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.3)', justifyContent: 'center', alignItems: 'center' },
-  label:   { fontSize: FONTS.sizes.xs, fontWeight: '800' as any, color: COLORS.accent, letterSpacing: 1 },
-  dotsRow: { flexDirection: 'row', gap: 7, alignItems: 'center', paddingVertical: 2 },
-  dot:     { width: 9, height: 9, borderRadius: 5, backgroundColor: COLORS.accent },
-});
-
+// ── Main screen styles ─────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.background },
-
-  // Header — centered layout
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.xl,
-    paddingBottom: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  backBtn:      { padding: 4, width: 40 },
-  headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  headerIconBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(201, 168, 76, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(201, 168, 76, 0.3)',
-  },
-  title:        { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 0.3 },
-
-  // Messages list
-  list:         { flex: 1 },
-  listContent:  { paddingTop: SPACING.lg, paddingBottom: SPACING.md },
-
-  // Input bar — gold accent
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+  safe:          { flex: 1, backgroundColor: COLORS.background },
+  header:        {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.md,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
     gap: SPACING.sm,
-    backgroundColor: COLORS.secondary,
   },
-  input: {
-    flex: 1,
-    backgroundColor: COLORS.surfaceHighlight,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: SPACING.md,
-    paddingTop: 12,
-    paddingBottom: 12,
-    color: COLORS.text.primary,
+  headerCenter:  { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
+  headerRight:   { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerIconBadge: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: 'rgba(201, 168, 76, 0.1)',
+    borderWidth: 1, borderColor: 'rgba(201, 168, 76, 0.3)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  title:         { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold as any, color: COLORS.text.primary },
+  iconBtn:       { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  historyBadge:  {
+    position: 'absolute', top: 4, right: 4,
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  historyBadgeText: { fontSize: 8, fontWeight: '700' as any, color: COLORS.background },
+  list:          { flex: 1 },
+  listContent:   { paddingTop: SPACING.md, paddingBottom: SPACING.md },
+  inputBar:      {
+    flexDirection: 'row', alignItems: 'flex-end',
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.md,
+    borderTopWidth: 1, borderTopColor: COLORS.border,
+    gap: SPACING.sm, backgroundColor: COLORS.background,
+  },
+  input:         {
+    flex: 1, minHeight: 44, maxHeight: 120,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
     fontSize: FONTS.sizes.sm,
-    minHeight: 56,
-    maxHeight: 180,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
-    lineHeight: 20,
+    color: COLORS.text.primary,
+    borderWidth: 1, borderColor: COLORS.border,
   },
-  inputFocused: {
-    borderColor: COLORS.accent,
+  inputFocused:  { borderColor: COLORS.accent },
+  sendBtn:       {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1, borderColor: COLORS.border,
+    justifyContent: 'center', alignItems: 'center',
   },
-  sendBtn:         { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.accent, justifyContent: 'center', alignItems: 'center' },
-  sendBtnDisabled: { backgroundColor: COLORS.surfaceHighlight },
+  sendBtnDisabled: { opacity: 0.4 },
 });

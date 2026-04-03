@@ -818,7 +818,7 @@ export default function LogScreen() {
       const week = prof?.currentWeek || 1;
       setWeek(week);
 
-      // Immediately populate from local conjugate schedule (instant, offline-ready)
+      // Immediately populate from local training schedule (instant, offline-ready)
       const localSession = getTodaySession(week);
       setSessionType(localSession.sessionType);
       const localExs = buildFromLocal(localSession);

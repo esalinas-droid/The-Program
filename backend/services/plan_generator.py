@@ -71,7 +71,7 @@ EXERCISE_DB = {
 # ─── Session Templates ────────────────────────────────────────────────────────
 
 def _build_me_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
-    bench_max = lifts.bench or 225
+    bench_max = lifts.bench or 135
     return [
         SessionExercise(
             sessionExerciseId=_id(), name="Floor Press", category=ExerciseCategory.MAIN,
@@ -111,7 +111,7 @@ def _build_me_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
 
 
 def _build_me_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
-    squat_max = lifts.squat or 315
+    squat_max = lifts.squat or 185
     return [
         SessionExercise(
             sessionExerciseId=_id(), name="SSB Squat", category=ExerciseCategory.MAIN,
@@ -150,7 +150,7 @@ def _build_me_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
 
 
 def _build_de_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
-    bench_max = lifts.bench or 225
+    bench_max = lifts.bench or 135
     speed_load = int(bench_max * 0.5)
     return [
         SessionExercise(
@@ -183,8 +183,8 @@ def _build_de_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
 
 
 def _build_de_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
-    squat_max = lifts.squat or 315
-    dl_max = lifts.deadlift or 365
+    squat_max = lifts.squat or 185
+    dl_max = lifts.deadlift or 225
     speed_squat = int(squat_max * 0.55)
     speed_dl = int(dl_max * 0.65)
     return [
@@ -285,7 +285,7 @@ def _generate_coach_note(session_type: SessionType, week: int) -> str:
 
 # Maps frequency → list of (SessionType, calendar_day_number)
 # Calendar day numbers: Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6, Sun=7
-# Matches conjugate method scheduling so get_today_session endpoint finds correct session
+# Matches The Program's scheduling so get_today_session endpoint finds correct session
 DAY_MAPS = {
     3: [
         (SessionType.ME_LOWER, 1),   # Monday
@@ -366,12 +366,12 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
 
     # Build goal-specific plan name
     plan_names = {
-        GoalType.STRENGTH: "Conjugate Strength Program",
-        GoalType.STRONGMAN: "Strongman GPP Program",
-        GoalType.POWERLIFTING: "Peaking Prep Program",
-        GoalType.HYPERTROPHY: "Hypertrophy Accumulation Program",
-        GoalType.ATHLETIC: "Athletic Power Program",
-        GoalType.GENERAL: "General Strength & Conditioning",
+        GoalType.STRENGTH: "The Program — Strength",
+        GoalType.STRONGMAN: "The Program — Strongman",
+        GoalType.POWERLIFTING: "The Program — Powerlifting",
+        GoalType.HYPERTROPHY: "The Program — Hypertrophy",
+        GoalType.ATHLETIC: "The Program — Athletic Performance",
+        GoalType.GENERAL: "The Program — General Strength",
     }
 
     phases = []

@@ -55,7 +55,7 @@ const MOCK_PLAN: ChangeEntry[] = [
     trigger: 'User Request',
     scope: 'Year Plan',
     explanation:
-      'Your 52-week conjugate programme has been built from your onboarding profile. All training maxes, injury flags, competition timeline, and bodyweight goals have been factored in. Every future change will appear here.',
+      'Your 52-week program has been built from your onboarding profile. All training maxes, injury flags, competition timeline, and bodyweight goals have been factored in. Every future change will appear here.',
     source: 'plan',
   },
   {

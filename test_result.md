@@ -377,3 +377,161 @@ agent_communication:
       3. Frontend Today tab: session type header should show "Dynamic Effort Upper"
       4. Frontend Log tab: session type should show "Dynamic Effort Upper" (not "ME Upper" default)
       All three tabs must show identical session type.
+
+backend:
+  - task: "Remove hardcoded Eric profile data from server.py seed endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "AthleteProfile defaults now blank (name='', currentBodyweight=0.0, etc). Seed endpoint creates blank profile. No more hardcoded Eric data."
+
+  - task: "Branding: Replace Conjugate Method with The Program"
+    implemented: true
+    working: true
+    file: "backend/services/plan_generator.py, backend/models/core.py, frontend multiple files"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All conjugate references replaced: plan names use The Program — Strength etc, trainingModel=the_program, all frontend text updated. Zero conjugate refs in user-facing code confirmed by grep."
+
+  - task: "Coach conversation persistence - new MongoDB endpoints"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added CoachConversation model. New endpoints: GET /api/coach/conversations, GET /api/coach/conversations/{id}, DELETE /api/coach/conversations/{id}, POST /api/coach/apply-recommendation. POST /api/coach/chat now persists messages to MongoDB and returns conversation_id."
+
+  - task: "Coach chat endpoint: parse PROGRAM_CHANGE block, return has_program_change"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "System prompt updated with PROGRAM_CHANGE detection instruction. Response parser strips <PROGRAM_CHANGE> block, returns clean response + has_program_change bool + program_change dict."
+
+  - task: "Apply recommendation endpoint logs to changelog"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/coach/apply-recommendation inserts to substitutions collection and marks conversation as applied."
+
+frontend:
+  - task: "Coach screen: conversation history modal with New/Load/Delete"
+    implemented: true
+    working: true
+    file: "frontend/app/tools/coach.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added history button in header (clock icon with badge). Conversation History modal shows list of past conversations. Can create new conversation, load existing, delete. ConversationHistoryModal component added."
+
+  - task: "Coach screen: Apply to My Program button"
+    implemented: true
+    working: true
+    file: "frontend/app/tools/coach.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "MessageBubble shows Apply button only when hasProgramChange=true. Tapping calls coachApi.applyRecommendation, shows success alert with option to view changelog."
+
+  - task: "Coach screen: text selectable messages"
+    implemented: true
+    working: true
+    file: "frontend/app/tools/coach.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All Text components in MessageBubble and MarkdownText have selectable={true} prop."
+
+  - task: "Onboarding training days: remove conjugate wording"
+    implemented: true
+    working: true
+    file: "frontend/app/onboarding-intake.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Training days descriptions updated: '3 max effort sessions/week' and 'Classic 4-day ME+DE split' replacing old conjugate references."
+
+metadata:
+  created_by: "main_agent"
+  version: "2.0"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Remove hardcoded Eric profile data from server.py seed endpoint"
+    - "Branding: Replace Conjugate Method with The Program"
+    - "Coach conversation persistence - new MongoDB endpoints"
+    - "Coach chat endpoint: parse PROGRAM_CHANGE block, return has_program_change"
+    - "Apply recommendation endpoint logs to changelog"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: >
+      Implemented all 8 tasks from user request. Key changes:
+      
+      PRE-REQ: Removed all hardcoded Eric data from server.py (name, bodyweight, injuries, dates).
+      Seed endpoint now creates blank profile. plan_generator.py defaults changed to 135/185/225.
+      
+      TASK 1 (BRANDING): Zero conjugate references in user-facing code. Replaced in:
+      models/core.py, plan_generator.py (plan names), onboarding-intake.tsx (training day descriptions),
+      program-reveal.tsx (5 locations), roadmap.tsx, changes.tsx, log.tsx.
+      Backend CONJUGATE_CALENDAR constant preserved (internal routing logic).
+      
+      TASK 2 (UNLIMITED SELECTIONS): onboarding already had no limit. Training day descriptions updated.
+      
+      TASK 3 (COACH CLEANUP + APPLY): System prompt updated to block citation formatting.
+      <PROGRAM_CHANGE> block detection added. Apply to My Program button in coach.tsx.
+      
+      TASK 4 (CONVERSATION HISTORY): Full MongoDB persistence. History modal in coach.tsx.
+      New/Load/Delete conversations. Full history context passed to AI. Selectable text.
+      
+      TASK 5 (SETTINGS AUTO-APPLY): Already correctly implemented with confirmation modal.
+      
+      TASK 6 (BACKEND ENDPOINTS): 
+        - GET/DELETE /api/coach/conversations
+        - GET /api/coach/conversations/{id}
+        - POST /api/coach/apply-recommendation
+        - Updated POST /api/coach/chat (persists, returns conversation_id + program_change)
+      
+      Please test all backend endpoints especially the new coach conversation endpoints.

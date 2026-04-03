@@ -174,7 +174,7 @@ class AnnualPlan(BaseModel):
     planId:        str
     userId:        str
     planName:      str
-    trainingModel: str        = "conjugate"
+    trainingModel: str        = "the_program"
     startDate:     str
     totalWeeks:    int        = 52
     phases:        List[Phase] = Field(default_factory=list)

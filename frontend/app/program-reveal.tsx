@@ -47,7 +47,7 @@ function formatDate(iso: string): string {
   } catch { return iso; }
 }
 
-// ── Static conjugate split ────────────────────────────────────────────────────
+// ── Static training split ────────────────────────────────────────────────────
 const SPLIT_DAYS = [
   { type: 'ME UPPER', color: GOLD,  icon: 'arm-flex-outline' as const, focus: 'Work to a daily 1RM variation — floor press, board press, or comp bench' },
   { type: 'ME LOWER', color: BLUE,  icon: 'weight-lifter'    as const, focus: 'Max squat or pull variation — heavy single, then supplemental volume' },
@@ -289,7 +289,7 @@ export default function ProgramRevealScreen() {
 
       <Text style={s.buildTitle}>Building Your Program</Text>
       <Text style={s.buildSub}>
-        Your AI coach is analyzing your profile{'\n'}and assembling a 52-week conjugate plan.
+        Your AI coach is analyzing your profile{'\n'}and assembling a personalized 52-week training plan.
       </Text>
 
       <View style={s.phaseList}>
@@ -333,7 +333,7 @@ export default function ProgramRevealScreen() {
               <MaterialCommunityIcons name="check-circle" size={14} color={GREEN} />
               <Text style={s.readyBadgeText}>52-Week Plan Ready</Text>
             </View>
-            <Text style={s.programName}>{plan?.planName ?? 'Conjugate Strength Program'}</Text>
+            <Text style={s.programName}>{plan?.planName ?? 'The Program — Strength'}</Text>
             <View style={s.metaRow}>
               <View style={s.metaChip}>
                 <MaterialCommunityIcons name="calendar-range" size={10} color={GOLD} style={{ marginRight: 3 }} />
@@ -427,7 +427,7 @@ export default function ProgramRevealScreen() {
           {/* ── Training split summary ── */}
           <View style={s.sectionWrap}>
             <Text style={s.sectionTitle}>Weekly Training Split</Text>
-            <Text style={s.sectionSub}>Conjugate method — 4 sessions / week</Text>
+            <Text style={s.sectionSub}>The Program — 4 sessions / week</Text>
           </View>
           <View style={s.splitGrid}>
             {SPLIT_DAYS.map((d, i) => (
@@ -439,7 +439,7 @@ export default function ProgramRevealScreen() {
             ))}
           </View>
 
-          {/* ── Conjugate method note ── */}
+          {/* ── Training method note ── */}
           <View style={s.coachCard}>
             <View style={s.coachHeader}>
               <View style={s.coachAvatarWrap}>
@@ -447,14 +447,14 @@ export default function ProgramRevealScreen() {
               </View>
               <View>
                 <Text style={s.coachLabel}>The Method</Text>
-                <Text style={s.coachSub}>Why conjugate works for advanced athletes</Text>
+                <Text style={s.coachSub}>Why this approach works for advanced athletes</Text>
               </View>
             </View>
             <Text style={s.coachText}>
-              The conjugate system avoids accommodation by rotating exercises every session. ME days
-              drive absolute strength by working to a daily max. DE days build speed-strength through
-              compensatory acceleration at sub-maximal loads. Running both simultaneously creates a
-              strength athlete who is both strong and explosive — the combination that separates
+              The Program avoids accommodation by rotating exercises every session. Max Effort days
+              drive absolute strength by working to a daily max. Dynamic Effort days build speed-strength
+              through compensatory acceleration at sub-maximal loads. Running both simultaneously creates
+              a strength athlete who is both strong and explosive — the combination that separates
               competitive lifters from everyone else.
             </Text>
           </View>

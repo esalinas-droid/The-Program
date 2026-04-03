@@ -63,10 +63,22 @@ export const seedApi = {
 
 // Coach
 export const coachApi = {
-  chat: (message: string, history: { role: string; content: string }[]) =>
+  chat: (message: string, history: { role: string; content: string }[], conversationId?: string | null) =>
     api('/coach/chat', {
       method: 'POST',
-      body: JSON.stringify({ message, conversation_history: history }),
+      body: JSON.stringify({
+        message,
+        conversation_history: history,
+        conversation_id: conversationId ?? null,
+      }),
+    }),
+  getConversations: () => api('/coach/conversations'),
+  getConversation: (id: string) => api(`/coach/conversations/${id}`),
+  deleteConversation: (id: string) => api(`/coach/conversations/${id}`, { method: 'DELETE' }),
+  applyRecommendation: (conversationId: string, summary: string, details: string) =>
+    api('/coach/apply-recommendation', {
+      method: 'POST',
+      body: JSON.stringify({ conversation_id: conversationId, summary, details }),
     }),
 };
 

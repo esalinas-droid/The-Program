@@ -60,7 +60,7 @@ const PHASE_BLOCKS: PhaseBlock[] = [
     weekStart: 5,
     weekEnd: 12,
     focus: 'Volume',
-    description: 'Build foundational strength with conjugate periodization. Max Effort days push toward 90%+. Dynamic Effort builds speed and volume.',
+    description: 'Build foundational strength with The Program\'s periodization methodology. Max Effort days push toward 90%+. Dynamic Effort builds speed and volume.',
     keyLifts: ['Squat', 'Bench Press', 'Deadlift', 'Log Press'],
     adaptation: 'Strength endurance, CNS efficiency, GPP base',
     milestones: [

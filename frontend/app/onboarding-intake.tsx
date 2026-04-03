@@ -115,8 +115,8 @@ const STRONGMAN_LIFT_FIELDS = [
 ] as const;
 
 const TRAINING_DAYS = [
-  { days: 3, desc: 'Conjugate lite — 3 max sessions'  },
-  { days: 4, desc: 'Classic conjugate — ME+DE split'   },
+  { days: 3, desc: '3 max effort sessions/week'     },
+  { days: 4, desc: 'Classic 4-day ME+DE split'      },
   { days: 5, desc: 'High volume — 5th day GPP/events'  },
   { days: 6, desc: 'Full frequency push'               },
 ];

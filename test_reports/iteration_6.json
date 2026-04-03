@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 6 backend testing: 7/8 tests pass. Fixed ObjectId validation crashes in GET/DELETE /api/coach/conversations/{id} and POST /api/coach/apply-recommendation. One failure: existing DB has hardcoded 'Eric' profile from prior seed — code defaults are correct but old data persists.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/coach/conversations/{conversation_id}",
+        "issue": "Invalid ObjectId (e.g., 'nonexistentid') caused unhandled bson.InvalidId exception → 500. FIXED: Added try/except → returns 422.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "DELETE /api/coach/conversations/{conversation_id}",
+        "issue": "Same ObjectId crash as above. FIXED: Added try/except → returns 422.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/coach/apply-recommendation",
+        "issue": "Same ObjectId crash for invalid conversation_id. FIXED: Added try/except → returns 422.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/profile",
+        "issue": "DB still has old seeded profile with name='Eric', bodyweight=260 and hardcoded PRs from prior iteration seed. Code defaults are correct (name='', bodyweight=0.0). Needs DB reset/migration to clear old seed data.",
+        "priority": "MEDIUM"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+  "action_items": [
+    "Clear old seeded 'Eric' profile data from MongoDB — the profile collection still has hardcoded Eric data with name='Eric', currentBodyweight=260, basePRs with real values. E1 should reset DB or provide a migration to clear old seed data so new blank defaults apply.",
+    "ObjectId validation fixes applied in server.py for 3 endpoints — no further action needed for those."
+  ],
+  "critical_code_review_comments": [
+    "PUT /log/{entry_id} and DELETE /log/{entry_id} also use ObjectId() without try/except — same 500 crash risk for invalid IDs. Recommend fixing those too."
+  ],
+  "updated_files": [
+    "/app/backend/server.py"
+  ],
+  "success_rate": {
+    "backend": "87.5% (7/8)",
+    "frontend": "not tested"
+  },
+  "seed_data_creation": "None — existing DB had Eric seed data from prior iterations",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "3 ObjectId crash bugs were fixed in server.py. Remaining issue: MongoDB profile collection has old 'Eric' hardcoded data. E1 needs to clear/reset the DB seed. Also check PUT/DELETE /log/{id} for same ObjectId crash pattern.",
+  "rca_of_issue": "Root cause: GET/DELETE /api/coach/conversations/{id} and POST /api/coach/apply-recommendation directly called ObjectId(user_input) without catching bson.errors.InvalidId. When given a non-hex string like 'nonexistentid', bson raises InvalidId uncaught → FastAPI returns 500. Fix: wrap in try/except → HTTPException(422). Profile 'Eric' issue: prior seed endpoint inserted hardcoded Eric data; new code defaults to '' but old document persists in MongoDB."
+}

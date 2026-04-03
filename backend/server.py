@@ -47,17 +47,17 @@ class BaseDocument(BaseModel):
 
 # ── Models ───────────────────────────────────────────────────────────────────
 class AthleteProfile(BaseDocument):
-    name: str = "Eric"
-    experience: str = "Advanced"
-    currentBodyweight: float = 274.0
-    bw12WeekGoal: float = 255.0
-    bwLongRunGoal: float = 230.0
+    name: str = ""
+    experience: str = ""
+    currentBodyweight: float = 0.0
+    bw12WeekGoal: float = 0.0
+    bwLongRunGoal: float = 0.0
     basePRs: dict = {}
     injuryFlags: List[str] = []
     avoidMovements: List[str] = []
     weaknesses: List[str] = []
     currentWeek: int = 1
-    programStartDate: str = "2026-03-16"
+    programStartDate: str = ""
     units: str = "lbs"
     onboardingComplete: bool = False
     notifications: dict = {
@@ -552,27 +552,22 @@ async def seed_database():
     if existing:
         return {"message": "Database already seeded", "seeded": False}
     profile = AthleteProfile(
-        name="Eric",
-        experience="Advanced",
-        currentBodyweight=274.0,
-        bw12WeekGoal=255.0,
-        bwLongRunGoal=230.0,
-        basePRs={
-            "backSquat": 500, "benchPress": 400, "axleDeadlift": 600,
-            "axleOverhead_weight": 225, "axleOverhead_reps": 5,
-            "logPress": 285, "yokeLoad": 740, "yokeDistance": 40,
-            "farmersPerHand": 220, "ssbBoxSquat": 405
-        },
-        injuryFlags=["Right hamstring / nerve compression", "Low back", "Left knee"],
-        avoidMovements=["Stone to shoulder", "Very low box squats", "Aggressive from-floor max deadlift"],
-        weaknesses=["Hip drive", "Core stability", "Conditioning / between-set recovery"],
+        name="",
+        experience="",
+        currentBodyweight=0.0,
+        bw12WeekGoal=0.0,
+        bwLongRunGoal=0.0,
+        basePRs={},
+        injuryFlags=[],
+        avoidMovements=[],
+        weaknesses=[],
         currentWeek=1,
-        programStartDate="2026-03-16",
+        programStartDate=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         units="lbs",
         onboardingComplete=False
     )
     await db.profile.insert_one(profile.to_mongo())
-    return {"message": "Database seeded with Eric's profile", "seeded": True}
+    return {"message": "Database seeded with blank profile", "seeded": True}
 
 @api_router.get("/")
 async def root():
@@ -607,6 +602,15 @@ class ChatMessage(BaseModel):
 class CoachRequest(BaseModel):
     message: str
     conversation_history: List[ChatMessage] = []
+    conversation_id: Optional[str] = None
+
+class CoachConversation(BaseDocument):
+    userId: str = "default"
+    title: str = ""
+    messages: List[dict] = []
+    hasProgramChange: bool = False
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # ── POST /api/coach/chat ──────────────────────────────────────────────────────
 @api_router.post("/coach/chat")
@@ -615,17 +619,26 @@ async def coach_chat(request: CoachRequest):
         raise HTTPException(status_code=503, detail="Coach service not ready yet")
 
     profile_doc = await db.profile.find_one({})
-    profile_text = "Unknown athlete"
+    profile_text = "Athlete profile not yet set up."
     if profile_doc:
+        name = profile_doc.get('name', '') or 'Athlete'
+        exp = profile_doc.get('experience', '') or 'Unknown'
+        bw = profile_doc.get('currentBodyweight', 0)
+        bw_str = f"{bw} lbs" if bw and bw > 0 else "Not provided"
+        bw_goal = profile_doc.get('bw12WeekGoal', 0)
+        bw_goal_str = f"{bw_goal} lbs" if bw_goal and bw_goal > 0 else "Not set"
+        injuries = profile_doc.get('injuryFlags', [])
+        weaknesses = profile_doc.get('weaknesses', []) or profile_doc.get('primaryWeaknesses', [])
+        avoid = profile_doc.get('avoidMovements', [])
         profile_text = (
-            f"Name: {profile_doc.get('name', 'Eric')}\n"
-            f"Experience: {profile_doc.get('experience', 'Advanced')}\n"
-            f"Bodyweight: {profile_doc.get('currentBodyweight', 274)} lbs\n"
+            f"Name: {name}\n"
+            f"Experience: {exp}\n"
+            f"Bodyweight: {bw_str}\n"
             f"Current Week: {profile_doc.get('currentWeek', 1)}\n"
-            f"Injury Flags: {', '.join(profile_doc.get('injuryFlags', []))}\n"
-            f"Weaknesses: {', '.join(profile_doc.get('weaknesses', []))}\n"
-            f"Avoid: {', '.join(profile_doc.get('avoidMovements', []))}\n"
-            f"12-Week BW Goal: {profile_doc.get('bw12WeekGoal', 255)} lbs"
+            f"Injury Flags: {', '.join(injuries) if injuries else 'None'}\n"
+            f"Weaknesses: {', '.join(weaknesses) if weaknesses else 'None'}\n"
+            f"Avoid: {', '.join(avoid) if avoid else 'None'}\n"
+            f"12-Week BW Goal: {bw_goal_str}"
         )
 
     log_docs = await db.log.find({}).sort("date", -1).limit(5).to_list(5)
@@ -669,7 +682,20 @@ async def coach_chat(request: CoachRequest):
         logger.warning(f"Supabase query failed: {e}")
         retrieved_passages = "No reference passages available."
 
-    system_prompt = f"""You are an expert strength and conditioning coach with deep knowledge of powerlifting, strongman, sports nutrition, injury management, and recovery. You are coaching a specific athlete whose full profile is provided below. Always consider their injuries, weaknesses, and current training phase before recommending anything. Draw from the provided reference passages when answering. Be specific, practical, and direct — this athlete is advanced and competes in strongman. Never recommend anything that conflicts with their injury flags.
+    system_prompt = f"""You are an expert strength and conditioning coach specializing in powerlifting, strongman, sports nutrition, injury management, and recovery. You are coaching a specific athlete whose full profile is below. Always consider their injuries, weaknesses, and current training phase. Draw from the provided reference passages when relevant. Be specific, practical, and direct — this athlete is advanced. Never recommend anything that conflicts with their injury flags.
+
+IMPORTANT RESPONSE FORMATTING RULES:
+- Do NOT include academic-style citations like "[1]", "[2]", or footnote references.
+- Do NOT list sources at the end of your response.
+- If you draw from reference material, weave the information naturally into your response without citing it.
+- Use clean headers (##, ###), bullet points, and bold text for readability.
+- Keep responses focused and actionable.
+
+PROGRAM CHANGE DETECTION:
+If your recommendation includes a concrete change to the athlete's training program (e.g., swapping an exercise, changing volume/intensity, modifying a lift), append EXACTLY this block at the very end of your response (after all other content):
+<PROGRAM_CHANGE>{{"type": "recommendation", "summary": "brief one-sentence summary of the change", "details": "full details of what should change and why"}}</PROGRAM_CHANGE>
+
+Only include <PROGRAM_CHANGE> if you are explicitly recommending a specific program modification. Do not include it for general advice.
 
 ATHLETE PROFILE:
 {profile_text}
@@ -680,9 +706,7 @@ Recent sessions:
 {recent_log}
 
 REFERENCE PASSAGES FROM COACHING LIBRARY:
-{retrieved_passages}
-
-Answer the question using the reference material where relevant. Cite the source when you draw from it. If the question is outside your knowledge base, say so honestly."""
+{retrieved_passages}"""
 
     emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
     session_id = str(uuid.uuid4())
@@ -697,7 +721,136 @@ Answer the question using the reference material where relevant. Cite the source
             await chat.send_message(UserMessage(text=msg.content))
 
     response_text = await chat.send_message(UserMessage(text=request.message))
-    return {"response": response_text, "sources": sources}
+
+    # ── Parse <PROGRAM_CHANGE> block ─────────────────────────────────────────
+    import re as _re, json as _json
+    program_change = None
+    has_program_change = False
+    clean_response = response_text
+
+    pc_match = _re.search(r'<PROGRAM_CHANGE>(.*?)</PROGRAM_CHANGE>', response_text, _re.DOTALL)
+    if pc_match:
+        has_program_change = True
+        try:
+            program_change = _json.loads(pc_match.group(1).strip())
+        except Exception:
+            program_change = {"type": "recommendation", "summary": pc_match.group(1).strip(), "details": ""}
+        clean_response = response_text[:pc_match.start()].rstrip()
+
+    # ── Persist conversation to MongoDB ──────────────────────────────────────
+    now = datetime.now(timezone.utc)
+    conversation_id = request.conversation_id
+    user_msg_doc = {"role": "user", "content": request.message, "timestamp": now.isoformat()}
+    assistant_msg_doc = {"role": "assistant", "content": clean_response, "timestamp": now.isoformat(),
+                         "hasProgramChange": has_program_change, "programChange": program_change}
+
+    if conversation_id:
+        await db.conversations.update_one(
+            {"_id": ObjectId(conversation_id)},
+            {"$push": {"messages": {"$each": [user_msg_doc, assistant_msg_doc]}},
+             "$set": {"updatedAt": now, "hasProgramChange": has_program_change}}
+        )
+    else:
+        title = request.message[:60] + ("..." if len(request.message) > 60 else "")
+        conv_doc = {"userId": "default", "title": title, "messages": [user_msg_doc, assistant_msg_doc],
+                    "hasProgramChange": has_program_change, "createdAt": now, "updatedAt": now}
+        ins = await db.conversations.insert_one(conv_doc)
+        conversation_id = str(ins.inserted_id)
+
+    return {
+        "response": clean_response,
+        "sources": sources,
+        "conversation_id": conversation_id,
+        "has_program_change": has_program_change,
+        "program_change": program_change,
+    }
+
+
+# ── Conversation Endpoints ────────────────────────────────────────────────────
+
+@api_router.get("/coach/conversations")
+async def get_conversations():
+    """Get all conversations for the default user, newest first."""
+    docs = await db.conversations.find({"userId": "default"}).sort("updatedAt", -1).limit(50).to_list(50)
+    result = []
+    for d in docs:
+        cu = d.get("createdAt", "")
+        uu = d.get("updatedAt", "")
+        result.append({
+            "id": str(d["_id"]),
+            "title": d.get("title", "Conversation"),
+            "hasProgramChange": d.get("hasProgramChange", False),
+            "messageCount": len(d.get("messages", [])),
+            "createdAt": cu.isoformat() if hasattr(cu, 'isoformat') else str(cu),
+            "updatedAt": uu.isoformat() if hasattr(uu, 'isoformat') else str(uu),
+        })
+    return result
+
+
+@api_router.get("/coach/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get full conversation with messages."""
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid conversation ID format")
+    doc = await db.conversations.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    cu = doc.get("createdAt", "")
+    uu = doc.get("updatedAt", "")
+    return {
+        "id": str(doc["_id"]),
+        "title": doc.get("title", "Conversation"),
+        "messages": doc.get("messages", []),
+        "hasProgramChange": doc.get("hasProgramChange", False),
+        "createdAt": cu.isoformat() if hasattr(cu, 'isoformat') else str(cu),
+        "updatedAt": uu.isoformat() if hasattr(uu, 'isoformat') else str(uu),
+    }
+
+
+@api_router.delete("/coach/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid conversation ID format")
+    result = await db.conversations.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"deleted": True}
+
+
+class ApplyRecommendationRequest(BaseModel):
+    conversation_id: str
+    summary: str
+    details: str = ""
+
+
+@api_router.post("/coach/apply-recommendation")
+async def apply_recommendation(body: ApplyRecommendationRequest):
+    try:
+        conv_oid = ObjectId(body.conversation_id)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid conversation_id format")
+    profile = await db.profile.find_one({})
+    week = profile.get("currentWeek", 1) if profile else 1
+    now = datetime.now(timezone.utc)
+    change_doc = {
+        "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+        "week": week, "day": "Coach Recommendation",
+        "sessionType": "Program Update",
+        "originalExercise": "Coach Recommendation",
+        "replacementExercise": body.summary,
+        "reason": f"Applied from Pocket Coach: {body.details}",
+        "conversationId": body.conversation_id,
+    }
+    await db.substitutions.insert_one(change_doc)
+    await db.conversations.update_one(
+        {"_id": conv_oid},
+        {"$set": {"recommendationApplied": True, "updatedAt": now}}
+    )
+    return {"success": True, "message": "Recommendation applied and logged to your changelog."}
 
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
 
