@@ -163,9 +163,9 @@ async def get_today_session():
     # Calculate today's day number (Monday=1, Tuesday=2, ... Sunday=7)
     today_day = datetime.now().weekday() + 1  # weekday() returns 0=Mon
 
-    # Conjugate method: maps calendar day → expected session type
+    # Training calendar: maps calendar day → expected session type
     # Monday=ME Lower, Tuesday=ME Upper, Thursday=DE Lower, Friday=DE Upper
-    CONJUGATE_CALENDAR = {
+    TRAINING_CALENDAR = {
         1: "Max Effort Lower",   # Monday
         2: "Max Effort Upper",   # Tuesday
         4: "Dynamic Effort Lower",  # Thursday
@@ -187,9 +187,9 @@ async def get_today_session():
                                     "week": f"Week {week.weekNumber}",
                                     "session": session.model_dump(),
                                 }
-                        # Second try: match by conjugate calendar session type
+                        # Second try: match by training calendar session type
                         # (handles existing plans where dayNumbers are 1-4 not matching calendar days)
-                        expected_type = CONJUGATE_CALENDAR.get(today_day)
+                        expected_type = TRAINING_CALENDAR.get(today_day)
                         if expected_type:
                             for session in week.sessions:
                                 if session.sessionType == expected_type and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:

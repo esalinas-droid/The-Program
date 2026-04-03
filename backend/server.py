@@ -745,12 +745,18 @@ REFERENCE PASSAGES FROM COACHING LIBRARY:
                          "hasProgramChange": has_program_change, "programChange": program_change}
 
     if conversation_id:
-        await db.conversations.update_one(
-            {"_id": ObjectId(conversation_id)},
-            {"$push": {"messages": {"$each": [user_msg_doc, assistant_msg_doc]}},
-             "$set": {"updatedAt": now, "hasProgramChange": has_program_change}}
-        )
-    else:
+        try:
+            conv_oid = ObjectId(conversation_id)
+            await db.conversations.update_one(
+                {"_id": conv_oid},
+                {"$push": {"messages": {"$each": [user_msg_doc, assistant_msg_doc]}},
+                 "$set": {"updatedAt": now, "hasProgramChange": has_program_change}}
+            )
+        except Exception:
+            # Invalid ObjectId — create new conversation instead
+            conversation_id = None
+
+    if not conversation_id:
         title = request.message[:60] + ("..." if len(request.message) > 60 else "")
         conv_doc = {"userId": "default", "title": title, "messages": [user_msg_doc, assistant_msg_doc],
                     "hasProgramChange": has_program_change, "createdAt": now, "updatedAt": now}

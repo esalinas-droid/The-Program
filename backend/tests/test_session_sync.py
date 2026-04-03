@@ -1,6 +1,6 @@
 """
 Tests for session type synchronization bug fix.
-Verifies correct calendar day numbers and CONJUGATE_CALENDAR fallback in get_today_session.
+Verifies correct calendar day numbers and TRAINING_CALENDAR fallback in get_today_session.
 """
 import pytest
 import requests
@@ -137,12 +137,12 @@ class TestNoplan404:
         assert r.status_code == 200
 
 
-class TestConjugateCalendarFallback:
-    """Test that CONJUGATE_CALENDAR fallback works by session type matching."""
+class TestTrainingCalendarFallback:
+    """Test that TRAINING_CALENDAR fallback works by session type matching."""
 
     def test_fallback_finds_de_upper_on_friday(self, session, plan_data):
         """After intake, on Friday the endpoint should return Dynamic Effort Upper
-        either via dayNumber=5 match or via CONJUGATE_CALENDAR fallback."""
+        either via dayNumber=5 match or via TRAINING_CALENDAR fallback."""
         today_weekday = datetime.now().weekday()
         if today_weekday != 4:  # Not Friday
             pytest.skip("This test only runs on Fridays (weekday=4)")
