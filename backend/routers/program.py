@@ -430,10 +430,18 @@ async def get_pain_trends():
 
 @program_router.get("/coach/change-log")
 async def get_change_log():
-    """Get list of program changes with explanations."""
+    """Return a deduped, newest-first list of program changes."""
     changes = [c for c in _store["changes"] if c.userId == DEFAULT_USER]
     changes.sort(key=lambda c: c.timestamp, reverse=True)
-    return {"changes": [c.model_dump() for c in changes]}
+    # Deduplicate: keep only the most recent entry per unique explanation
+    seen: set = set()
+    deduped = []
+    for c in changes:
+        key = c.explanation.strip()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+    return {"changes": [c.model_dump() for c in deduped]}
 
 
 @program_router.get("/coach/memory")

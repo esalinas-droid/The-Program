@@ -91,7 +91,6 @@ export default function LibraryScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState(0);
   const [search, setSearch] = useState('');
-  const [injuryFilter, setInjuryFilter] = useState('');
 
   const filteredExercises = EXERCISES.filter(e =>
     e.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -100,21 +99,30 @@ export default function LibraryScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
+      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={s.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.text.secondary} />
+          <MaterialCommunityIcons name="arrow-left" size={22} color={COLORS.text.secondary} />
         </TouchableOpacity>
         <Text style={s.title}>REFERENCE LIBRARY</Text>
       </View>
 
-      {/* Tabs */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabScroll} contentContainerStyle={{ paddingHorizontal: SPACING.lg, gap: SPACING.sm }}>
-        {TABS.map((tab, i) => (
-          <TouchableOpacity testID={`lib-tab-${tab}`} key={tab} style={[s.tabBtn, activeTab === i && s.tabActive]} onPress={() => setActiveTab(i)}>
-            <Text style={[s.tabText, activeTab === i && s.tabTextActive]}>{tab}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Compact Tab Chips */}
+      <View style={s.tabRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.tabContent}>
+          {TABS.map((tab, i) => (
+            <TouchableOpacity
+              testID={`lib-tab-${tab}`}
+              key={tab}
+              style={[s.tabChip, activeTab === i && s.tabChipActive]}
+              onPress={() => setActiveTab(i)}
+              activeOpacity={0.75}
+            >
+              <Text style={[s.tabChipText, activeTab === i && s.tabChipTextActive]}>{tab}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
       <ScrollView testID="library-scroll" style={s.content} keyboardShouldPersistTaps="handled">
         {/* Exercises Tab */}
@@ -215,45 +223,59 @@ export default function LibraryScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
-  header: { flexDirection: 'row', alignItems: 'center', padding: SPACING.lg, paddingTop: SPACING.xl, gap: SPACING.md },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: SPACING.sm, gap: SPACING.sm },
   backBtn: { padding: 4 },
-  title: { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 2 },
-  tabScroll: { marginBottom: SPACING.sm },
-  tabBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: RADIUS.full, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  tabActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  tabText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.medium },
-  tabTextActive: { color: '#FFF', fontWeight: FONTS.weights.bold },
+  title: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.primary, letterSpacing: 2 },
+
+  // ── Compact tab chips ─────────────────────────────────────────────────────
+  tabRow: { height: 44, justifyContent: 'center', marginBottom: SPACING.xs || 4 },
+  tabContent: { paddingHorizontal: SPACING.lg, gap: 8, alignItems: 'center', flexDirection: 'row' },
+  tabChip: {
+    height: 32,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabChipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  tabChipText: { color: COLORS.text.muted, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.semibold as any, letterSpacing: 0.3 },
+  tabChipTextActive: { color: '#000', fontWeight: FONTS.weights.bold as any },
+
+  // ── Content ───────────────────────────────────────────────────────────────
   content: { flex: 1 },
-  searchInput: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, height: 44, paddingHorizontal: SPACING.md, color: COLORS.text.primary, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border, fontSize: FONTS.sizes.base },
-  exCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg },
-  exHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  exName: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, flex: 1 },
-  exRoleBadge: { backgroundColor: COLORS.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },
-  exRoleText: { fontSize: 10, color: COLORS.accentBlue, fontWeight: FONTS.weights.bold },
-  exMeta: { flexDirection: 'row', marginBottom: 4 },
+  searchInput: { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, height: 40, paddingHorizontal: SPACING.md, color: COLORS.text.primary, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border, fontSize: FONTS.sizes.sm },
+  exCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md },
+  exHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  exName: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold as any, color: COLORS.text.primary, flex: 1 },
+  exRoleBadge: { backgroundColor: COLORS.primary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: RADIUS.full },
+  exRoleText: { fontSize: 9, color: COLORS.accentBlue, fontWeight: FONTS.weights.bold as any },
+  exMeta: { flexDirection: 'row', marginBottom: 3 },
   exType: { fontSize: FONTS.sizes.xs, color: COLORS.accent },
   exDot: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
   exCat: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
-  exFocus: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, marginBottom: 4 },
-  exCue: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: 8 },
-  ytBtn: { alignSelf: 'flex-start', backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.sm },
-  ytBtnText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.semibold },
-  wuCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg },
-  wuType: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, color: COLORS.accent, marginBottom: SPACING.md },
-  drillRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  exFocus: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, marginBottom: 3 },
+  exCue: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: 6 },
+  ytBtn: { alignSelf: 'flex-start', backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 9, paddingVertical: 3, borderRadius: RADIUS.sm },
+  ytBtnText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.semibold as any },
+  wuCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md },
+  wuType: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold as any, color: COLORS.accent, marginBottom: SPACING.sm, letterSpacing: 0.5 },
+  drillRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   drillLeft: { flex: 1 },
   drillRight: {},
-  drillName: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary },
+  drillName: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold as any, color: COLORS.text.primary },
   drillPurpose: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary },
   drillNote: { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontStyle: 'italic' },
-  drillSR: { fontSize: FONTS.sizes.sm, color: COLORS.accentBlue, fontWeight: FONTS.weights.bold, marginLeft: SPACING.md },
-  rehabCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, borderLeftWidth: 3, borderLeftColor: COLORS.accent },
-  rehabInjury: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold, color: COLORS.accent, marginBottom: SPACING.md },
-  evCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg },
-  evHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
-  evName: { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
-  phaseCard: { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm },
-  phaseLabel: { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.accentBlue, letterSpacing: 1.5, marginBottom: 4 },
-  phaseLoad: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, marginBottom: 4 },
-  phaseNotes: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 18 },
+  drillSR: { fontSize: FONTS.sizes.sm, color: COLORS.accentBlue, fontWeight: FONTS.weights.bold as any, marginLeft: SPACING.md },
+  rehabCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 2, borderLeftColor: COLORS.accent },
+  rehabInjury: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold as any, color: COLORS.accent, marginBottom: SPACING.sm },
+  evCard: { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md },
+  evHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
+  evName: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.primary },
+  phaseCard: { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.sm, padding: SPACING.sm, marginBottom: 6 },
+  phaseLabel: { fontSize: 9, fontWeight: FONTS.weights.heavy as any, color: COLORS.accentBlue, letterSpacing: 1.5, marginBottom: 3 },
+  phaseLoad: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold as any, color: COLORS.text.primary, marginBottom: 3 },
+  phaseNotes: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 17 },
 });
