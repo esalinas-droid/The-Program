@@ -252,41 +252,14 @@ export default function Dashboard() {
           </View>
         )}
 
-        <Text style={s.sectionTitle}>BLOCK {block}: {blockName}</Text>
-
-        {/* AI Coach Directive — shows when plan has been generated */}
-        {programSession && (
-          <View style={[s.sessionCard, { borderLeftColor: COLORS.accentBlue, marginBottom: SPACING.sm }]}>
-            <Text style={{ color: COLORS.accentBlue, fontSize: 10, fontWeight: '800' as any, letterSpacing: 2, marginBottom: 4 }}>COACH DIRECTIVE</Text>
-            <Text style={{ color: COLORS.text.secondary, fontSize: 14, lineHeight: 20 }}>{programSession.session.coachNote}</Text>
-            <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 6 }}>{programSession.phase} → {programSession.block}</Text>
-          </View>
-        )}
-
-        {/* Today's Session Card */}
-        {displaySession && displaySession.sessionType !== 'Off' && (
-          <TouchableOpacity testID="today-session-card" style={s.sessionCard} onPress={() => router.push('/(tabs)/today')}>
-            {(() => {
-              const sc = getSessionStyle(displaySession.sessionType);
-              return (
-                <>
-                  <View style={[s.sessionBadge, { backgroundColor: sc.bg }]}>
-                    <Text style={[s.sessionBadgeText, { color: sc.text }]}>{displaySession.sessionType}</Text>
-                  </View>
-                  <Text style={s.sessionLift}>{displaySession.mainLift}</Text>
-                  <Text style={s.sessionScheme}>{displaySession.topSetScheme}</Text>
-                  <View style={s.sessionFooter}>
-                    <Text style={s.sessionDay}>{todayName}</Text>
-                    <Text style={s.sessionArrow}>View Full Session →</Text>
-                  </View>
-                </>
-              );
-            })()}
-          </TouchableOpacity>
-        )}
-        {displaySession?.sessionType === 'Off' && (
-          <View style={s.offCard}>
-            <Text style={s.offText}>☀️ Rest Day — Sunday is off. Let the adaptation happen.</Text>
+        {/* ── AI Coach Note (from generated plan) ── */}
+        {programSession?.session?.coachNote && (
+          <View style={s.coachNoteCard}>
+            <View style={s.coachNoteHeader}>
+              <MaterialCommunityIcons name="robot-outline" size={14} color={COLORS.accentBlue} />
+              <Text style={s.coachNoteLabel}>AI COACH · {programSession.session.sessionType?.toUpperCase()}</Text>
+            </View>
+            <Text style={s.coachNoteText}>{programSession.session.coachNote}</Text>
           </View>
         )}
 
@@ -478,6 +451,26 @@ const s = StyleSheet.create({
   sessionCtaScheme:    { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, marginBottom: SPACING.lg, lineHeight: 22 },
   startBtn:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm },
   startBtnText:        { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+
+  // AI Coach note (from generated plan)
+  coachNoteCard: {
+    marginHorizontal: SPACING.lg, marginBottom: SPACING.md,
+    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderWidth: 1, borderColor: COLORS.accentBlue,
+    borderLeftWidth: 3,
+  },
+  coachNoteHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  coachNoteLabel: {
+    fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy,
+    color: COLORS.accentBlue, letterSpacing: 1.5,
+  },
+  coachNoteText: {
+    fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22,
+  },
 
   // Rest day
   restDayCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
