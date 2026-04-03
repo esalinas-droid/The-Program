@@ -341,6 +341,7 @@ async def apply_injury_update(body: dict):
 
     from datetime import datetime as _dt
     change_doc = {
+        "timestamp": datetime.now(timezone.utc),
         "date": _dt.now(timezone.utc).strftime("%Y-%m-%d"),
         "week": profile.get("currentWeek", 1),
         "day": "Profile",
