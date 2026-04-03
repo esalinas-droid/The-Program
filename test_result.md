@@ -215,6 +215,35 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: >
+      FULL QA RUN requested. Current app state after rollback to f169829 + 3 targeted fixes.
+      Backend: 14 program endpoints confirmed responding. Plan generated (52 weeks, 7 phases).
+      Today is Friday April 3 2026 (day_number=5). The plan has no Friday session so fallback
+      returns ME Upper Day 1 (expected behavior - conjugate program only has 4 training days).
+      Bottom nav confirmed: 5 tabs ONLY (Home, Today, Log, Track, Tools) - no Changes tab.
+      
+      Key files at current state:
+      - today.tsx: 1008 lines (rich UI with AI session panel, substitution, exercise tracking)
+      - log.tsx: 993 lines (exercise picker, RPE/pain sliders, PR alerts, share card)
+      - track.tsx: 767 lines (analytics, PRs, bodyweight chart, compliance)
+      - tools.tsx: 58 lines (menu with 7 cards including changelog)
+      - tools/: calculator, converter, barguide, checkin, coach, library, changelog all present
+      - program-reveal.tsx: 699 lines (52-week plan reveal with phase timeline)
+      - review.tsx: 459 lines (post-workout review)
+      - api.ts: 136 lines (programApi + analyticsApi + substitutionApi)
+      
+      Please test ALL screens thoroughly:
+      1. Home tab - coach directive, weekly stats, PR bests
+      2. Today tab - session type, exercises, coach note, sections
+      3. Log tab - session type default, exercise picker, RPE/pain sliders, logging a set
+      4. Track tab - PRs, bodyweight chart, compliance, no blank sections
+      5. Tools tab - all 7 cards visible, each tool opens without errors
+      6. Bottom nav - only 5 tabs (no Changes)
+      7. Program-reveal - can navigate to /program-reveal
+      8. Review screen - can navigate to /review with params
+      Report ALL bugs found including severity. Fix nothing yourself.
+
+  - agent: "main"
+    message: >
       Fixed all 5 issues from handoff:
       1. server.py: Removed duplicate program_router import (line 13) and duplicate include_router + broken try/except for 'IntakeResponse'. Backend now starts with zero warnings.
       2. api.ts: Added analyticsApi (overview/volume/pain/compliance) and substitutionApi (log/list) exports.
