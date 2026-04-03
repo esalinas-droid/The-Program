@@ -25,6 +25,25 @@ interface ProgramChange {
   details: string;
 }
 
+interface ExerciseChange {
+  from: string;
+  to: string;
+  reason?: string;
+}
+
+interface ChangesByCategory {
+  main: ExerciseChange[];
+  supplemental: ExerciseChange[];
+  accessory: ExerciseChange[];
+  prehab: ExerciseChange[];
+}
+
+interface ApplyResult {
+  exercises_swapped: number;
+  changes_by_category: ChangesByCategory;
+  message: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -84,6 +103,7 @@ export default function CoachScreen() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [appliedMessages, setAppliedMessages] = useState<Record<string, boolean>>({});
+  const [appliedResults, setAppliedResults] = useState<Record<string, ApplyResult>>({});
   const [applySuccessMsg, setApplySuccessMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -160,8 +180,12 @@ export default function CoachScreen() {
         pc.exercises || []
       );
       setAppliedMessages(prev => ({ ...prev, [message.id]: true }));
+      // Store the full result so the bubble can render the expandable summary
+      if (result) {
+        setAppliedResults(prev => ({ ...prev, [message.id]: result }));
+      }
       const successMsg = result.exercises_swapped > 0
-        ? `✓ ${result.exercises_swapped} exercise${result.exercises_swapped !== 1 ? 's' : ''} updated in your program`
+        ? `✓ ${result.exercises_swapped} exercise${result.exercises_swapped !== 1 ? 's' : ''} updated in current block`
         : '✓ Recommendation logged to your changelog';
       setApplySuccessMsg(successMsg);
       setTimeout(() => setApplySuccessMsg(null), 4000);
@@ -271,6 +295,7 @@ export default function CoachScreen() {
               onApply={() => applyRecommendation(item)}
               applying={applyingId === item.id}
               applied={appliedMessages[item.id] || false}
+              applyResult={appliedResults[item.id]}
             />
           )}
           ListFooterComponent={loading ? <LoadingDots /> : null}
@@ -630,14 +655,17 @@ function MessageBubble({
   onApply,
   applying,
   applied,
+  applyResult,
 }: {
   message: Message;
   onApply: () => void;
   applying: boolean;
   applied: boolean;
+  applyResult?: ApplyResult;
 }) {
   const isUser  = message.role === 'user';
   const timeStr = formatTime(message.timestamp);
+  const [expanded, setExpanded] = useState(false);
 
   if (isUser) {
     return (
@@ -649,6 +677,21 @@ function MessageBubble({
       </View>
     );
   }
+
+  // Build category rows for the expandable view
+  const categoryConfig = [
+    { key: 'main',         label: 'MAIN LIFTS',   color: '#C9A84C', icon: 'weight-lifter'       as const },
+    { key: 'supplemental', label: 'SUPPLEMENTAL',  color: '#7BA7D4', icon: 'dumbbell'             as const },
+    { key: 'accessory',    label: 'ACCESSORY',     color: '#9B8EC4', icon: 'arm-flex-outline'     as const },
+    { key: 'prehab',       label: 'PREHAB ADDED',  color: '#4DCEA6', icon: 'bandage'              as const },
+  ];
+
+  const hasChanges = applyResult && (
+    (applyResult.changes_by_category?.main?.length ?? 0) +
+    (applyResult.changes_by_category?.supplemental?.length ?? 0) +
+    (applyResult.changes_by_category?.accessory?.length ?? 0) +
+    (applyResult.changes_by_category?.prehab?.length ?? 0)
+  ) > 0;
 
   return (
     <View style={mb.coachRow}>
@@ -672,36 +715,101 @@ function MessageBubble({
             <View style={mb.applyDivider} />
 
             {/* Recommendation card */}
-            <View style={mb.recCard}>
-              <View style={mb.recHeader}>
-                <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
-                <Text style={mb.recHeaderText}>Program Recommendation</Text>
+            {!applied && (
+              <View style={mb.recCard}>
+                <View style={mb.recHeader}>
+                  <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
+                  <Text style={mb.recHeaderText}>Program Recommendation</Text>
+                </View>
+                {/* FULL text, no numberOfLines limit */}
+                <Text style={mb.recText}>{message.programChange.summary}</Text>
               </View>
-              {/* FULL text, no numberOfLines limit */}
-              <Text style={mb.recText}>{message.programChange.summary}</Text>
-            </View>
+            )}
 
-            {/* Apply button — full width, 48px tall */}
-            <TouchableOpacity
-              style={[mb.applyBtn, applied && mb.applyBtnApplied, applying && mb.applyBtnLoading]}
-              onPress={onApply}
-              disabled={applying || applied}
-              activeOpacity={0.85}
-            >
-              {applying ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : applied ? (
-                <>
-                  <MaterialCommunityIcons name="check-circle" size={18} color="#4DCEA6" />
-                  <Text style={mb.applyBtnTextApplied}>Applied ✓</Text>
-                </>
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="check-bold" size={16} color="#fff" />
-                  <Text style={mb.applyBtnText}>Apply to My Program</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {/* ── Applied state: expandable summary ── */}
+            {applied ? (
+              <View style={mb.appliedContainer}>
+                {/* Tappable header row */}
+                <TouchableOpacity
+                  style={mb.appliedHeader}
+                  onPress={() => hasChanges && setExpanded(e => !e)}
+                  activeOpacity={hasChanges ? 0.7 : 1}
+                >
+                  <View style={mb.appliedHeaderLeft}>
+                    <MaterialCommunityIcons name="check-circle" size={18} color="#4DCEA6" />
+                    <View style={mb.appliedHeaderText}>
+                      <Text style={mb.appliedTitle}>Applied to Current Block</Text>
+                      <Text style={mb.appliedSubtitle}>
+                        {applyResult
+                          ? applyResult.exercises_swapped > 0
+                            ? `${applyResult.exercises_swapped} exercise${applyResult.exercises_swapped !== 1 ? 's' : ''} modified`
+                            : 'Logged to changelog'
+                          : 'Changes applied'}
+                      </Text>
+                    </View>
+                  </View>
+                  {hasChanges && (
+                    <MaterialCommunityIcons
+                      name={expanded ? 'chevron-up' : 'chevron-down'}
+                      size={18}
+                      color={COLORS.text.muted}
+                    />
+                  )}
+                </TouchableOpacity>
+
+                {/* Expandable change list */}
+                {expanded && hasChanges && applyResult && (
+                  <View style={mb.appliedDetail}>
+                    {categoryConfig.map(cfg => {
+                      const items = applyResult.changes_by_category[cfg.key as keyof ChangesByCategory] || [];
+                      if (!items.length) return null;
+                      return (
+                        <View key={cfg.key} style={mb.categoryBlock}>
+                          {/* Category heading */}
+                          <View style={mb.categoryHeader}>
+                            <MaterialCommunityIcons name={cfg.icon} size={11} color={cfg.color} />
+                            <Text style={[mb.categoryLabel, { color: cfg.color }]}>
+                              {cfg.label} ({items.length})
+                            </Text>
+                          </View>
+                          {/* Exercise rows */}
+                          {items.map((ch, idx) => (
+                            <View key={idx} style={mb.changeRow}>
+                              {/* "From" pill */}
+                              {ch.from ? (
+                                <>
+                                  <Text style={mb.changeFrom} numberOfLines={1}>{ch.from}</Text>
+                                  <MaterialCommunityIcons name="arrow-right" size={12} color={COLORS.text.muted} style={mb.changeArrow} />
+                                </>
+                              ) : null}
+                              {/* "To" pill */}
+                              <Text style={[mb.changeTo, { color: cfg.color }]} numberOfLines={1}>{ch.to}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            ) : (
+              /* Apply button — full width, 48px tall */
+              <TouchableOpacity
+                style={[mb.applyBtn, applying && mb.applyBtnLoading]}
+                onPress={onApply}
+                disabled={applying}
+                activeOpacity={0.85}
+              >
+                {applying ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="check-bold" size={16} color="#fff" />
+                    <Text style={mb.applyBtnText}>Apply to My Program</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -773,9 +881,51 @@ const mb = StyleSheet.create({
   applyBtnLoading: { opacity: 0.7 },
   applyBtnText:    { fontSize: FONTS.sizes.base, fontWeight: '700' as any, color: '#fff' },
 
-  // Applied state: #1A2A1A bg, #4DCEA6 text
-  applyBtnApplied: { backgroundColor: '#1A2A1A', borderWidth: 1, borderColor: '#4DCEA6' },
-  applyBtnTextApplied: { fontSize: FONTS.sizes.base, fontWeight: '700' as any, color: '#4DCEA6' },
+  // ── Applied / Expandable summary ──────────────────────────────────────────
+  appliedContainer: {
+    backgroundColor: '#0F1F17',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(77, 206, 166, 0.3)',
+    overflow: 'hidden',
+  },
+  appliedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  appliedHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  appliedHeaderText: { flex: 1 },
+  appliedTitle:   { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: '#4DCEA6' },
+  appliedSubtitle:{ fontSize: 11, color: 'rgba(77, 206, 166, 0.7)', marginTop: 1 },
+
+  // Expandable detail section
+  appliedDetail: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(77, 206, 166, 0.15)',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 12,
+  },
+  categoryBlock: { gap: 6 },
+  categoryHeader:{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
+  categoryLabel: { fontSize: 9, fontWeight: '800' as any, letterSpacing: 1.5 },
+  changeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    gap: 0,
+    flexWrap: 'nowrap',
+  },
+  changeFrom:  { fontSize: 11, color: COLORS.text.muted, flex: 1, flexShrink: 1 },
+  changeArrow: { marginHorizontal: 4 },
+  changeTo:    { fontSize: 11, fontWeight: '600' as any, flex: 1, flexShrink: 1, textAlign: 'right' },
 });
 
 // ── Starter prompts ───────────────────────────────────────────────────────────

@@ -458,11 +458,23 @@ frontend:
     file: "frontend/app/tools/coach.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: true
         agent: "main"
         comment: "MessageBubble shows Apply button only when hasProgramChange=true. Tapping calls coachApi.applyRecommendation, shows success alert with option to view changelog."
+
+  - task: "Coach screen: Expandable Applied Summary"
+    implemented: true
+    working: true
+    file: "frontend/app/tools/coach.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added ApplyResult/ExerciseChange/ChangesByCategory types. Added appliedResults state. applyRecommendation now stores full backend response. MessageBubble replaced static Applied button with expandable green summary card. Shows 'Applied to Current Block — X exercises modified'. Tapping expands to show MAIN LIFTS, SUPPLEMENTAL, ACCESSORY, PREHAB categories with From→To rows, each category has its own color. Backend changes_by_category parsed and rendered correctly."
 
   - task: "Coach screen: text selectable messages"
     implemented: true
