@@ -48,12 +48,14 @@ export const FONTS = {
 
 export function getSessionStyle(sessionType: string) {
   const t = sessionType.toLowerCase();
-  if (t.includes('me lower')) return COLORS.sessions.me_lower;
-  if (t.includes('me upper')) return COLORS.sessions.me_upper;
-  if (t.includes('de lower')) return COLORS.sessions.de_lower;
-  if (t.includes('de upper')) return COLORS.sessions.de_upper;
-  if (t.includes('strongman') || t.includes('event day')) return COLORS.sessions.event;
-  if (t.includes('boxing') || t.includes('recovery') || t.includes('mobility')) return COLORS.sessions.recovery;
+  // Handle full backend names ("Max Effort Lower", "Dynamic Effort Upper") and
+  // short local names ("ME Lower", "DE Upper") — order matters, check specific first
+  if (t.includes('max effort lower') || t.includes('me lower')) return COLORS.sessions.me_lower;
+  if (t.includes('max effort upper') || t.includes('me upper')) return COLORS.sessions.me_upper;
+  if (t.includes('dynamic effort lower') || t.includes('de lower')) return COLORS.sessions.de_lower;
+  if (t.includes('dynamic effort upper') || t.includes('de upper')) return COLORS.sessions.de_upper;
+  if (t.includes('strongman') || t.includes('event day') || t.includes('event')) return COLORS.sessions.event;
+  if (t.includes('boxing') || t.includes('recovery') || t.includes('mobility') || t.includes('gpp')) return COLORS.sessions.recovery;
   if (t.includes('deload')) return COLORS.sessions.deload;
   return COLORS.sessions.deload;
 }

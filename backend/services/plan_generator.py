@@ -283,11 +283,44 @@ def _generate_coach_note(session_type: SessionType, week: int) -> str:
 
 # ─── Split Templates ──────────────────────────────────────────────────────────
 
+# Maps frequency → list of (SessionType, calendar_day_number)
+# Calendar day numbers: Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6, Sun=7
+# Matches conjugate method scheduling so get_today_session endpoint finds correct session
+DAY_MAPS = {
+    3: [
+        (SessionType.ME_LOWER, 1),   # Monday
+        (SessionType.ME_UPPER, 2),   # Tuesday
+        (SessionType.DE_UPPER, 5),   # Friday
+    ],
+    4: [
+        (SessionType.ME_LOWER, 1),   # Monday
+        (SessionType.ME_UPPER, 2),   # Tuesday
+        (SessionType.DE_LOWER, 4),   # Thursday
+        (SessionType.DE_UPPER, 5),   # Friday
+    ],
+    5: [
+        (SessionType.ME_LOWER, 1),   # Monday
+        (SessionType.ME_UPPER, 2),   # Tuesday
+        (SessionType.GPP, 3),        # Wednesday (recovery)
+        (SessionType.DE_LOWER, 4),   # Thursday
+        (SessionType.DE_UPPER, 5),   # Friday
+    ],
+    6: [
+        (SessionType.ME_LOWER, 1),   # Monday
+        (SessionType.ME_UPPER, 2),   # Tuesday
+        (SessionType.GPP, 3),        # Wednesday
+        (SessionType.DE_LOWER, 4),   # Thursday
+        (SessionType.DE_UPPER, 5),   # Friday
+        (SessionType.GPP, 6),        # Saturday
+    ],
+}
+
+# Keep SPLIT_TEMPLATES for backwards compatibility
 SPLIT_TEMPLATES = {
-    3: [SessionType.ME_UPPER, SessionType.ME_LOWER, SessionType.DE_UPPER],
-    4: [SessionType.ME_UPPER, SessionType.ME_LOWER, SessionType.DE_UPPER, SessionType.DE_LOWER],
-    5: [SessionType.ME_UPPER, SessionType.ME_LOWER, SessionType.DE_UPPER, SessionType.DE_LOWER, SessionType.GPP],
-    6: [SessionType.ME_UPPER, SessionType.ME_LOWER, SessionType.DE_UPPER, SessionType.DE_LOWER, SessionType.GPP, SessionType.GPP],
+    3: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.DE_UPPER],
+    4: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.DE_LOWER, SessionType.DE_UPPER],
+    5: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.GPP, SessionType.DE_LOWER, SessionType.DE_UPPER],
+    6: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.GPP, SessionType.DE_LOWER, SessionType.DE_UPPER, SessionType.GPP],
 }
 
 
@@ -346,6 +379,9 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
     deload_weeks = []
     testing_weeks = []
 
+    # Get the correct day map with real calendar day numbers
+    day_map = DAY_MAPS.get(frequency, DAY_MAPS[4])
+
     for i, tmpl in enumerate(phase_templates):
         phase_id = _id()
         phase_start = running_week
@@ -371,10 +407,10 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
                 if is_deload:
                     deload_weeks.append(current_week)
 
-                # Build sessions for the week
+                # Build sessions using real calendar day numbers (Mon=1...Fri=5)
                 sessions = []
-                for d, stype in enumerate(split):
-                    session = _build_session(stype, intake.lifts, intake.liftUnit, current_week, d + 1, block_id)
+                for stype, cal_day in day_map:
+                    session = _build_session(stype, intake.lifts, intake.liftUnit, current_week, cal_day, block_id)
                     sessions.append(session)
 
                 week_obj = Week(

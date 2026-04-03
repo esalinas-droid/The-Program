@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { logApi, programApi } from '../../src/utils/api';
-import { getTodayDayName } from '../../src/data/programData';
+import { getTodayDayName, getTodaySession } from '../../src/data/programData';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const TEAL  = '#4DCEA6';
@@ -715,15 +715,20 @@ export default function LogScreen() {
   useFocusEffect(useCallback(() => {
     (async () => {
       const prof = await getProfile();
-      setWeek(prof?.currentWeek || 1);
+      const week = prof?.currentWeek || 1;
+      setWeek(week);
 
-      // Sync session type to today's program plan
+      // Set initial session type from local conjugate schedule (instant, no network needed)
+      const localSession = getTodaySession(week);
+      setSessionType(localSession.sessionType);
+
+      // Sync session type to today's program plan (overrides local if plan exists)
       try {
         const todayData = await programApi.getTodaySession();
         if (todayData?.session?.sessionType) {
           setSessionType(todayData.session.sessionType);
         }
-      } catch { /* No plan yet — keep 'ME Upper' default */ }
+      } catch { /* Keep local data */ }
 
       setLoading(false);
     })();

@@ -163,6 +163,15 @@ async def get_today_session():
     # Calculate today's day number (Monday=1, Tuesday=2, ... Sunday=7)
     today_day = datetime.now().weekday() + 1  # weekday() returns 0=Mon
 
+    # Conjugate method: maps calendar day → expected session type
+    # Monday=ME Lower, Tuesday=ME Upper, Thursday=DE Lower, Friday=DE Upper
+    CONJUGATE_CALENDAR = {
+        1: "Max Effort Lower",   # Monday
+        2: "Max Effort Upper",   # Tuesday
+        4: "Dynamic Effort Lower",  # Thursday
+        5: "Dynamic Effort Upper",  # Friday
+    }
+
     # Find current phase → current block → session matching today's day
     for phase in plan.phases:
         if phase.status == PhaseStatus.CURRENT:
@@ -178,7 +187,19 @@ async def get_today_session():
                                     "week": f"Week {week.weekNumber}",
                                     "session": session.model_dump(),
                                 }
-                        # Second try: find next upcoming planned session (for rest days)
+                        # Second try: match by conjugate calendar session type
+                        # (handles existing plans where dayNumbers are 1-4 not matching calendar days)
+                        expected_type = CONJUGATE_CALENDAR.get(today_day)
+                        if expected_type:
+                            for session in week.sessions:
+                                if session.sessionType == expected_type and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
+                                    return {
+                                        "phase": phase.phaseName,
+                                        "block": block.blockName,
+                                        "week": f"Week {week.weekNumber}",
+                                        "session": session.model_dump(),
+                                    }
+                        # Third try: find next upcoming planned session (for rest days like Wed/Sat/Sun)
                         for session in week.sessions:
                             if session.dayNumber >= today_day and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
                                 return {
@@ -187,7 +208,7 @@ async def get_today_session():
                                     "week": f"Week {week.weekNumber}",
                                     "session": session.model_dump(),
                                 }
-                        # Third try: first planned session in the week
+                        # Fourth try: first planned session in the week
                         for session in week.sessions:
                             if session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
                                 return {

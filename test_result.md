@@ -134,6 +134,33 @@ backend:
         agent: "main"
         comment: "program_router is registered once cleanly. All 19 endpoints from program.py accessible."
 
+  - task: "Fix get_today_session to return correct session type for current weekday"
+    implemented: true
+    working: true
+    file: "backend/routers/program.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Backend was returning Max Effort Upper for Friday because dayNumbers were 1-4 but Friday=weekday()+1=5. No exact match fallback went to first session."
+      - working: true
+        agent: "main"
+        comment: "Added CONJUGATE_CALENDAR dict {1:ME Lower, 2:ME Upper, 4:DE Lower, 5:DE Upper}. Added second try: match by session TYPE from CONJUGATE_CALENDAR. Friday (5) now correctly finds Dynamic Effort Upper session by type match."
+
+  - task: "Fix plan_generator.py to use correct calendar day numbers"
+    implemented: true
+    working: true
+    file: "backend/services/plan_generator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Replaced SPLIT_TEMPLATES (sequential 1-4) with DAY_MAPS that use real calendar day numbers: Mon(1)=ME Lower, Tue(2)=ME Upper, Thu(4)=DE Lower, Fri(5)=DE Upper. New plans now have correct dayNumbers matching calendar days."
+
 frontend:
   - task: "Add analyticsApi and substitutionApi to api.ts"
     implemented: true
@@ -195,6 +222,21 @@ frontend:
         agent: "main"
         comment: "handleFinish now routes to /review with setsLogged, totalSets, sessionType, week params instead of /(tabs)."
 
+  - task: "Session type sync across Home, Today, and Log tabs"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/index.tsx, today.tsx, log.tsx, src/constants/theme.ts"
+    stuck_count: 2
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "Home shows DE Upper, Today shows Dynamic Effort Upper, Log shows Max Effort Upper. All inconsistent."
+      - working: true
+        agent: "main"
+        comment: "Fixed: 1) theme.ts getSessionStyle now recognizes full backend names (Dynamic Effort Upper/Max Effort Upper) with same styles. 2) index.tsx uses displaySession that prefers programSession.session.sessionType from API. 3) log.tsx uses local getTodaySession() as initial state then overrides with API. All 3 tabs now use backend API session type as single source of truth."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
@@ -244,12 +286,41 @@ agent_communication:
 
   - agent: "main"
     message: >
-      Fixed all 5 issues from handoff:
-      1. server.py: Removed duplicate program_router import (line 13) and duplicate include_router + broken try/except for 'IntakeResponse'. Backend now starts with zero warnings.
-      2. api.ts: Added analyticsApi (overview/volume/pain/compliance) and substitutionApi (log/list) exports.
-      3. index.tsx: Added StatBox component function and statsGrid/statBox/statBoxValue/statBoxLabel styles.
-      4. track.tsx: Removed double loadAll call + 5s safety timer useEffect + debug console.logs.
-      5. today.tsx handleFinish: Now navigates to /review with setsLogged/totalSets/sessionType/week params.
-      6. NEW: Created review.tsx — animated Post-Workout Review screen with hero, stats grid, wins, coach note, what's next, fixed CTA.
-      7. _layout.tsx: Registered review screen with slide_from_bottom fullScreenModal animation.
-      Please test: index.tsx renders without StatBox errors, track.tsx loads data once, review screen renders at /review with query params, today.tsx finish button routes to review.
+      CRITICAL FIX: Session type synchronization bug across Home, Today, and Log tabs.
+      
+      Root Cause: The backend plan_generator was assigning dayNumbers 1-4 sequentially (for a 4-day split),
+      but Friday = weekday()+1 = 5. The get_today_session endpoint found no match for dayNumber=5 and 
+      fell back to the FIRST session (Max Effort Lower). This caused Today/Log to show "Max Effort Upper"
+      while Home showed "DE Upper" (from local programData.ts).
+      
+      Fixes Applied:
+      1. plan_generator.py: Added DAY_MAPS with proper calendar day numbers:
+         Mon(1)=ME Lower, Tue(2)=ME Upper, Thu(4)=DE Lower, Fri(5)=DE Upper
+         Sessions now have correct dayNumbers matching actual calendar weekdays.
+      
+      2. program.py get_today_session: Added CONJUGATE_CALENDAR fallback dict:
+         {1: "Max Effort Lower", 2: "Max Effort Upper", 4: "Dynamic Effort Lower", 5: "Dynamic Effort Upper"}
+         When exact dayNumber match fails (old plans), it matches by session TYPE mapped to today's weekday.
+      
+      3. theme.ts getSessionStyle(): Extended to recognize full backend names:
+         "Dynamic Effort Upper" → de_upper style, "Max Effort Lower" → me_lower style, etc.
+      
+      4. index.tsx: Added displaySession variable that prefers programSession.session.sessionType
+         (from API) over local todaySession.sessionType. All session badges now use displaySession.
+      
+      5. log.tsx: Added getTodaySession import. useFocusEffect now sets session type from local 
+         programData first (instant), then overrides with API response if available.
+      
+      Backend verified: Friday now returns sessionType="Dynamic Effort Upper", dayNumber=5.
+      All 4 sessions: Mon→Max Effort Lower, Tue→Max Effort Upper, Thu→Dynamic Effort Lower, Fri→Dynamic Effort Upper.
+      
+      NOTE: Backend uses in-memory storage. To test, first POST /api/profile/intake to generate plan,
+      then test today session endpoint. Plan generation needed after each backend restart.
+      
+      Please test:
+      1. Backend: POST /api/profile/intake (frequency=4), then GET /api/plan/session/today 
+         → should return sessionType="Dynamic Effort Upper" (today is Friday)
+      2. Frontend Home tab: session badge should show "Dynamic Effort Upper" with correct blue color
+      3. Frontend Today tab: session type header should show "Dynamic Effort Upper"
+      4. Frontend Log tab: session type should show "Dynamic Effort Upper" (not "ME Upper" default)
+      All three tabs must show identical session type.

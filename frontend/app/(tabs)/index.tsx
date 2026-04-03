@@ -154,7 +154,16 @@ export default function Dashboard() {
   const phase         = getPhase(week);
   const deload        = isDeloadWeek(week);
   const todayName     = getTodayDayName();
-  const isRestDay     = todaySession?.sessionType === 'Off';
+
+  // Use API session type as primary source of truth (matches Today & Log tabs)
+  // Fall back to local programData.ts session if no API plan exists
+  // Only override when BOTH apiSessionType and todaySession exist (null-safe)
+  const apiSessionType = programSession?.session?.sessionType;
+  const displaySession = (apiSessionType && todaySession)
+    ? { ...todaySession, sessionType: apiSessionType }
+    : todaySession;
+
+  const isRestDay     = displaySession?.sessionType === 'Off';
   const units         = profile.units || 'lbs';
   const { start: blockStart, end: blockEnd } = getBlockWeekRange(block);
   const blockProgress = Math.min((week - blockStart) / (blockEnd - blockStart + 1), 1);
@@ -204,21 +213,21 @@ export default function Dashboard() {
         </View>
 
         {/* ── TODAY'S SESSION CTA ── */}
-        {!isRestDay && todaySession ? (
+        {!isRestDay && displaySession ? (
           <View style={s.sessionCtaCard}>
             <View style={s.sessionCtaTop}>
               {(() => {
-                const sc = getSessionStyle(todaySession.sessionType);
+                const sc = getSessionStyle(displaySession.sessionType);
                 return (
                   <View style={[s.sessionTypeBadge, { backgroundColor: sc.bg, borderColor: sc.borderColor }]}>
-                    <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>{todaySession.sessionType}</Text>
+                    <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>{displaySession.sessionType}</Text>
                   </View>
                 );
               })()}
               <Text style={s.sessionCtaDayLabel}>{todayName}</Text>
             </View>
-            <Text style={s.sessionCtaLift}>{todaySession.mainLift}</Text>
-            <Text style={s.sessionCtaScheme}>{todaySession.topSetScheme}</Text>
+            <Text style={s.sessionCtaLift}>{displaySession.mainLift}</Text>
+            <Text style={s.sessionCtaScheme}>{displaySession.topSetScheme}</Text>
             <TouchableOpacity
               testID="today-session-card"
               style={s.startBtn}
@@ -255,17 +264,17 @@ export default function Dashboard() {
         )}
 
         {/* Today's Session Card */}
-        {todaySession && todaySession.sessionType !== 'Off' && (
+        {displaySession && displaySession.sessionType !== 'Off' && (
           <TouchableOpacity testID="today-session-card" style={s.sessionCard} onPress={() => router.push('/(tabs)/today')}>
             {(() => {
-              const sc = getSessionStyle(todaySession.sessionType);
+              const sc = getSessionStyle(displaySession.sessionType);
               return (
                 <>
                   <View style={[s.sessionBadge, { backgroundColor: sc.bg }]}>
-                    <Text style={[s.sessionBadgeText, { color: sc.text }]}>{todaySession.sessionType}</Text>
+                    <Text style={[s.sessionBadgeText, { color: sc.text }]}>{displaySession.sessionType}</Text>
                   </View>
-                  <Text style={s.sessionLift}>{todaySession.mainLift}</Text>
-                  <Text style={s.sessionScheme}>{todaySession.topSetScheme}</Text>
+                  <Text style={s.sessionLift}>{displaySession.mainLift}</Text>
+                  <Text style={s.sessionScheme}>{displaySession.topSetScheme}</Text>
                   <View style={s.sessionFooter}>
                     <Text style={s.sessionDay}>{todayName}</Text>
                     <Text style={s.sessionArrow}>View Full Session →</Text>
@@ -275,7 +284,7 @@ export default function Dashboard() {
             })()}
           </TouchableOpacity>
         )}
-        {todaySession?.sessionType === 'Off' && (
+        {displaySession?.sessionType === 'Off' && (
           <View style={s.offCard}>
             <Text style={s.offText}>☀️ Rest Day — Sunday is off. Let the adaptation happen.</Text>
           </View>
