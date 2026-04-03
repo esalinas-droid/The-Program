@@ -14,6 +14,18 @@ export interface AthleteProfile {
   onboardingComplete: boolean;
   notifications: NotificationSettings;
   loseitConnected: boolean;
+  // Extended onboarding / coaching intelligence fields
+  goal?: string;
+  primaryWeaknesses?: string[];
+  specialtyEquipment?: string[];
+  sleepHours?: number;
+  stressLevel?: string;
+  occupationType?: string;
+  hasCompetition?: boolean;
+  competitionDate?: string;
+  competitionType?: string;
+  gymTypes?: string[];
+  trainingDaysCount?: number;
 }
 
 export interface NotificationSettings {

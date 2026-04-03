@@ -134,3 +134,20 @@ export const substitutionApi = {
     return api(`/substitutions${qs}`);
   },
 };
+
+// Injury sync / plan intelligence
+export interface InjuryPreviewResult {
+  addedInjuries: string[];
+  removedInjuries: string[];
+  exercisesRestricted: { name: string; category: string; reason: string }[];
+  exercisesRestored: { name: string; category: string; reason: string }[];
+  hasChanges: boolean;
+  summary: string;
+}
+
+export const planApi = {
+  injuryPreview: (newInjuryFlags: string[]): Promise<InjuryPreviewResult> =>
+    api('/plan/injury-preview', { method: 'POST', body: JSON.stringify({ newInjuryFlags }) }),
+  applyInjuryUpdate: (newInjuryFlags: string[]): Promise<{ success: boolean; message: string; added: string[]; removed: string[] }> =>
+    api('/plan/apply-injury-update', { method: 'POST', body: JSON.stringify({ newInjuryFlags }) }),
+};

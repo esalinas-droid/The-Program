@@ -104,10 +104,14 @@
 
 user_problem_statement: >
   Build a mobile-first strength training app "The Program" for advanced athletes using the conjugate method.
-  React Native/Expo frontend, FastAPI+MongoDB backend. 
-  Current session: Fix 5 identified issues (server.py duplicates, missing api.ts exports, 
-  missing StatBox in index.tsx, double loadAll in track.tsx, today.tsx finish navigation) 
-  and build Post-Workout Review screen (review.tsx).
+  React Native/Expo frontend, FastAPI+MongoDB backend.
+  Current session focus: (1) Overhaul onboarding-intake.tsx with 11 comprehensive steps including
+  Bodyweight, Primary Weaknesses, Specialty Equipment, Recovery Profile, and Gym+Competition steps.
+  (2) Make settings.tsx editable (Athlete profile, injury flags, weaknesses).
+  (3) Implement injury sync confirmation flow: edit injuries → preview exercise impact → Accept/Cancel modal.
+  New backend endpoints: POST /api/plan/injury-preview and POST /api/plan/apply-injury-update.
+  New profile fields in AthleteProfile: goal, primaryWeaknesses, specialtyEquipment, sleepHours,
+  stressLevel, occupationType, hasCompetition, competitionDate, competitionType, gymTypes, trainingDaysCount.
 
 backend:
   - task: "Clean server.py — remove duplicate program_router import and include_router calls"
@@ -286,7 +290,56 @@ agent_communication:
 
   - agent: "main"
     message: >
-      CRITICAL FIX: Session type synchronization bug across Home, Today, and Log tabs.
+      NEW SESSION: Enhanced Onboarding + Editable Settings + Injury Sync Flow.
+      
+      BACKEND CHANGES (server.py):
+      1. AthleteProfile model expanded with 11 new fields:
+         goal, primaryWeaknesses, specialtyEquipment, sleepHours, stressLevel,
+         occupationType, hasCompetition, competitionDate, competitionType, gymTypes, trainingDaysCount
+      2. AthleteProfileUpdate model expanded with same 11 fields (all Optional).
+      3. NEW: POST /api/plan/injury-preview — returns exercises restricted/restored for given injury flags
+      4. NEW: POST /api/plan/apply-injury-update — saves new injuryFlags to MongoDB + logs to substitutions
+      5. Helper: _build_injury_keywords() and _EXERCISE_CONTRAINDICATIONS list (32 exercises mapped)
+      
+      FRONTEND CHANGES:
+      1. onboarding-intake.tsx — COMPLETELY REWRITTEN (11 steps from 7):
+         Step 1: Goal (6 options)
+         Step 2: Experience (4 options with detail)
+         Step 3: Current Lifts (expanded with Strongman lifts for Strongman goal)
+         Step 4: NEW — Bodyweight + 12-week goal
+         Step 5: Training Frequency (3/4/5/6 days)
+         Step 6: NEW — Primary Weaknesses (17 options, multi-select)
+         Step 7: NEW — Specialty Equipment (17 options, multi-select)
+         Step 8: Injuries (22 options incl. None)
+         Step 9: NEW — Recovery Profile (sleep/stress/occupation)
+         Step 10: NEW — Gym Types + Competition calendar (combined)
+         Step 11: Upload (optional)
+         handleComplete now also calls profileApi.update() to sync all new fields to MongoDB
+      
+      2. settings.tsx — COMPLETELY REWRITTEN with edit mode:
+         - Pencil icon enters edit mode
+         - Editable: Name (TextInput), Body Weight (TextInput), Experience (chip selector)
+         - Editable: Injury Flags (remove X + Add modal)
+         - Editable: Weaknesses/Targets (remove X + Add modal)
+         - Injury sync flow: if injuries change → calls POST /api/plan/injury-preview
+           → shows full preview modal with restricted/restored exercises → requires Accept
+         - Cancel/Save bar floating at bottom in edit mode
+         - New sections: WEAKNESSES & TARGETS, shows Goal field
+      
+      3. src/types/index.ts — AthleteProfile interface expanded with 11 new optional fields
+      4. src/utils/api.ts — Added InjuryPreviewResult interface and planApi object
+      
+      Please test:
+      1. Backend: POST /api/plan/injury-preview with {"newInjuryFlags": ["Knee (general)", "Lower Back / Lumbar"]}
+         → should return restricted/restored exercises list
+      2. Backend: POST /api/plan/apply-injury-update with {"newInjuryFlags": ["Knee (general)"]}
+         → should update MongoDB profile injuryFlags and log to substitutions
+      3. Backend: PUT /api/profile with new fields (primaryWeaknesses, specialtyEquipment, sleepHours etc)
+         → should save all fields to MongoDB
+      4. Backend: GET /api/profile → verify new fields appear in response
+      5. Frontend: Navigate to /onboarding-intake → should show 11 steps (1 of 11 counter)
+      6. Frontend: Navigate to /settings → should show pencil edit icon, injury flags in red chips,
+         weaknesses in gold chips, Goal field in Athlete section
       
       Root Cause: The backend plan_generator was assigning dayNumbers 1-4 sequentially (for a 4-day split),
       but Friday = weekday()+1 = 5. The get_today_session endpoint found no match for dayNumber=5 and 

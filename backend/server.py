@@ -65,6 +65,18 @@ class AthleteProfile(BaseDocument):
         "deloadAlert": True, "prAlert": True, "weeklyCheckin": True
     }
     loseitConnected: bool = False
+    # Extended onboarding / coaching intelligence fields
+    goal: str = "strength"
+    primaryWeaknesses: List[str] = []
+    specialtyEquipment: List[str] = []
+    sleepHours: float = 7.0
+    stressLevel: str = "moderate"
+    occupationType: str = "sedentary"
+    hasCompetition: bool = False
+    competitionDate: Optional[str] = None
+    competitionType: Optional[str] = None
+    gymTypes: List[str] = []
+    trainingDaysCount: int = 4
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -84,6 +96,18 @@ class AthleteProfileUpdate(BaseModel):
     onboardingComplete: Optional[bool] = None
     notifications: Optional[dict] = None
     loseitConnected: Optional[bool] = None
+    # Extended onboarding / coaching intelligence fields
+    goal: Optional[str] = None
+    primaryWeaknesses: Optional[List[str]] = None
+    specialtyEquipment: Optional[List[str]] = None
+    sleepHours: Optional[float] = None
+    stressLevel: Optional[str] = None
+    occupationType: Optional[str] = None
+    hasCompetition: Optional[bool] = None
+    competitionDate: Optional[str] = None
+    competitionType: Optional[str] = None
+    gymTypes: Optional[List[str]] = None
+    trainingDaysCount: Optional[int] = None
 
 class WorkoutLogEntry(BaseDocument):
     date: str
@@ -186,6 +210,154 @@ async def update_profile(profile: AthleteProfileUpdate):
     await db.profile.update_one({"_id": existing["_id"]}, {"$set": data})
     doc = await db.profile.find_one({"_id": existing["_id"]})
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+
+# ── Injury Intelligence ───────────────────────────────────────────────────────
+
+def _build_injury_keywords(injuries: list) -> set:
+    keywords = set()
+    for inj in injuries:
+        inj_lower = inj.lower()
+        if "knee" in inj_lower:
+            keywords.add("knee_moderate")
+            if "severe" in inj_lower: keywords.add("knee_severe")
+        if "back" in inj_lower or "lumbar" in inj_lower:
+            keywords.add("low_back_moderate")
+            if "severe" in inj_lower: keywords.add("low_back_severe")
+        if "hamstring" in inj_lower or "bicep femoris" in inj_lower:
+            keywords.add("hamstring_moderate")
+            if "severe" in inj_lower: keywords.add("hamstring_severe")
+        if "shoulder" in inj_lower or "rotator" in inj_lower:
+            keywords.add("shoulder_moderate")
+            if "severe" in inj_lower: keywords.add("shoulder_severe")
+        if "elbow" in inj_lower or "tricep" in inj_lower or "bicep" in inj_lower:
+            keywords.add("elbow_severe")
+        if "wrist" in inj_lower: keywords.add("wrist_severe")
+        if "hip" in inj_lower or "groin" in inj_lower: keywords.add("hip_moderate")
+        if "nerve" in inj_lower or "sciatica" in inj_lower: keywords.add("low_back_moderate")
+    keywords.discard("")
+    return keywords
+
+_EXERCISE_CONTRAINDICATIONS = [
+    {"name": "SSB Box Squat",              "contra": ["knee_severe"],                               "cat": "ME Lower"},
+    {"name": "Speed Box Squat",            "contra": ["knee_severe"],                               "cat": "DE Lower"},
+    {"name": "Pause Back Squat",           "contra": ["knee_moderate"],                             "cat": "ME Lower"},
+    {"name": "Belt Squat",                 "contra": [],                                            "cat": "ME Lower"},
+    {"name": "Conventional Deadlift",      "contra": ["low_back_severe", "hamstring_severe"],       "cat": "ME Lower"},
+    {"name": "Sumo Deadlift",              "contra": ["hip_moderate", "low_back_severe"],           "cat": "ME Lower"},
+    {"name": "Trap Bar Deadlift",          "contra": ["low_back_moderate"],                         "cat": "ME Lower"},
+    {"name": "Romanian Deadlift (RDL)",    "contra": ["hamstring_severe"],                          "cat": "ME Lower"},
+    {"name": "Good Morning",               "contra": ["low_back_severe"],                           "cat": "ME Lower"},
+    {"name": "Block Pull",                 "contra": [],                                            "cat": "ME Lower"},
+    {"name": "Speed Deadlift",             "contra": ["low_back_severe"],                           "cat": "DE Lower"},
+    {"name": "Leg Press",                  "contra": ["knee_moderate"],                             "cat": "Accessory"},
+    {"name": "Glute-Ham Raise (GHR)",      "contra": ["knee_severe", "hamstring_severe"],           "cat": "Accessory"},
+    {"name": "Lying Leg Curl",             "contra": ["hamstring_severe"],                          "cat": "Accessory"},
+    {"name": "Standing Leg Curl",          "contra": ["hamstring_severe"],                          "cat": "Accessory"},
+    {"name": "Floor Press",                "contra": ["shoulder_severe"],                           "cat": "ME Upper"},
+    {"name": "Close-Grip Bench Press",     "contra": ["shoulder_moderate", "elbow_severe"],         "cat": "ME Upper"},
+    {"name": "JM Press",                   "contra": ["elbow_severe"],                              "cat": "ME Upper"},
+    {"name": "Speed Bench Press",          "contra": ["shoulder_severe"],                           "cat": "DE Upper"},
+    {"name": "Overhead Press (Barbell)",   "contra": ["shoulder_severe"],                           "cat": "ME Upper"},
+    {"name": "Log Clean and Press",        "contra": ["shoulder_severe", "elbow_severe"],           "cat": "ME Upper / Strongman"},
+    {"name": "Axle Press",                 "contra": ["shoulder_severe", "wrist_severe"],           "cat": "ME Upper / Strongman"},
+    {"name": "Pendlay Row",                "contra": ["low_back_severe"],                           "cat": "Supplemental"},
+    {"name": "Lat Pulldown",               "contra": ["shoulder_severe"],                           "cat": "Supplemental"},
+    {"name": "Ab Wheel Rollout",           "contra": ["low_back_severe"],                           "cat": "Accessory"},
+    {"name": "Tricep Pushdown",            "contra": ["elbow_severe"],                              "cat": "Accessory"},
+    {"name": "Skull Crusher / EZ Bar",     "contra": ["elbow_severe"],                              "cat": "Accessory"},
+    {"name": "Tate Press",                 "contra": ["elbow_severe"],                              "cat": "Accessory"},
+    {"name": "Farmer Carry",               "contra": ["wrist_severe"],                              "cat": "GPP / Strongman"},
+    {"name": "Zercher Carry",              "contra": ["elbow_severe", "low_back_severe"],           "cat": "GPP / Strongman"},
+    {"name": "Yoke Carry",                 "contra": ["low_back_severe"],                           "cat": "GPP / Strongman"},
+    {"name": "Stone to Shoulder",          "contra": ["low_back_severe", "shoulder_severe", "hip_moderate"], "cat": "Strongman"},
+    {"name": "Keg Toss",                   "contra": ["shoulder_severe", "low_back_severe"],        "cat": "Strongman"},
+]
+
+@api_router.post("/plan/injury-preview")
+async def injury_preview(body: dict):
+    """Preview how changing injury flags would affect the training program."""
+    new_injuries = body.get("newInjuryFlags", [])
+    profile = await db.profile.find_one({})
+    current_injuries = profile.get("injuryFlags", []) if profile else []
+
+    old_kw = _build_injury_keywords(current_injuries)
+    new_kw = _build_injury_keywords(new_injuries)
+
+    added_inj   = [i for i in new_injuries    if i not in current_injuries]
+    removed_inj = [i for i in current_injuries if i not in new_injuries]
+
+    restricted = []
+    restored   = []
+    for ex in _EXERCISE_CONTRAINDICATIONS:
+        was_blocked = any(c in old_kw for c in ex["contra"])
+        is_blocked  = any(c in new_kw for c in ex["contra"])
+        if not was_blocked and is_blocked:
+            trigger = next(
+                (inj for inj in added_inj
+                 if any(c in _build_injury_keywords([inj]) for c in ex["contra"])),
+                "new injury"
+            )
+            restricted.append({"name": ex["name"], "category": ex["cat"], "reason": f"Restricted by: {trigger}"})
+        elif was_blocked and not is_blocked:
+            restored.append({"name": ex["name"], "category": ex["cat"], "reason": "Injury resolved — exercise restored"})
+
+    parts = []
+    if added_inj:   parts.append(f"{len(added_inj)} injury flag(s) added")
+    if removed_inj: parts.append(f"{len(removed_inj)} injury flag(s) resolved")
+    if restricted:  parts.append(f"{len(restricted)} exercise(s) restricted")
+    if restored:    parts.append(f"{len(restored)} exercise(s) restored")
+
+    return {
+        "addedInjuries":        added_inj,
+        "removedInjuries":      removed_inj,
+        "exercisesRestricted":  restricted,
+        "exercisesRestored":    restored,
+        "hasChanges":           bool(added_inj or removed_inj),
+        "summary":              ". ".join(parts) + "." if parts else "No changes detected.",
+    }
+
+
+@api_router.post("/plan/apply-injury-update")
+async def apply_injury_update(body: dict):
+    """Save accepted injury flag changes to the athlete profile and log the change."""
+    new_injuries = body.get("newInjuryFlags", [])
+    profile = await db.profile.find_one({})
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+
+    old_injuries = profile.get("injuryFlags", [])
+    added   = [i for i in new_injuries   if i not in old_injuries]
+    removed = [i for i in old_injuries   if i not in new_injuries]
+
+    await db.profile.update_one(
+        {"_id": profile["_id"]},
+        {"$set": {"injuryFlags": new_injuries, "updatedAt": datetime.now(timezone.utc)}}
+    )
+
+    reason_parts = []
+    if added:   reason_parts.append(f"Added: {', '.join(added)}")
+    if removed: reason_parts.append(f"Resolved: {', '.join(removed)}")
+    reason = "User accepted injury update. " + ". ".join(reason_parts)
+
+    from datetime import datetime as _dt
+    change_doc = {
+        "date": _dt.now(timezone.utc).strftime("%Y-%m-%d"),
+        "week": profile.get("currentWeek", 1),
+        "day": "Profile",
+        "sessionType": "Profile Update",
+        "originalExercise": f"Injury Flags: {', '.join(old_injuries) or 'None'}",
+        "replacementExercise": f"Injury Flags: {', '.join(new_injuries) or 'None'}",
+        "reason": reason.strip(),
+    }
+    await db.substitutions.insert_one(change_doc)
+
+    return {
+        "success": True,
+        "message": "Injury flags updated. Your program will adapt to new restrictions.",
+        "added":   added,
+        "removed": removed,
+    }
+
 
 # ── Workout Log Endpoints ─────────────────────────────────────────────────────
 @api_router.get("/log")
