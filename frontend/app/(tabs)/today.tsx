@@ -9,7 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { substitutionApi, programApi } from '../../src/utils/api';
-import { getProgramSession, getTodayDayName } from '../../src/data/programData';
+import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getBlock } from '../../src/utils/calculations';
 import {
   ADJUST_REASONS, REASON_ICONS, AdjustReason, Alternative,
@@ -125,6 +125,70 @@ const EXERCISES: Exercise[] = [
     ],
   },
 ];
+
+// ── Build Exercise list from local programData (offline fallback) ──────────────
+function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[] {
+  if (!session || session.sessionType === 'Off') return EXERCISES;
+  const hasMainLift = !!session.mainLift && session.mainLift !== 'Rest Day';
+  const exs: Exercise[] = [];
+
+  if (hasMainLift) {
+    const schemeMatch = session.topSetScheme.match(/^(\d+)[×x](\S+)/);
+    const setCount = schemeMatch ? parseInt(schemeMatch[1]) : 4;
+    const reps = schemeMatch ? schemeMatch[2].replace(/@.*$/, '').trim() : '3';
+    const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
+    const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
+    const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
+    exs.push({
+      id: 'local-main',
+      name: liftName,
+      category: 'maxeffort' as ExCategory,
+      prescription: session.topSetScheme,
+      lastSession: '—',
+      cues: [],
+      notes: session.coachingNotes || '',
+      sets: Array.from({ length: setCount }, (_, i) => ({
+        id: `local-main-s${i}`,
+        type: 'work' as SetType,
+        weight,
+        reps,
+        label: 'Work',
+      })),
+    });
+  }
+
+  (session.supplementalWork || []).forEach((sup, idx) => {
+    const m = sup.match(/^(.+?)\s+(\d+)[×x]([\d\-]+)/);
+    if (!m) return;
+    exs.push({
+      id: `local-sup-${idx}`,
+      name: m[1].trim(),
+      category: 'supplemental' as ExCategory,
+      prescription: `${m[2]}×${m[3]}`,
+      lastSession: '—', cues: [], notes: '',
+      sets: Array.from({ length: parseInt(m[2]) }, (_, i) => ({
+        id: `local-sup-${idx}-s${i}`, type: 'work' as SetType, weight: 0, reps: m[3], label: 'Work',
+      })),
+    });
+  });
+
+  (session.accessories || []).forEach((acc, idx) => {
+    const m = acc.match(/^(.+?)\s+(\d+)[×x]([\d\-]+)/);
+    if (!m) return;
+    exs.push({
+      id: `local-acc-${idx}`,
+      name: m[1].trim(),
+      category: 'accessory' as ExCategory,
+      prescription: `${m[2]}×${m[3]}`,
+      lastSession: '—', cues: [], notes: '',
+      sets: Array.from({ length: parseInt(m[2]) }, (_, i) => ({
+        id: `local-acc-${idx}-s${i}`, type: 'work' as SetType, weight: 0, reps: m[3], label: 'Work',
+      })),
+    });
+  });
+
+  return exs.length > 0 ? exs : EXERCISES;
+}
 
 // ── Build Exercise list from API session data ──────────────────────────────────
 function buildTodayExercisesFromApi(apiExercises: any[]): Exercise[] {
@@ -575,13 +639,22 @@ export default function TodayScreen() {
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
 
-  // Dynamic exercise list — populated from API, falls back to hardcoded EXERCISES
-  const [exercises, setExercises]     = useState<Exercise[]>(EXERCISES);
+  // Dynamic exercise list — initialized from local programData (correct day, instant)
+  // then overridden by API exercises when the plan loads
+  const [exercises, setExercises] = useState<Exercise[]>(() => {
+    const s = getTodaySession(1);
+    return buildTodayExercisesFromLocal(s);
+  });
 
   // Exercise interaction
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
   const [painSets, setPainSets]       = useState<Set<string>>(new Set());
-  const [expanded, setExpanded]       = useState<Set<string>>(new Set(['floor-press']));
+  const [expanded, setExpanded]       = useState<Set<string>>(() => {
+    // Default expand the first exercise based on local data
+    const s = getTodaySession(1);
+    const exs = buildTodayExercisesFromLocal(s);
+    return new Set([exs[0]?.id || 'local-main']);
+  });
   const [swaps, setSwaps]             = useState<SwapMap>({});
   const [warmupExpanded, setWarmupExpanded] = useState(false);
 
@@ -857,7 +930,7 @@ export default function TodayScreen() {
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
         {/* ── EXERCISE CARDS ── */}
-        {EXERCISES.map(ex => (
+        {exercises.map(ex => (
           <ExerciseCard
             key={ex.id}
             exercise={ex}
