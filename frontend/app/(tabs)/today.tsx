@@ -126,6 +126,31 @@ const EXERCISES: Exercise[] = [
   },
 ];
 
+// ── Build Exercise list from API session data ──────────────────────────────────
+function buildTodayExercisesFromApi(apiExercises: any[]): Exercise[] {
+  if (!apiExercises?.length) return EXERCISES;
+  return apiExercises
+    .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+    .map((ex: any, idx: number) => ({
+      id: ex.sessionExerciseId || `api-ex-${idx}`,
+      name: ex.name || 'Exercise',
+      category: (ex.category === 'main' ? 'maxeffort'
+               : ex.category === 'supplemental' ? 'supplemental'
+               : 'accessory') as ExCategory,
+      prescription: ex.prescription || '',
+      lastSession: ex.lastPerformance || ex.recentBest || '—',
+      cues: ex.cues || [],
+      notes: ex.notes || '',
+      sets: (ex.targetSets || []).map((s: any, si: number) => ({
+        id: `${ex.sessionExerciseId || idx}-s${si}`,
+        type: (s.setType === 'warmup' ? 'warmup' : 'work') as SetType,
+        weight: parseFloat(s.targetLoad) || 0,
+        reps: s.targetReps || '3',
+        label: s.setType === 'warmup' ? 'Warm-Up' : 'Work',
+      })),
+    }));
+}
+
 const WARMUP_STEPS = [
   { name: 'Band Pull-Aparts',      sets: '3 × 20',       note: 'Light band, scapular retraction focus' },
   { name: 'Shoulder Dislocates',   sets: '3 × 10',       note: 'Dowel or light band, full ROM' },
@@ -550,6 +575,9 @@ export default function TodayScreen() {
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
 
+  // Dynamic exercise list — populated from API, falls back to hardcoded EXERCISES
+  const [exercises, setExercises]     = useState<Exercise[]>(EXERCISES);
+
   // Exercise interaction
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
   const [painSets, setPainSets]       = useState<Set<string>>(new Set());
@@ -580,11 +608,17 @@ export default function TodayScreen() {
       const sess = getProgramSession(w, day);
       setTodaySession(sess);
 
-      // Try AI-generated session from program API (graceful fallback)
+      // Load exercises from API — override hardcoded EXERCISES with plan-generated ones
       try {
         const session = await programApi.getTodaySession();
         setApiSession(session);
-      } catch { /* No AI plan yet — use local data */ }
+        const apiExs = buildTodayExercisesFromApi(session?.session?.exercises);
+        if (apiExs.length > 0) {
+          setExercises(apiExs);
+          // Expand only the first exercise by default
+          setExpanded(new Set([apiExs[0].id]));
+        }
+      } catch { /* No AI plan yet — keep hardcoded EXERCISES */ }
 
       setLoading(false);
     })();
@@ -601,7 +635,7 @@ export default function TodayScreen() {
   }, [timerRunning]);
 
   // ── Computed values ──────────────────────────────────────────────────────────
-  const totalSets   = EXERCISES.reduce((sum, ex) => sum + ex.sets.length, 0);
+  const totalSets   = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
   const loggedCount = loggedSets.size;
   const progressPct = totalSets > 0 ? (loggedCount / totalSets) * 100 : 0;
   const canFinish   = progressPct >= 50;

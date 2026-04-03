@@ -167,6 +167,95 @@ const INITIAL_EXERCISES: ExerciseLog[] = [
   },
 ];
 
+// ── Build ExerciseLogs from API session exercises ──────────────────────────────
+function buildFromApi(apiExercises: any[]): ExerciseLog[] {
+  if (!apiExercises?.length) return [];
+  return apiExercises
+    .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+    .map((ex: any, idx: number) => {
+      const sets: SetData[] = (ex.targetSets || []).map((s: any, si: number) => {
+        const weight = parseFloat(s.targetLoad) || 0;
+        return mkSet(
+          `${ex.sessionExerciseId || idx}-s${si}`,
+          s.setType === 'warmup' ? 'warmup' : 'work',
+          weight,
+          s.targetReps || '3'
+        );
+      });
+      return {
+        id: ex.sessionExerciseId || `api-ex-${idx}`,
+        name: ex.name || 'Exercise',
+        prescription: ex.prescription || '',
+        lastRef: ex.lastPerformance || ex.recentBest || '—',
+        expanded: idx === 0,
+        notes: ex.notes || '',
+        notesExpanded: false,
+        sets,
+        history: [],
+      } as ExerciseLog;
+    });
+}
+
+// ── Build ExerciseLogs from local programData session (offline fallback) ───────
+function parseExStr(str: string): { name: string; prescription: string; setCount: number; reps: string } {
+  const m = str.match(/^(.+?)\s+(\d+)[×x]([\d\-]+)/);
+  if (m) return { name: m[1].trim(), prescription: `${m[2]}×${m[3]}`, setCount: parseInt(m[2]), reps: m[3] };
+  return { name: str, prescription: str, setCount: 3, reps: '10' };
+}
+
+function buildFromLocal(session: import('../../src/types').ProgramSession): ExerciseLog[] {
+  if (!session || session.sessionType === 'Off') return [];
+  const exs: ExerciseLog[] = [];
+
+  // Main lift — parse "9×3 @ 112lbs" or "Work to 1RM; ..." format
+  const schemeMatch = session.topSetScheme.match(/^(\d+)[×x](\S+)/);
+  const setCount = schemeMatch ? parseInt(schemeMatch[1]) : 4;
+  const reps = schemeMatch ? schemeMatch[2].replace(/@.*$/, '').trim() : '3';
+  const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
+  const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
+  const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
+
+  exs.push({
+    id: 'main-lift',
+    name: liftName,
+    prescription: session.topSetScheme,
+    lastRef: '—',
+    expanded: true,
+    notes: session.coachingNotes || '',
+    notesExpanded: false,
+    sets: Array.from({ length: setCount }, (_, i) =>
+      mkSet(`main-w-${i}`, 'work', weight, reps)
+    ),
+    history: [],
+  });
+
+  // Supplemental
+  (session.supplementalWork || []).forEach((sup, idx) => {
+    const { name, prescription, setCount: sc, reps: r } = parseExStr(sup);
+    exs.push({
+      id: `sup-${idx}`,
+      name, prescription,
+      lastRef: '—', expanded: false, notes: '', notesExpanded: false,
+      sets: Array.from({ length: Math.min(sc, 8) }, (_, i) => mkSet(`sup-${idx}-${i}`, 'work', 0, r)),
+      history: [],
+    });
+  });
+
+  // Accessories
+  (session.accessories || []).forEach((acc, idx) => {
+    const { name, prescription, setCount: sc, reps: r } = parseExStr(acc);
+    exs.push({
+      id: `acc-${idx}`,
+      name, prescription,
+      lastRef: '—', expanded: false, notes: '', notesExpanded: false,
+      sets: Array.from({ length: Math.min(sc, 6) }, (_, i) => mkSet(`acc-${idx}-${i}`, 'work', 0, r)),
+      history: [],
+    });
+  });
+
+  return exs;
+}
+
 const REST_OPTIONS = [60, 90, 120, 180, 300];
 const PAIN_LABELS  = ['None', 'Aware', 'Mild', 'Modify', 'Stop'];
 const PAIN_COLORS  = [TEAL, '#AED6F1', AMBER, '#E67E22', '#EF5350'];
@@ -718,16 +807,20 @@ export default function LogScreen() {
       const week = prof?.currentWeek || 1;
       setWeek(week);
 
-      // Set initial session type from local conjugate schedule (instant, no network needed)
+      // Immediately populate from local conjugate schedule (instant, offline-ready)
       const localSession = getTodaySession(week);
       setSessionType(localSession.sessionType);
+      const localExs = buildFromLocal(localSession);
+      if (localExs.length > 0) setExercises(localExs);
 
-      // Sync session type to today's program plan (overrides local if plan exists)
+      // Override with real generated plan exercises from backend
       try {
         const todayData = await programApi.getTodaySession();
         if (todayData?.session?.sessionType) {
           setSessionType(todayData.session.sessionType);
         }
+        const apiExs = buildFromApi(todayData?.session?.exercises);
+        if (apiExs.length > 0) setExercises(apiExs);
       } catch { /* Keep local data */ }
 
       setLoading(false);
