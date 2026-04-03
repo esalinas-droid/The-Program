@@ -1,4 +1,12 @@
 from routers.program import program_router, _store as _prog_store, DEFAULT_USER as _PROG_USER, _id as _prog_id
+from models.schemas import (
+    IntakeRequest as _IntakeRequest,
+    CurrentLifts as _CurrentLifts,
+    ChangeTrigger as _ChangeTrigger,
+    ChangeScope as _ChangeScope,
+    ProgramChange as _ProgramChange,
+)
+from services.plan_generator import generate_plan as _generate_plan
 from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -832,6 +840,46 @@ async def delete_conversation(conversation_id: str):
     return {"deleted": True}
 
 
+async def _ensure_plan_loaded() -> bool:
+    """Reload plan into _prog_store from MongoDB profile if not present after a server restart."""
+    if _prog_store["plans"].get(_PROG_USER):
+        return True
+
+    profile_doc = await db.profile.find_one({})
+    if not profile_doc:
+        return False
+
+    try:
+        base_prs = profile_doc.get('basePRs') or {}
+        lifts = _CurrentLifts(
+            squat=base_prs.get('backSquat') or base_prs.get('squat'),
+            bench=base_prs.get('benchPress') or base_prs.get('bench'),
+            deadlift=base_prs.get('axleDeadlift') or base_prs.get('deadlift'),
+        )
+        exp_raw = (profile_doc.get('experience') or 'intermediate').lower().strip()
+        exp_map = {'advanced': 'advanced', 'elite': 'elite', 'beginner': 'beginner', 'novice': 'beginner'}
+        experience = exp_map.get(exp_raw.split()[0], 'intermediate')
+
+        intake = _IntakeRequest(
+            goal=profile_doc.get('trainingGoal') or 'strength',
+            experience=experience,
+            lifts=lifts,
+            liftUnit=profile_doc.get('units') or 'lbs',
+            frequency=int(profile_doc.get('trainingDays') or 4),
+            injuries=[i for i in (profile_doc.get('injuryFlags') or []) if i and i != 'None'],
+            gym=profile_doc.get('gymTypes') or [],
+            bodyweight=profile_doc.get('currentBodyweight') or None,
+        )
+        plan = _generate_plan(intake)
+        plan.userId = _PROG_USER
+        _prog_store["plans"][_PROG_USER] = plan
+        logger.info(f"Plan reloaded into memory from MongoDB profile: {plan.planName}")
+        return True
+    except Exception as e:
+        logger.warning(f"Plan regeneration failed: {e}")
+        return False
+
+
 class ApplyRecommendationRequest(BaseModel):
     conversation_id: str
     summary: str
@@ -850,31 +898,41 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
     week = profile.get("currentWeek", 1) if profile else 1
     now = datetime.now(timezone.utc)
 
+    # ── Ensure plan is in memory (reload from MongoDB profile if server restarted) ──
+    plan_available = await _ensure_plan_loaded()
+
     # ── Apply exercise swaps to the active in-memory plan ────────────────────
     total_swapped = 0
     changes_applied = []
 
-    if body.exercises:
+    if body.exercises and plan_available:
         plan = _prog_store["plans"].get(_PROG_USER)
         if plan:
-            from models.schemas import ProgramChange, ChangeTrigger, ChangeScope
             for swap in body.exercises:
-                original_raw = swap.get("original", "").strip()
-                replacement = swap.get("replacement", "").strip()
-                reason = swap.get("reason", body.summary)
+                original_raw = (swap.get("original") or "").strip()
+                replacement = (swap.get("replacement") or "").strip()
+                reason = (swap.get("reason") or body.summary or "coach recommendation").strip()
                 if not original_raw or not replacement:
                     continue
+
                 original_lower = original_raw.lower()
+                # Fuzzy keywords: full phrase + individual words > 3 chars
+                keywords = [original_lower] + [w for w in original_lower.split() if len(w) > 3]
 
                 session_count = 0
                 for phase in plan.phases:
                     for block in phase.blocks:
                         for week_obj in block.weeks:
                             for session in week_obj.sessions:
-                                for ex in session.sessionExercises:
-                                    if original_lower in ex.exerciseName.lower():
-                                        ex.exerciseName = replacement
-                                        ex.notes = f"Coach sub: {reason}" if not ex.notes else f"{ex.notes} | Coach: {reason}"
+                                for ex in session.exercises:
+                                    ex_lower = ex.name.lower()
+                                    if any(kw in ex_lower for kw in keywords):
+                                        ex.name = replacement
+                                        ex.notes = (
+                                            f"Coach sub: {reason}"
+                                            if not ex.notes
+                                            else f"{ex.notes} | Coach: {reason}"
+                                        )
                                         session_count += 1
                                         total_swapped += 1
 
@@ -884,14 +942,13 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
                         "replacement": replacement,
                         "sessions_updated": session_count,
                     })
-                    # Log to in-memory changes
-                    _prog_store["changes"].append(ProgramChange(
+                    _prog_store["changes"].append(_ProgramChange(
                         changeId=_prog_id(), userId=_PROG_USER,
-                        triggerType=ChangeTrigger.USER_REQUEST,
-                        scope=ChangeScope.YEAR,
+                        triggerType=_ChangeTrigger.USER_REQUEST,
+                        scope=_ChangeScope.YEAR,
                         oldValue=original_raw,
                         newValue=replacement,
-                        explanation=f"Applied coach recommendation: swap {original_raw} → {replacement}. Reason: {reason}",
+                        explanation=f"Coach: swap {original_raw} → {replacement}. {reason}",
                     ))
 
     # ── Always log to MongoDB substitutions ──────────────────────────────────

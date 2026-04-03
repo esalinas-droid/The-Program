@@ -304,14 +304,17 @@ export default function CoachScreen() {
           />
           <TouchableOpacity
             testID="coach-send-btn"
-            style={[s.sendBtn, (!input.trim() || loading) && s.sendBtnDisabled]}
+            style={[
+              s.sendBtn,
+              input.trim() && !loading ? s.sendBtnActive : s.sendBtnMuted,
+            ]}
             onPress={() => sendMessage(input)}
             disabled={!input.trim() || loading}
           >
             <MaterialCommunityIcons
               name="send"
               size={20}
-              color={!input.trim() || loading ? COLORS.text.muted : COLORS.primary}
+              color={input.trim() && !loading ? '#fff' : COLORS.text.muted}
             />
           </TouchableOpacity>
         </View>
@@ -459,42 +462,60 @@ const ld = StyleSheet.create({
 });
 
 // ── Inline markdown formatter ─────────────────────────────────────────────────
+// Uses split-based approach for reliable ** bold ** and * italic * rendering
 function InlineText({ text, style }: { text: string; style?: any }): React.ReactElement {
-  const parts: { content: string; bold?: boolean; italic?: boolean }[] = [];
-  const regex = /(\*\*\*[^*]+?\*\*\*|\*\*[^*]+?\*\*|\*[^*]+?\*)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  // Step 1: Split on ** to find bold/non-bold alternating segments
+  const boldSegs = text.split('**');
 
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ content: text.slice(lastIndex, match.index) });
+  if (boldSegs.length <= 1) {
+    // No ** found — handle single * italic if present
+    const italicSegs = text.split(/(?<!\*)\*(?!\*)/g);
+    if (italicSegs.length <= 1) {
+      return <Text style={style} selectable>{text}</Text>;
     }
-    const raw = match[0];
-    if (raw.startsWith('***')) {
-      parts.push({ content: raw.slice(3, -3), bold: true, italic: true });
-    } else if (raw.startsWith('**')) {
-      parts.push({ content: raw.slice(2, -2), bold: true });
-    } else {
-      parts.push({ content: raw.slice(1, -1), italic: true });
-    }
-    lastIndex = match.index + raw.length;
+    return (
+      <Text style={style} selectable>
+        {italicSegs.map((seg, i) =>
+          seg ? (
+            <Text key={i} selectable style={i % 2 === 1 ? { fontStyle: 'italic', color: COLORS.text.secondary } : undefined}>
+              {seg}
+            </Text>
+          ) : null
+        )}
+      </Text>
+    );
   }
-  if (lastIndex < text.length) parts.push({ content: text.slice(lastIndex) });
 
+  // Even indices = not bold, odd indices = bold
   return (
     <Text style={style} selectable>
-      {parts.map((part, i) => (
-        <Text
-          key={i}
-          selectable
-          style={[
-            part.bold  && { fontWeight: '700' as const, color: COLORS.accent },
-            part.italic && { fontStyle: 'italic' as const, color: COLORS.text.secondary },
-          ]}
-        >
-          {part.content}
-        </Text>
-      ))}
+      {boldSegs.map((seg, i) => {
+        if (!seg) return null;
+        if (i % 2 === 1) {
+          // Bold segment
+          return (
+            <Text key={i} selectable style={{ fontWeight: '700', color: COLORS.accent }}>
+              {seg}
+            </Text>
+          );
+        }
+        // Plain segment — check for single *italic*
+        const italicSegs = seg.split(/(?<!\*)\*(?!\*)/g);
+        if (italicSegs.length <= 1) {
+          return <Text key={i} selectable>{seg}</Text>;
+        }
+        return (
+          <Text key={i} selectable>
+            {italicSegs.map((s, j) =>
+              s ? (
+                <Text key={j} selectable style={j % 2 === 1 ? { fontStyle: 'italic', color: COLORS.text.secondary } : undefined}>
+                  {s}
+                </Text>
+              ) : null
+            )}
+          </Text>
+        );
+      })}
     </Text>
   );
 }
@@ -900,11 +921,17 @@ const s = StyleSheet.create({
   inputFocused:  { borderColor: COLORS.accent },
   sendBtn:       {
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1, borderColor: COLORS.border,
     justifyContent: 'center', alignItems: 'center',
   },
-  sendBtnDisabled: { opacity: 0.4 },
+  sendBtnActive: {
+    backgroundColor: '#C9A84C',
+    shadowColor: '#C9A84C',
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  sendBtnMuted:  { backgroundColor: '#2A2A30', opacity: 0.55 },
   successToast: {
     position: 'absolute',
     bottom: 80,
