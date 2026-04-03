@@ -23,7 +23,7 @@ const BLUE = '#5B9CF5';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
-type ExCategory  = 'maxeffort' | 'supplemental' | 'accessory' | 'prehab';
+type ExCategory  = 'maxeffort' | 'dynamiceffort' | 'supplemental' | 'accessory' | 'prehab';
 
 interface ExSet {
   id: string;
@@ -139,10 +139,13 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
     const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
     const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
     const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
+    // Determine badge: DE days get 'dynamiceffort', ME days get 'maxeffort'
+    const isDynamic = session.sessionType.toLowerCase().includes('de') ||
+                      session.sessionType.toLowerCase().includes('dynamic');
     exs.push({
       id: 'local-main',
       name: liftName,
-      category: 'maxeffort' as ExCategory,
+      category: (isDynamic ? 'dynamiceffort' : 'maxeffort') as ExCategory,
       prescription: session.topSetScheme,
       lastSession: '—',
       cues: [],
@@ -191,16 +194,22 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
 }
 
 // ── Build Exercise list from API session data ──────────────────────────────────
-function buildTodayExercisesFromApi(apiExercises: any[]): Exercise[] {
+function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): Exercise[] {
   if (!apiExercises?.length) return EXERCISES;
+  // Determine if this is a Dynamic Effort session so main lift gets the right badge
+  const isDynamic = sessionType
+    ? sessionType.toLowerCase().includes('dynamic')
+    : false;
+
   return apiExercises
     .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
     .map((ex: any, idx: number) => ({
       id: ex.sessionExerciseId || `api-ex-${idx}`,
       name: ex.name || 'Exercise',
-      category: (ex.category === 'main' ? 'maxeffort'
-               : ex.category === 'supplemental' ? 'supplemental'
-               : 'accessory') as ExCategory,
+      category: (ex.category === 'main'
+        ? (isDynamic ? 'dynamiceffort' : 'maxeffort')
+        : ex.category === 'supplemental' ? 'supplemental'
+        : 'accessory') as ExCategory,
       prescription: ex.prescription || '',
       lastSession: ex.lastPerformance || ex.recentBest || '—',
       cues: ex.cues || [],
@@ -270,12 +279,13 @@ function getSetCircleColor(type: SetType, logged: boolean): string {
 }
 
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
-  return {
-    maxeffort:    { bg: COLORS.accent + '25', text: COLORS.accent, label: 'Max Effort' },
-    supplemental: { bg: BLUE + '25',           text: BLUE,          label: 'Supplemental' },
-    accessory:    { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: 'Accessory' },
-    prehab:       { bg: TEAL + '25',            text: TEAL,          label: 'Prehab' },
-  }[cat];
+  return ({
+    maxeffort:     { bg: COLORS.accent + '25',       text: COLORS.accent,           label: 'Max Effort' },
+    dynamiceffort: { bg: BLUE + '25',                text: BLUE,                    label: 'Dynamic Effort' },
+    supplemental:  { bg: COLORS.text.muted + '25',   text: COLORS.text.secondary,   label: 'Supplemental' },
+    accessory:     { bg: COLORS.surfaceHighlight,     text: COLORS.text.secondary,   label: 'Accessory' },
+    prehab:        { bg: TEAL + '25',                text: TEAL,                    label: 'Prehab' },
+  } as Record<ExCategory, { bg: string; text: string; label: string }>)[cat] || { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: cat };
 }
 
 function formatTime(seconds: number): string {
@@ -685,13 +695,16 @@ export default function TodayScreen() {
       try {
         const session = await programApi.getTodaySession();
         setApiSession(session);
-        const apiExs = buildTodayExercisesFromApi(session?.session?.exercises);
+        const apiExs = buildTodayExercisesFromApi(
+          session?.session?.exercises,
+          session?.session?.sessionType  // pass session type so DE days get 'Dynamic Effort' badge
+        );
         if (apiExs.length > 0) {
           setExercises(apiExs);
           // Expand only the first exercise by default
           setExpanded(new Set([apiExs[0].id]));
         }
-      } catch { /* No AI plan yet — keep hardcoded EXERCISES */ }
+      } catch { /* No AI plan yet — keep local exercises */ }
 
       setLoading(false);
     })();
