@@ -1,4 +1,4 @@
-from routers.program import program_router
+from routers.program import program_router, _store as _prog_store, DEFAULT_USER as _PROG_USER, _id as _prog_id
 from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -693,9 +693,14 @@ IMPORTANT RESPONSE FORMATTING RULES:
 
 PROGRAM CHANGE DETECTION:
 If your recommendation includes a concrete change to the athlete's training program (e.g., swapping an exercise, changing volume/intensity, modifying a lift), append EXACTLY this block at the very end of your response (after all other content):
-<PROGRAM_CHANGE>{{"type": "recommendation", "summary": "brief one-sentence summary of the change", "details": "full details of what should change and why"}}</PROGRAM_CHANGE>
+<PROGRAM_CHANGE>{{"type": "exercise_swap", "exercises": [{{"original": "exact current exercise name", "replacement": "exact replacement exercise name", "reason": "short reason"}}], "summary": "one-sentence summary of the change", "details": "full explanation of what and why"}}</PROGRAM_CHANGE>
 
-Only include <PROGRAM_CHANGE> if you are explicitly recommending a specific program modification. Do not include it for general advice.
+Rules for <PROGRAM_CHANGE>:
+- "original" must be the exact exercise name as it appears in the program (e.g., "Overhead Press", "Floor Press", "Box Squat")
+- "replacement" must be a specific exercise name, not generic advice
+- If recommending multiple exercise swaps, include all of them in the "exercises" array
+- Only include <PROGRAM_CHANGE> for concrete exercise changes or load modifications — NOT for general advice
+- Do NOT include <PROGRAM_CHANGE> for stretching, sleep, or nutrition advice alone
 
 ATHLETE PROFILE:
 {profile_text}
@@ -831,6 +836,7 @@ class ApplyRecommendationRequest(BaseModel):
     conversation_id: str
     summary: str
     details: str = ""
+    exercises: List[dict] = []  # [{original, replacement, reason}]
 
 
 @api_router.post("/coach/apply-recommendation")
@@ -839,24 +845,97 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
         conv_oid = ObjectId(body.conversation_id)
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid conversation_id format")
+
     profile = await db.profile.find_one({})
     week = profile.get("currentWeek", 1) if profile else 1
     now = datetime.now(timezone.utc)
-    change_doc = {
-        "timestamp": now, "date": now.strftime("%Y-%m-%d"),
-        "week": week, "day": "Coach Recommendation",
-        "sessionType": "Program Update",
-        "originalExercise": "Coach Recommendation",
-        "replacementExercise": body.summary,
-        "reason": f"Applied from Pocket Coach: {body.details}",
-        "conversationId": body.conversation_id,
-    }
-    await db.substitutions.insert_one(change_doc)
+
+    # ── Apply exercise swaps to the active in-memory plan ────────────────────
+    total_swapped = 0
+    changes_applied = []
+
+    if body.exercises:
+        plan = _prog_store["plans"].get(_PROG_USER)
+        if plan:
+            from models.schemas import ProgramChange, ChangeTrigger, ChangeScope
+            for swap in body.exercises:
+                original_raw = swap.get("original", "").strip()
+                replacement = swap.get("replacement", "").strip()
+                reason = swap.get("reason", body.summary)
+                if not original_raw or not replacement:
+                    continue
+                original_lower = original_raw.lower()
+
+                session_count = 0
+                for phase in plan.phases:
+                    for block in phase.blocks:
+                        for week_obj in block.weeks:
+                            for session in week_obj.sessions:
+                                for ex in session.sessionExercises:
+                                    if original_lower in ex.exerciseName.lower():
+                                        ex.exerciseName = replacement
+                                        ex.notes = f"Coach sub: {reason}" if not ex.notes else f"{ex.notes} | Coach: {reason}"
+                                        session_count += 1
+                                        total_swapped += 1
+
+                if session_count > 0:
+                    changes_applied.append({
+                        "original": original_raw,
+                        "replacement": replacement,
+                        "sessions_updated": session_count,
+                    })
+                    # Log to in-memory changes
+                    _prog_store["changes"].append(ProgramChange(
+                        changeId=_prog_id(), userId=_PROG_USER,
+                        triggerType=ChangeTrigger.USER_REQUEST,
+                        scope=ChangeScope.YEAR,
+                        oldValue=original_raw,
+                        newValue=replacement,
+                        explanation=f"Applied coach recommendation: swap {original_raw} → {replacement}. Reason: {reason}",
+                    ))
+
+    # ── Always log to MongoDB substitutions ──────────────────────────────────
+    if changes_applied:
+        for ch in changes_applied:
+            await db.substitutions.insert_one({
+                "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+                "week": week, "day": "Coach Recommendation",
+                "sessionType": "Program Update",
+                "originalExercise": ch["original"],
+                "replacementExercise": ch["replacement"],
+                "reason": body.details or body.summary,
+                "conversationId": body.conversation_id,
+                "sessionsUpdated": ch["sessions_updated"],
+            })
+    else:
+        # Fallback: log the general recommendation even without specific exercise swaps
+        await db.substitutions.insert_one({
+            "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+            "week": week, "day": "Coach Recommendation",
+            "sessionType": "Program Update",
+            "originalExercise": "General Recommendation",
+            "replacementExercise": body.summary,
+            "reason": body.details or body.summary,
+            "conversationId": body.conversation_id,
+        })
+
     await db.conversations.update_one(
         {"_id": conv_oid},
         {"$set": {"recommendationApplied": True, "updatedAt": now}}
     )
-    return {"success": True, "message": "Recommendation applied and logged to your changelog."}
+
+    msg = (
+        f"Applied! {total_swapped} exercise{'s' if total_swapped != 1 else ''} updated across your program."
+        if total_swapped > 0
+        else "Recommendation logged to your program changelog."
+    )
+
+    return {
+        "success": True,
+        "message": msg,
+        "exercises_swapped": total_swapped,
+        "changes": changes_applied,
+    }
 
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
 

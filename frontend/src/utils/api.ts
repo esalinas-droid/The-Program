@@ -75,10 +75,10 @@ export const coachApi = {
   getConversations: () => api('/coach/conversations'),
   getConversation: (id: string) => api(`/coach/conversations/${id}`),
   deleteConversation: (id: string) => api(`/coach/conversations/${id}`, { method: 'DELETE' }),
-  applyRecommendation: (conversationId: string, summary: string, details: string) =>
+  applyRecommendation: (conversationId: string, summary: string, details: string, exercises?: any[]) =>
     api('/coach/apply-recommendation', {
       method: 'POST',
-      body: JSON.stringify({ conversation_id: conversationId, summary, details }),
+      body: JSON.stringify({ conversation_id: conversationId, summary, details, exercises: exercises || [] }),
     }),
 };
 

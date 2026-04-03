@@ -12,8 +12,15 @@ import { getProfile } from '../../src/utils/storage';
 import { getBlock, getPhase } from '../../src/utils/calculations';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+interface ExerciseSwap {
+  original: string;
+  replacement: string;
+  reason: string;
+}
+
 interface ProgramChange {
   type: string;
+  exercises?: ExerciseSwap[];
   summary: string;
   details: string;
 }
@@ -22,7 +29,6 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  sources?: { title: string; page: string | number; preview: string }[];
   timestamp: Date;
   hasProgramChange?: boolean;
   programChange?: ProgramChange | null;
@@ -77,6 +83,8 @@ export default function CoachScreen() {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [appliedMessages, setAppliedMessages] = useState<Record<string, boolean>>({});
+  const [applySuccessMsg, setApplySuccessMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -144,16 +152,19 @@ export default function CoachScreen() {
     if (!message.programChange || !conversationId) return;
     setApplyingId(message.id);
     try {
-      await coachApi.applyRecommendation(
+      const pc = message.programChange;
+      const result = await coachApi.applyRecommendation(
         conversationId,
-        message.programChange.summary,
-        message.programChange.details
+        pc.summary,
+        pc.details,
+        pc.exercises || []
       );
-      Alert.alert(
-        'Applied!',
-        'This recommendation has been logged to your program changelog.',
-        [{ text: 'View Changelog', onPress: () => router.push('/tools/changelog') }, { text: 'OK' }]
-      );
+      setAppliedMessages(prev => ({ ...prev, [message.id]: true }));
+      const successMsg = result.exercises_swapped > 0
+        ? `✓ ${result.exercises_swapped} exercise${result.exercises_swapped !== 1 ? 's' : ''} updated in your program`
+        : '✓ Recommendation logged to your changelog';
+      setApplySuccessMsg(successMsg);
+      setTimeout(() => setApplySuccessMsg(null), 4000);
     } catch {
       Alert.alert('Error', 'Could not apply recommendation. Try again.');
     }
@@ -259,11 +270,20 @@ export default function CoachScreen() {
               message={item}
               onApply={() => applyRecommendation(item)}
               applying={applyingId === item.id}
+              applied={appliedMessages[item.id] || false}
             />
           )}
           ListFooterComponent={loading ? <LoadingDots /> : null}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
         />
+
+        {/* ── Success toast ── */}
+        {applySuccessMsg && (
+          <View style={s.successToast}>
+            <MaterialCommunityIcons name="check-circle" size={16} color="#4DCEA6" />
+            <Text style={s.successToastText}>{applySuccessMsg}</Text>
+          </View>
+        )}
 
         {/* ── Input bar ── */}
         <View style={s.inputBar}>
@@ -588,14 +608,15 @@ function MessageBubble({
   message,
   onApply,
   applying,
+  applied,
 }: {
   message: Message;
   onApply: () => void;
   applying: boolean;
+  applied: boolean;
 }) {
   const isUser  = message.role === 'user';
   const timeStr = formatTime(message.timestamp);
-  const srcCount = message.sources?.length ?? 0;
 
   if (isUser) {
     return (
@@ -619,42 +640,43 @@ function MessageBubble({
           <Text style={mb.coachLabel}>Coach</Text>
         </View>
 
-        {/* Rendered markdown */}
+        {/* Rendered markdown — NO sources footer */}
         <MarkdownText content={message.content} />
-
-        {/* Sources footer */}
-        {srcCount > 0 && (
-          <View style={mb.sourcesRow}>
-            <MaterialCommunityIcons name="book-open-page-variant-outline" size={12} color={COLORS.text.muted} />
-            <Text style={mb.sourcesText}>
-              Based on {srcCount} source{srcCount !== 1 ? 's' : ''}
-            </Text>
-          </View>
-        )}
 
         <Text style={mb.timestamp}>{timeStr}</Text>
 
-        {/* Apply to My Program button */}
+        {/* Apply to My Program section */}
         {message.hasProgramChange && message.programChange && (
           <View style={mb.applySection}>
             <View style={mb.applyDivider} />
-            <View style={mb.applyBanner}>
-              <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
-              <Text style={mb.applyBannerText} numberOfLines={2}>
-                {message.programChange.summary}
-              </Text>
+
+            {/* Recommendation card */}
+            <View style={mb.recCard}>
+              <View style={mb.recHeader}>
+                <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
+                <Text style={mb.recHeaderText}>Program Recommendation</Text>
+              </View>
+              {/* FULL text, no numberOfLines limit */}
+              <Text style={mb.recText}>{message.programChange.summary}</Text>
             </View>
+
+            {/* Apply button — full width, 48px tall */}
             <TouchableOpacity
-              style={[mb.applyBtn, applying && mb.applyBtnDisabled]}
+              style={[mb.applyBtn, applied && mb.applyBtnApplied, applying && mb.applyBtnLoading]}
               onPress={onApply}
-              disabled={applying}
-              activeOpacity={0.8}
+              disabled={applying || applied}
+              activeOpacity={0.85}
             >
               {applying ? (
-                <ActivityIndicator size="small" color={COLORS.primary} />
+                <ActivityIndicator size="small" color="#fff" />
+              ) : applied ? (
+                <>
+                  <MaterialCommunityIcons name="check-circle" size={18} color="#4DCEA6" />
+                  <Text style={mb.applyBtnTextApplied}>Applied ✓</Text>
+                </>
               ) : (
                 <>
-                  <MaterialCommunityIcons name="check-circle-outline" size={16} color={COLORS.primary} />
+                  <MaterialCommunityIcons name="check-bold" size={16} color="#fff" />
                   <Text style={mb.applyBtnText}>Apply to My Program</Text>
                 </>
               )}
@@ -700,28 +722,39 @@ const mb = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   coachLabel: { fontSize: FONTS.sizes.xs, fontWeight: '800' as any, color: COLORS.accent, letterSpacing: 1 },
-
-  // Sources + timestamp
-  sourcesRow:  { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: SPACING.md, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
-  sourcesText: { fontSize: 10, color: COLORS.text.muted },
-  timestamp:   { fontSize: 10, color: COLORS.text.muted, marginTop: 6, textAlign: 'right' },
+  timestamp:  { fontSize: 10, color: COLORS.text.muted, marginTop: 6, textAlign: 'right' },
 
   // Apply to My Program section
-  applySection:      { marginTop: SPACING.md },
-  applyDivider:      { height: 1, backgroundColor: COLORS.border, marginBottom: SPACING.md },
-  applyBanner:       { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: 'rgba(201, 168, 76, 0.07)', borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.sm },
-  applyBannerText:   { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 18 },
-  applyBtn:          {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: COLORS.surfaceHighlight,
-    borderRadius: RADIUS.xl,
-    paddingVertical: SPACING.sm + 2,
-    paddingHorizontal: SPACING.lg,
-    borderWidth: 1.5,
-    borderColor: COLORS.accent,
+  applySection:  { marginTop: SPACING.md },
+  applyDivider:  { height: 1, backgroundColor: COLORS.border, marginBottom: 12 },
+
+  // Recommendation card: #111114 bg, 16px padding, 12px border radius
+  recCard: {
+    backgroundColor: '#111114',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(201, 168, 76, 0.2)',
   },
-  applyBtnDisabled:  { opacity: 0.5 },
-  applyBtnText:      { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: COLORS.primary },
+  recHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  recHeaderText: { fontSize: 10, fontWeight: '800' as any, color: COLORS.accent, letterSpacing: 1.5 },
+  recText:   { fontSize: FONTS.sizes.sm, color: '#E0E0E0', lineHeight: 22 },
+
+  // Apply button: full-width, #C9A84C bg, white bold, 48px height, 10px radius
+  applyBtn:  {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#C9A84C',
+    borderRadius: 10,
+    height: 48,
+    width: '100%',
+  },
+  applyBtnLoading: { opacity: 0.7 },
+  applyBtnText:    { fontSize: FONTS.sizes.base, fontWeight: '700' as any, color: '#fff' },
+
+  // Applied state: #1A2A1A bg, #4DCEA6 text
+  applyBtnApplied: { backgroundColor: '#1A2A1A', borderWidth: 1, borderColor: '#4DCEA6' },
+  applyBtnTextApplied: { fontSize: FONTS.sizes.base, fontWeight: '700' as any, color: '#4DCEA6' },
 });
 
 // ── Starter prompts ───────────────────────────────────────────────────────────
@@ -872,4 +905,21 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   sendBtnDisabled: { opacity: 0.4 },
+  successToast: {
+    position: 'absolute',
+    bottom: 80,
+    left: SPACING.lg,
+    right: SPACING.lg,
+    backgroundColor: '#1A2A1A',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: SPACING.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#4DCEA6',
+    zIndex: 100,
+  },
+  successToastText: { fontSize: FONTS.sizes.sm, fontWeight: '600' as any, color: '#4DCEA6', flex: 1 },
 });
