@@ -205,29 +205,33 @@ function parseExStr(str: string): { name: string; prescription: string; setCount
 
 function buildFromLocal(session: import('../../src/types').ProgramSession): ExerciseLog[] {
   if (!session || session.sessionType === 'Off') return [];
+  // For recovery/boxing days or sessions without a main barbell lift, skip the main-lift block
+  const hasMainLift = !!session.mainLift && session.mainLift !== 'Rest Day';
   const exs: ExerciseLog[] = [];
 
-  // Main lift — parse "9×3 @ 112lbs" or "Work to 1RM; ..." format
-  const schemeMatch = session.topSetScheme.match(/^(\d+)[×x](\S+)/);
-  const setCount = schemeMatch ? parseInt(schemeMatch[1]) : 4;
-  const reps = schemeMatch ? schemeMatch[2].replace(/@.*$/, '').trim() : '3';
-  const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
-  const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
-  const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
+  if (hasMainLift) {
+    // Main lift — parse "9×3 @ 112lbs" or "Work to 1RM; ..." format
+    const schemeMatch = session.topSetScheme.match(/^(\d+)[×x](\S+)/);
+    const setCount = schemeMatch ? parseInt(schemeMatch[1]) : 4;
+    const reps = schemeMatch ? schemeMatch[2].replace(/@.*$/, '').trim() : '3';
+    const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
+    const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
+    const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
 
-  exs.push({
-    id: 'main-lift',
-    name: liftName,
-    prescription: session.topSetScheme,
-    lastRef: '—',
-    expanded: true,
-    notes: session.coachingNotes || '',
-    notesExpanded: false,
-    sets: Array.from({ length: setCount }, (_, i) =>
-      mkSet(`main-w-${i}`, 'work', weight, reps)
-    ),
-    history: [],
-  });
+    exs.push({
+      id: 'main-lift',
+      name: liftName,
+      prescription: session.topSetScheme,
+      lastRef: '—',
+      expanded: true,
+      notes: session.coachingNotes || '',
+      notesExpanded: false,
+      sets: Array.from({ length: setCount }, (_, i) =>
+        mkSet(`main-w-${i}`, 'work', weight, reps)
+      ),
+      history: [],
+    });
+  }
 
   // Supplemental
   (session.supplementalWork || []).forEach((sup, idx) => {
@@ -235,7 +239,7 @@ function buildFromLocal(session: import('../../src/types').ProgramSession): Exer
     exs.push({
       id: `sup-${idx}`,
       name, prescription,
-      lastRef: '—', expanded: false, notes: '', notesExpanded: false,
+      lastRef: '—', expanded: !hasMainLift && idx === 0, notes: '', notesExpanded: false,
       sets: Array.from({ length: Math.min(sc, 8) }, (_, i) => mkSet(`sup-${idx}-${i}`, 'work', 0, r)),
       history: [],
     });
@@ -776,9 +780,16 @@ const sb = StyleSheet.create({
 
 // ── Main LogScreen ─────────────────────────────────────────────────────────────
 export default function LogScreen() {
-  const [exercises, setExercises] = useState<ExerciseLog[]>(INITIAL_EXERCISES);
+  // Initialize directly from local programData for the current day — no async needed,
+  // no ME Upper flash. useFocusEffect will override once profile week is loaded.
+  const [exercises, setExercises] = useState<ExerciseLog[]>(() => {
+    const s = getTodaySession(1); // week 1 default; correct day schedule is independent of week
+    const local = buildFromLocal(s);
+    return local.length > 0 ? local : INITIAL_EXERCISES;
+  });
   const [week, setWeek]           = useState(1);
-  const [sessionType, setSessionType] = useState('ME Upper');
+  // Initialize sessionType from local programData too — no 'ME Upper' default
+  const [sessionType, setSessionType] = useState(() => getTodaySession(1).sessionType);
   const [loading, setLoading]     = useState(true);
 
   // Rest timer
