@@ -9,7 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi } from '../../src/utils/api';
+import { logApi, programApi } from '../../src/utils/api';
 import { getTodayDayName } from '../../src/data/programData';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -716,6 +716,15 @@ export default function LogScreen() {
     (async () => {
       const prof = await getProfile();
       setWeek(prof?.currentWeek || 1);
+
+      // Sync session type to today's program plan
+      try {
+        const todayData = await programApi.getTodaySession();
+        if (todayData?.session?.sessionType) {
+          setSessionType(todayData.session.sessionType);
+        }
+      } catch { /* No plan yet — keep 'ME Upper' default */ }
+
       setLoading(false);
     })();
     return () => {
