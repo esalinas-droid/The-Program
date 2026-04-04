@@ -3522,7 +3522,14 @@ async def get_change_log_v2(userId: str = Depends(get_current_user)):
             "reason": doc.get("reason", ""),
             "changeType": doc.get("changeType", "substitution"),
             "undone": doc.get("undone", False),
-            "undoable": not doc.get("undone", False) and bool(doc.get("originalExercise")),
+            "undoable": (
+                not doc.get("undone", False)
+                and bool(doc.get("originalExercise"))
+                and doc.get("sessionType") != "Profile Update"
+                and not (doc.get("originalExercise", "") or "").lower().startswith("injury flags")
+                and not (doc.get("originalExercise", "") or "").lower().startswith("general recommendation")
+                and not (doc.get("originalExercise", "") or "").lower().startswith("target loads")
+            ),
             "timestamp": doc.get("timestamp").isoformat() if doc.get("timestamp") else "",
         })
 
