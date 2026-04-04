@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 8: Tested Task 3 injury swap logic (SI Joint / Pelvis), auth flows, profile isolation, coach/PR endpoints. Found 2 critical data-isolation bugs in /api/profile and injury_preview fallback. Auth flows all pass. apply-injury-update does not crash and returns exercises_swapped. Trap Bar Deadlift correctly NOT restricted for SI Joint.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/profile",
+        "issue": "Not user-scoped. Uses `find_one({})` with NO userId filter — returns the same default profile document for ALL authenticated users. user_a and user_b both get identical profile data. profile POST/PUT also use `find_one({})` without userId.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/plan/injury-preview",
+        "issue": "Fallback on line 300 `if not profile: profile = await db.profile.find_one({})` inherits default user's injuryFlags when new user has no profile. Default user has injuryFlags=['SI Joint / Pelvis'] so fresh users appear to 'already have' SI Joint — addedInjuries=[] instead of ['SI Joint / Pelvis']. Makes injury-preview useless for new users.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/plan/apply-injury-update",
+        "issue": "Returns exercises_swapped=0 and added=[] for user_a because user_a already had SI Joint / Pelvis from prior test run. Endpoint does NOT crash — works correctly. But data persisted in user-scoped profile is not reflected by GET /api/profile (returns default profile instead).",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8.py",
+    "/app/test_reports/pytest/iteration8_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix GET/POST/PUT /api/profile to be user-scoped. Add `userId: str = Depends(get_current_user)` to all profile endpoints and filter MongoDB queries with {'userId': userId}. Use upsert on POST/PUT with userId filter.",
+    "CRITICAL: Remove or fix the injury_preview fallback `if not profile: profile = await db.profile.find_one({})`. For new users with no profile, use empty defaults: `current_injuries = []`. Do NOT inherit default user data.",
+    "MEDIUM: The default user profile (userId: None) in MongoDB has injuryFlags=['SI Joint / Pelvis'] left over from testing — this is the root cause of the fallback contamination. Seed/reset the default profile or ensure it has no injuries.",
+    "Verify that apply-injury-update is actually persisting to user-scoped profile document. The upsert logic (line 364) looks correct but cannot be verified since GET /profile is broken."
+  ],
+  "critical_code_review_comments": [
+    "server.py lines 193-221: GET/POST/PUT /api/profile all use find_one({}) without userId — no user scoping at all. This is a data isolation failure.",
+    "server.py line 300: `if not profile: profile = await db.profile.find_one({})` — dangerous fallback that corrupts new-user injury baseline with default user data.",
+    "coach/conversations endpoint (line 946) hardcodes userId='default' — not user-scoped."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8.py"
+  ],
+  "success_rate": {
+    "backend": "67% (10/15 tests passed)",
+    "frontend": "N/A - backend only testing"
+  },
+  "test_results_detail": {
+    "PASSED": [
+      "POST /api/auth/login user_a — 200 + JWT returned",
+      "POST /api/auth/login user_b — 200 + JWT returned",
+      "POST /api/auth/login wrong password — 401 returned",
+      "POST /api/auth/register fresh email — 200 + JWT returned",
+      "POST /api/plan/injury-preview Trap Bar NOT restricted for SI Joint — CORRECT",
+      "POST /api/plan/injury-preview no auth — 200 (default user fallback)",
+      "POST /api/plan/apply-injury-update user_a — 200, exercises_swapped=0, NO crash",
+      "GET /api/plan/session/today user_a — 404 (no plan, expected for incomplete onboarding)",
+      "GET /api/coach/conversations user_a — 200, returns list",
+      "GET /api/prs/bests/overview user_a — 200"
+    ],
+    "FAILED": [
+      "GET /api/profile user_a — profile has no 'email' field (returns onboarding data, not user account)",
+      "GET /api/profile user_b — same issue",
+      "Data isolation — user_a and user_b return identical profile (both get default find_one({}) result)",
+      "POST /api/plan/injury-preview SI Joint restricted exercises — fresh user inherits default user's SI Joint injury flag via fallback, so addedInjuries=[] and exercisesRestricted=[]",
+      "Injury flags persisted in profile — profile.injuries empty (field is 'injuryFlags' not 'injuries', and GET /profile not user-scoped)"
+    ]
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Profile endpoints completely lack userId scoping. The injury-preview fallback to find_one({}) is the root cause of SI Joint test failures. After fixing profile scoping, re-run test_iteration8.py — the injury-preview tests need a fresh user with no prior injuries. user_a now has injuryFlags=['SI Joint / Pelvis'] in their user-scoped profile document (from apply-injury-update).",
+  "rca_of_issue": "ROOT CAUSE: GET/POST/PUT /api/profile endpoints use `db.profile.find_one({})` without any userId filter. This means: (1) all users share the same profile document, (2) injury_preview baseline for new users is polluted with default user's injuryFlags, (3) apply-injury-update correctly upserts with userId but GET /profile never returns that user-scoped document. Fix: add userId to all profile endpoint queries and upserts."
+}

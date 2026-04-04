@@ -553,15 +553,17 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.0"
-  test_sequence: 3
+  version: "4.0"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Apple Sign-In backend - missing jwt import in auth.py"
-    - "Auth endpoints - register, login, me, social, logout"
-    - "User data isolation - all endpoints scoped by userId"
+    - "Task 3 - Settings injury update ACTUALLY modifies plan exercises (SI Joint / Pelvis)"
+    - "injury_preview now userId-scoped and SI Joint generates 7 restricted exercises"
+    - "apply_injury_update now runs full exercise swap loop + persists to MongoDB"
+    - "Auth endpoints still working after new session changes"
+    - "User data isolation still working"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -569,35 +571,45 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: >
-      NEW SESSION: Apple Sign-In finalization + Full Auth QA.
+      NEW SESSION: Audit + 4 tasks implemented.
       
-      CRITICAL BUG FIXED: auth.py was missing 'import jwt' at the top.
-      The _verify_apple_token function used jwt.get_unverified_header() and jwt.decode()
-      but the jwt module was never imported. This would cause NameError crash on Apple login.
-      Fix: Added 'import jwt' as line 22 in auth.py. Backend auto-reloaded OK.
+      AUDIT CLEAN: All hardcoded Eric data removed from old onboarding files.
+      onboarding/index.tsx: useState('') for name+experience.
+      onboarding/step6.tsx: all fallbacks blank/0, goal='strength', date=today().
+      auth.tsx: placeholder='Your full name'.
       
-      FRONTEND IMPROVEMENT: auth.tsx Apple Sign-In now has isAvailableAsync() check.
-      If Apple auth not available, shows Alert: "Apple Sign-In will be available soon"
-      with option to continue with email. Non-cancel errors also use Alert (not error box).
-      Apple button still hidden on Android/web (Platform.OS === 'ios').
+      TASK 1 (KEYBOARD FIX): onboarding-intake.tsx - added automaticallyAdjustKeyboardInsets={true},
+      keyboardDismissMode='on-drag', increased bottom spacer from 24px to 120px.
+      
+      TASK 2 (UNLIMITED SELECTION): Already correct in new onboarding - no maxSelections found.
+      
+      TASK 3 (MAJOR FIX - Settings injuries update program):
+        - _build_injury_keywords: added 'si joint', 'pelvis', 'sacroiliac' -> si_joint_moderate + low_back_moderate
+        - _EXERCISE_CONTRAINDICATIONS: si_joint_moderate added to Conventional Deadlift, Sumo, Romanian, Good Morning, Speed Deadlift, Pendlay Row, Ab Wheel. Trap Bar fixed to contra=['low_back_severe'] (NOT moderate - it IS the safe replacement for SI Joint)
+        - _INJURY_MAP: Added 'si joint' key with restrict_keywords, main_swap (Trap Bar), supplemental_swaps, accessory_swaps (good morning->Reverse Hyper, deep squat->Box Squat Above Parallel), prehab (Dead Bug + Clamshell)
+        - _INJURY_ALIAS: 'si joint' now maps to 'si joint' (not 'lower back')
+        - injury_preview: Now scoped by userId=Depends(get_current_user). Correctly shows 7 restricted exercises for SI Joint.
+        - apply_injury_update: Now scoped by userId. RUNS FULL EXERCISE SWAP LOOP. Persists to MongoDB via _save_plan_to_db. Returns exercises_swapped count and changes_by_category.
+        - settings.tsx: handleAcceptInjuryChanges shows Alert with exercises_swapped count.
+      
+      TASK 4 (APPLE BUTTON FIX): auth.tsx - replaced AppleAuthentication.AppleAuthenticationButton
+      with custom TouchableOpacity + MaterialCommunityIcons 'apple'. Black bg, white text.
+      Always renders on Platform.OS === 'ios'. isAvailableAsync check in handler only.
+      Alert: "Apple Sign-In requires a standalone build. Please use email for now."
       
       TEST CREDENTIALS:
-      - user_a@theprogram.app / StrongmanA123 (no onboarding yet)
-      - user_b@theprogram.app / HypertrophyB123 (no onboarding yet)
-      - testathletexyz@theprogram.app (registered this session, no onboarding)
-      - DEFAULT_USER fallback: user_001 (has completed onboarding from previous sessions)
+      - user_a@theprogram.app / StrongmanA123
+      - user_b@theprogram.app / HypertrophyB123
+      - DEFAULT_USER fallback: user_001 (has completed onboarding)
       
       Please test:
-      1. POST /api/auth/register — register new user, get JWT back
-      2. POST /api/auth/login — login with email/password, verify JWT
-      3. GET /api/auth/me — verify user info from JWT 
-      4. POST /api/auth/social with provider=apple — verify it no longer crashes (jwt import fixed)
-      5. POST /api/auth/login with WRONG password — should return 401
-      6. POST /api/auth/register with DUPLICATE email — should return 409
-      7. GET /api/plan/session/today with valid JWT — should return user-scoped session
-      8. GET /api/prs/bests/overview with valid JWT — should return user-scoped PRs
-      9. GET /api/profile with valid JWT — should return user-scoped profile
-      10. Verify user_a and user_b get DIFFERENT profile/plan data (data isolation)
+      1. POST /api/plan/injury-preview with {"newInjuryFlags":["SI Joint / Pelvis"]} AND empty existing injuries — should show 7 restricted exercises (Conventional Deadlift, Sumo, Romanian, Good Morning, Speed Deadlift, Pendlay Row, Ab Wheel). Trap Bar should NOT be restricted.
+      2. POST /api/auth/login with user_a credentials -> get JWT
+      3. POST /api/plan/apply-injury-update with {"newInjuryFlags":["SI Joint / Pelvis"]} + JWT from step 2 — should swap exercises (exercises_swapped > 0), persist to MongoDB
+      4. GET /api/plan/session/today with same JWT — should show updated exercises (Conventional Deadlift replaced with Trap Bar Deadlift if it was in the session)
+      5. POST /api/auth/login with wrong password → 401
+      6. Data isolation: user_a and user_b get different data
+      7. All other endpoints still work: /api/profile, /api/prs/bests/overview, /api/coach/conversations
 
   - agent: "main"
     message: >

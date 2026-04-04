@@ -169,8 +169,8 @@ export default function SettingsScreen() {
     setSaving(true);
     setShowPreview(false);
     try {
-      // 1. Apply injury update (logs to changelog)
-      await planApi.applyInjuryUpdate(editedInjuries);
+      // 1. Apply injury update — NOW also swaps exercises in plan + persists to MongoDB
+      const result: any = await planApi.applyInjuryUpdate(editedInjuries);
 
       // 2. Save all other profile changes
       const updates: Partial<AthleteProfile> = {
@@ -187,6 +187,13 @@ export default function SettingsScreen() {
       await profileApi.update(updates as any);
       setEditMode(false);
       setPreviewData(null);
+
+      // 3. Show meaningful feedback
+      const swapped = result?.exercises_swapped ?? 0;
+      const msg = swapped > 0
+        ? `Program updated! ${swapped} exercise${swapped > 1 ? 's' : ''} adjusted for your injuries. Check the Today tab.`
+        : (result?.message || 'Profile saved. Your program will adapt next session.');
+      Alert.alert('Changes Saved', msg, [{ text: 'Got it', style: 'default' }]);
     } catch (err) {
       Alert.alert('Error', 'Could not apply changes. Please try again.');
     } finally {

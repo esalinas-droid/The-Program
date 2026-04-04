@@ -244,50 +244,60 @@ def _build_injury_keywords(injuries: list) -> set:
         if "wrist" in inj_lower: keywords.add("wrist_severe")
         if "hip" in inj_lower or "groin" in inj_lower: keywords.add("hip_moderate")
         if "nerve" in inj_lower or "sciatica" in inj_lower: keywords.add("low_back_moderate")
+        # SI Joint / Pelvis / Sacroiliac — spinal instability pattern
+        if "si joint" in inj_lower or "pelvis" in inj_lower or "sacroiliac" in inj_lower or "sacro" in inj_lower:
+            keywords.add("si_joint_moderate")
+            keywords.add("low_back_moderate")
+        # Upper back / thoracic spine
+        if "thoracic" in inj_lower or "upper back" in inj_lower or "thorax" in inj_lower:
+            keywords.add("upper_back_moderate")
     keywords.discard("")
     return keywords
 
 _EXERCISE_CONTRAINDICATIONS = [
-    {"name": "SSB Box Squat",              "contra": ["knee_severe"],                               "cat": "ME Lower"},
-    {"name": "Speed Box Squat",            "contra": ["knee_severe"],                               "cat": "DE Lower"},
-    {"name": "Pause Back Squat",           "contra": ["knee_moderate"],                             "cat": "ME Lower"},
-    {"name": "Belt Squat",                 "contra": [],                                            "cat": "ME Lower"},
-    {"name": "Conventional Deadlift",      "contra": ["low_back_severe", "hamstring_severe"],       "cat": "ME Lower"},
-    {"name": "Sumo Deadlift",              "contra": ["hip_moderate", "low_back_severe"],           "cat": "ME Lower"},
-    {"name": "Trap Bar Deadlift",          "contra": ["low_back_moderate"],                         "cat": "ME Lower"},
-    {"name": "Romanian Deadlift (RDL)",    "contra": ["hamstring_severe"],                          "cat": "ME Lower"},
-    {"name": "Good Morning",               "contra": ["low_back_severe"],                           "cat": "ME Lower"},
-    {"name": "Block Pull",                 "contra": [],                                            "cat": "ME Lower"},
-    {"name": "Speed Deadlift",             "contra": ["low_back_severe"],                           "cat": "DE Lower"},
-    {"name": "Leg Press",                  "contra": ["knee_moderate"],                             "cat": "Accessory"},
-    {"name": "Glute-Ham Raise (GHR)",      "contra": ["knee_severe", "hamstring_severe"],           "cat": "Accessory"},
-    {"name": "Lying Leg Curl",             "contra": ["hamstring_severe"],                          "cat": "Accessory"},
-    {"name": "Standing Leg Curl",          "contra": ["hamstring_severe"],                          "cat": "Accessory"},
-    {"name": "Floor Press",                "contra": ["shoulder_severe"],                           "cat": "ME Upper"},
-    {"name": "Close-Grip Bench Press",     "contra": ["shoulder_moderate", "elbow_severe"],         "cat": "ME Upper"},
-    {"name": "JM Press",                   "contra": ["elbow_severe"],                              "cat": "ME Upper"},
-    {"name": "Speed Bench Press",          "contra": ["shoulder_severe"],                           "cat": "DE Upper"},
-    {"name": "Overhead Press (Barbell)",   "contra": ["shoulder_severe"],                           "cat": "ME Upper"},
-    {"name": "Log Clean and Press",        "contra": ["shoulder_severe", "elbow_severe"],           "cat": "ME Upper / Strongman"},
-    {"name": "Axle Press",                 "contra": ["shoulder_severe", "wrist_severe"],           "cat": "ME Upper / Strongman"},
-    {"name": "Pendlay Row",                "contra": ["low_back_severe"],                           "cat": "Supplemental"},
-    {"name": "Lat Pulldown",               "contra": ["shoulder_severe"],                           "cat": "Supplemental"},
-    {"name": "Ab Wheel Rollout",           "contra": ["low_back_severe"],                           "cat": "Accessory"},
-    {"name": "Tricep Pushdown",            "contra": ["elbow_severe"],                              "cat": "Accessory"},
-    {"name": "Skull Crusher / EZ Bar",     "contra": ["elbow_severe"],                              "cat": "Accessory"},
-    {"name": "Tate Press",                 "contra": ["elbow_severe"],                              "cat": "Accessory"},
-    {"name": "Farmer Carry",               "contra": ["wrist_severe"],                              "cat": "GPP / Strongman"},
-    {"name": "Zercher Carry",              "contra": ["elbow_severe", "low_back_severe"],           "cat": "GPP / Strongman"},
-    {"name": "Yoke Carry",                 "contra": ["low_back_severe"],                           "cat": "GPP / Strongman"},
-    {"name": "Stone to Shoulder",          "contra": ["low_back_severe", "shoulder_severe", "hip_moderate"], "cat": "Strongman"},
-    {"name": "Keg Toss",                   "contra": ["shoulder_severe", "low_back_severe"],        "cat": "Strongman"},
+    {"name": "SSB Box Squat",              "contra": ["knee_severe"],                                       "cat": "ME Lower"},
+    {"name": "Speed Box Squat",            "contra": ["knee_severe"],                                       "cat": "DE Lower"},
+    {"name": "Pause Back Squat",           "contra": ["knee_moderate"],                                     "cat": "ME Lower"},
+    {"name": "Belt Squat",                 "contra": [],                                                    "cat": "ME Lower"},
+    {"name": "Conventional Deadlift",      "contra": ["low_back_severe", "hamstring_severe", "si_joint_moderate"], "cat": "ME Lower"},
+    {"name": "Sumo Deadlift",              "contra": ["hip_moderate", "low_back_severe", "si_joint_moderate"], "cat": "ME Lower"},
+    {"name": "Trap Bar Deadlift",          "contra": ["low_back_severe"],                                   "cat": "ME Lower"},
+    {"name": "Romanian Deadlift (RDL)",    "contra": ["hamstring_severe", "si_joint_moderate"],             "cat": "ME Lower"},
+    {"name": "Good Morning",               "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "ME Lower"},
+    {"name": "Block Pull",                 "contra": [],                                                    "cat": "ME Lower"},
+    {"name": "Speed Deadlift",             "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "DE Lower"},
+    {"name": "Leg Press",                  "contra": ["knee_moderate"],                                     "cat": "Accessory"},
+    {"name": "Glute-Ham Raise (GHR)",      "contra": ["knee_severe", "hamstring_severe"],                   "cat": "Accessory"},
+    {"name": "Lying Leg Curl",             "contra": ["hamstring_severe"],                                  "cat": "Accessory"},
+    {"name": "Standing Leg Curl",          "contra": ["hamstring_severe"],                                  "cat": "Accessory"},
+    {"name": "Floor Press",                "contra": ["shoulder_severe"],                                   "cat": "ME Upper"},
+    {"name": "Close-Grip Bench Press",     "contra": ["shoulder_moderate", "elbow_severe"],                 "cat": "ME Upper"},
+    {"name": "JM Press",                   "contra": ["elbow_severe"],                                     "cat": "ME Upper"},
+    {"name": "Speed Bench Press",          "contra": ["shoulder_severe"],                                   "cat": "DE Upper"},
+    {"name": "Overhead Press (Barbell)",   "contra": ["shoulder_severe"],                                   "cat": "ME Upper"},
+    {"name": "Log Clean and Press",        "contra": ["shoulder_severe", "elbow_severe"],                   "cat": "ME Upper / Strongman"},
+    {"name": "Axle Press",                 "contra": ["shoulder_severe", "wrist_severe"],                   "cat": "ME Upper / Strongman"},
+    {"name": "Pendlay Row",                "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Supplemental"},
+    {"name": "Lat Pulldown",               "contra": ["shoulder_severe"],                                   "cat": "Supplemental"},
+    {"name": "Ab Wheel Rollout",           "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Accessory"},
+    {"name": "Tricep Pushdown",            "contra": ["elbow_severe"],                                      "cat": "Accessory"},
+    {"name": "Skull Crusher / EZ Bar",     "contra": ["elbow_severe"],                                      "cat": "Accessory"},
+    {"name": "Tate Press",                 "contra": ["elbow_severe"],                                      "cat": "Accessory"},
+    {"name": "Farmer Carry",               "contra": ["wrist_severe"],                                      "cat": "GPP / Strongman"},
+    {"name": "Zercher Carry",              "contra": ["elbow_severe", "low_back_severe"],                   "cat": "GPP / Strongman"},
+    {"name": "Yoke Carry",                 "contra": ["low_back_severe"],                                   "cat": "GPP / Strongman"},
+    {"name": "Stone to Shoulder",          "contra": ["low_back_severe", "shoulder_severe", "hip_moderate"],"cat": "Strongman"},
+    {"name": "Keg Toss",                   "contra": ["shoulder_severe", "low_back_severe"],                "cat": "Strongman"},
 ]
 
 @api_router.post("/plan/injury-preview")
-async def injury_preview(body: dict):
+async def injury_preview(body: dict, userId: str = Depends(get_current_user)):
     """Preview how changing injury flags would affect the training program."""
     new_injuries = body.get("newInjuryFlags", [])
-    profile = await db.profile.find_one({})
+    # Scope to current user
+    profile = await db.profile.find_one({"userId": userId})
+    if not profile:
+        profile = await db.profile.find_one({})
     current_injuries = profile.get("injuryFlags", []) if profile else []
 
     old_kw = _build_injury_keywords(current_injuries)
@@ -328,45 +338,183 @@ async def injury_preview(body: dict):
 
 
 @api_router.post("/plan/apply-injury-update")
-async def apply_injury_update(body: dict):
-    """Save accepted injury flag changes to the athlete profile and log the change."""
+async def apply_injury_update(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Save accepted injury flag changes to profile AND physically swap restricted exercises
+    in the current block, then persist to MongoDB so Today/Log tabs reflect changes immediately.
+    """
     new_injuries = body.get("newInjuryFlags", [])
-    profile = await db.profile.find_one({})
+
+    # ── 1. Fetch profile (scoped to userId) ──────────────────────────────────
+    profile = await db.profile.find_one({"userId": userId})
+    if not profile:
+        profile = await db.profile.find_one({})
     if not profile:
         raise HTTPException(404, "Profile not found")
 
     old_injuries = profile.get("injuryFlags", [])
     added   = [i for i in new_injuries   if i not in old_injuries]
     removed = [i for i in old_injuries   if i not in new_injuries]
+    now     = datetime.now(timezone.utc)
+    current_week = profile.get("currentWeek", 1)
 
+    # ── 2. Update profile ─────────────────────────────────────────────────────
     await db.profile.update_one(
         {"_id": profile["_id"]},
-        {"$set": {"injuryFlags": new_injuries, "updatedAt": datetime.now(timezone.utc)}}
+        {"$set": {"injuryFlags": new_injuries, "updatedAt": now}}
     )
 
-    reason_parts = []
-    if added:   reason_parts.append(f"Added: {', '.join(added)}")
-    if removed: reason_parts.append(f"Resolved: {', '.join(removed)}")
-    reason = "User accepted injury update. " + ". ".join(reason_parts)
+    # ── 3. Swap exercises in current block for newly-added injuries ───────────
+    changes_by_category: dict = {"main": [], "supplemental": [], "accessory": [], "prehab": []}
+    total_swapped = 0
+    plan = None
 
-    from datetime import datetime as _dt
-    change_doc = {
-        "timestamp": datetime.now(timezone.utc),
-        "date": _dt.now(timezone.utc).strftime("%Y-%m-%d"),
-        "week": profile.get("currentWeek", 1),
-        "day": "Profile",
-        "sessionType": "Profile Update",
-        "originalExercise": f"Injury Flags: {', '.join(old_injuries) or 'None'}",
-        "replacementExercise": f"Injury Flags: {', '.join(new_injuries) or 'None'}",
-        "reason": reason.strip(),
-    }
-    await db.substitutions.insert_one(change_doc)
+    if added:
+        plan_available = await _ensure_plan_loaded(userId)
+        if plan_available:
+            plan = _prog_store["plans"].get(userId)
+            if plan:
+                current_block = _find_current_block(plan, current_week)
+                if current_block:
+                    prehab_added: set = set()
+
+                    for inj_flag in added:
+                        injury_type = _detect_injury_type(inj_flag)
+                        injury_cfg  = _INJURY_MAP.get(injury_type) if injury_type else None
+                        if not injury_cfg:
+                            logger.warning(f"No injury config found for: {inj_flag} (type={injury_type})")
+                            continue
+
+                        for week_obj in current_block.weeks:
+                            for session in week_obj.sessions:
+                                for ex in list(session.exercises):
+                                    ex_lower = ex.name.lower()
+                                    cat = ex.category.value if hasattr(ex.category, "value") else str(ex.category)
+
+                                    restrict = injury_cfg.get("restrict_keywords", [])
+                                    if not any(rk in ex_lower for rk in restrict):
+                                        continue
+
+                                    new_name, swap_reason = None, ""
+                                    if cat == "main":
+                                        pair = injury_cfg.get("main_swap")
+                                        if pair:
+                                            new_name, swap_reason = pair
+                                    elif cat == "supplemental":
+                                        for kw, (r, rs) in injury_cfg.get("supplemental_swaps", {}).items():
+                                            if kw in ex_lower:
+                                                new_name, swap_reason = r, rs
+                                                break
+                                    elif cat == "accessory":
+                                        for kw, (r, rs) in injury_cfg.get("accessory_swaps", {}).items():
+                                            if kw in ex_lower:
+                                                new_name, swap_reason = r, rs
+                                                break
+
+                                    if new_name and new_name.lower() != ex_lower:
+                                        old_name = ex.name
+                                        ex.name = new_name
+                                        ex.adjustedFrom = old_name
+                                        ex.adjustmentReason = swap_reason
+                                        ex.notes = f"Injury ({inj_flag}): {swap_reason}"
+                                        dest = cat if cat in changes_by_category else "accessory"
+                                        changes_by_category[dest].append({
+                                            "from": old_name, "to": new_name, "reason": swap_reason,
+                                            "session": session.sessionType.value if hasattr(session.sessionType, "value") else str(session.sessionType),
+                                            "week": week_obj.weekNumber,
+                                        })
+                                        total_swapped += 1
+                                        logger.info(f"[InjuryUpdate] Swapped '{old_name}' → '{new_name}' ({swap_reason})")
+
+                                # ── Add prehab exercises (once per week, injury-matched session) ──
+                                if injury_cfg:
+                                    stype = session.sessionType.value if hasattr(session.sessionType, "value") else str(session.sessionType)
+                                    stype_lower = stype.lower()
+                                    injury_is_lower = injury_type in ("si joint", "lower back", "knee")
+                                    injury_is_upper = injury_type in ("bicep", "shoulder")
+                                    is_lower = "lower" in stype_lower
+                                    is_upper = "upper" in stype_lower
+                                    relevant = (
+                                        (injury_is_lower and is_lower) or
+                                        (injury_is_upper and is_upper) or
+                                        (not injury_is_lower and not injury_is_upper)
+                                    )
+                                    prehab_key = f"{week_obj.weekNumber}_{inj_flag}"
+                                    if relevant and prehab_key not in prehab_added:
+                                        from models.schemas import SessionExercise as SE, ExerciseCategory as EC, TargetSet as TS
+                                        import re as _re2
+                                        for i, pb in enumerate(injury_cfg.get("prehab_to_add", [])):
+                                            if not any(pb["name"].lower() in e.name.lower() for e in session.exercises):
+                                                sets_str  = pb["prescription"].split("x")[0] if "x" in pb["prescription"] else "3"
+                                                reps_str  = pb["prescription"].split("x")[-1].strip() if "x" in pb["prescription"] else "15"
+                                                reps_clean = _re2.sub(r'[^0-9]', '', reps_str) or "15"
+                                                sets_clean = _re2.sub(r'[^0-9]', '', sets_str) or "3"
+                                                pb_ex = SE(
+                                                    sessionExerciseId=_prog_id(), name=pb["name"],
+                                                    category=EC.PREHAB, prescription=pb["prescription"],
+                                                    notes=pb["notes"], order=len(session.exercises) + i + 1,
+                                                    targetSets=[TS(setNumber=j+1, targetReps=reps_clean, setType="work") for j in range(int(sets_clean))],
+                                                )
+                                                session.exercises.append(pb_ex)
+                                                changes_by_category["prehab"].append({
+                                                    "from": "(none)", "to": pb["name"], "reason": pb["notes"],
+                                                    "session": stype, "week": week_obj.weekNumber,
+                                                })
+                                                total_swapped += 1
+                                        prehab_added.add(prehab_key)
+
+    # ── 4. Persist updated plan to MongoDB so Today/Log tabs reflect changes ──
+    if plan and total_swapped > 0:
+        await _save_plan_to_db(plan, userId)
+        logger.info(f"[InjuryUpdate] Saved {total_swapped} exercise changes for user {userId}")
+
+    # ── 5. Log to substitutions changelog ─────────────────────────────────────
+    all_changes = [ch for lst in changes_by_category.values() for ch in lst]
+    if all_changes:
+        for ch in all_changes:
+            await db.substitutions.insert_one({
+                "userId": userId,
+                "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+                "week": current_week, "day": "Settings — Injury Update",
+                "sessionType": ch.get("session", "Program Update"),
+                "originalExercise": ch["from"], "replacementExercise": ch["to"],
+                "reason": ch["reason"],
+            })
+    else:
+        reason_parts = []
+        if added:   reason_parts.append(f"Added: {', '.join(added)}")
+        if removed: reason_parts.append(f"Resolved: {', '.join(removed)}")
+        await db.substitutions.insert_one({
+            "userId": userId,
+            "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+            "week": current_week, "day": "Settings — Injury Update",
+            "sessionType": "Profile Update",
+            "originalExercise": f"Injury Flags: {', '.join(old_injuries) or 'None'}",
+            "replacementExercise": f"Injury Flags: {', '.join(new_injuries) or 'None'}",
+            "reason": "User accepted injury update. " + ". ".join(reason_parts),
+        })
+
+    # ── 6. Build response summary ──────────────────────────────────────────────
+    n_main = len(changes_by_category["main"])
+    n_supp = len(changes_by_category["supplemental"])
+    n_acc  = len(changes_by_category["accessory"])
+    n_pre  = len(changes_by_category["prehab"])
+    parts  = []
+    if n_main: parts.append(f"{n_main} main lift{'s' if n_main>1 else ''} updated")
+    if n_supp: parts.append(f"{n_supp} supplemental updated")
+    if n_acc:  parts.append(f"{n_acc} accessory updated")
+    if n_pre:  parts.append(f"{n_pre} prehab exercise{'s' if n_pre>1 else ''} added")
+
+    msg = f"Program updated: {', '.join(parts)}." if parts else "Injury flags saved. Check back next session for adjusted exercises."
 
     return {
-        "success": True,
-        "message": "Injury flags updated. Your program will adapt to new restrictions.",
-        "added":   added,
-        "removed": removed,
+        "success":             True,
+        "message":             msg,
+        "added":               added,
+        "removed":             removed,
+        "exercises_swapped":   total_swapped,
+        "changes_by_category": changes_by_category,
+        "changes":             all_changes,
     }
 
 
@@ -979,6 +1127,31 @@ _INJURY_MAP = {
             {"name": "Face Pull",               "prescription": "4x15", "notes": "Rear delt + external rotation prehab"},
         ],
     },
+    "si joint": {
+        "restrict_keywords": [
+            "conventional deadlift", "sumo deadlift", "good morning",
+            "stiff leg", "romanian deadlift", "rdl",
+            "deep squat", "below parallel", "back squat",
+        ],
+        "main_swap":         ("Trap Bar Deadlift",              "neutral stance reduces SI joint torque"),
+        "supplemental_swaps": {
+            "conventional deadlift": ("Trap Bar Deadlift",      "neutral stance, less rotational force on SI joint"),
+            "sumo deadlift":         ("Belt Squat",             "eliminates hip abduction load on SI joint"),
+            "romanian deadlift":     ("Nordic Hamstring Curl",  "removes SI joint hinge pattern"),
+            "rdl":                   ("Nordic Hamstring Curl",  "removes SI joint hinge pattern"),
+            "stiff leg":             ("Nordic Hamstring Curl",  "removes SI joint hinge pattern"),
+            "back squat":            ("Box Squat (Above Parallel)", "limits depth, reduces SI joint shear"),
+        },
+        "accessory_swaps": {
+            "good morning":    ("Reverse Hyper",               "decompresses SI joint while training posterior chain"),
+            "deep squat":      ("Box Squat (Above Parallel)",  "limits depth to protect SI joint"),
+            "below parallel":  ("Box Squat (Above Parallel)",  "limits depth to protect SI joint"),
+        },
+        "prehab_to_add": [
+            {"name": "Dead Bug (Core Stabilization)", "prescription": "3x10 (per side)", "notes": "SI joint stability, neutral pelvis bracing"},
+            {"name": "Clamshell (Band)",               "prescription": "3x20 (per side)", "notes": "Glute med activation to reduce SI joint stress"},
+        ],
+    },
     "lower back": {
         "restrict_keywords": [
             "conventional deadlift", "good morning", "stiff leg",
@@ -1030,9 +1203,13 @@ _INJURY_ALIAS = {
     "shoulder impingement": "shoulder", "shoulder pain": "shoulder",
     "rotator cuff": "shoulder", "shoulder injury": "shoulder",
     "low back": "lower back", "lumbar": "lower back", "back pain": "lower back",
-    "si joint": "lower back", "disc herniation": "lower back",
+    "disc herniation": "lower back",
+    # SI Joint maps to its own key (has its own injury config)
+    "si joint": "si joint", "si joint / pelvis": "si joint",
+    "sacroiliac": "si joint", "sacroiliac joint": "si joint", "pelvis": "si joint",
     "knee pain": "knee", "patellar tendonitis": "knee", "patellar": "knee",
     "knee tendonitis": "knee", "it band": "knee", "patella": "knee",
+    "sciatica": "lower back",
 }
 
 

@@ -9,8 +9,8 @@ const STEPS = 6;
 
 export default function OnboardingStep1() {
   const router = useRouter();
-  const [name, setName] = useState('Eric');
-  const [experience, setExperience] = useState('Advanced');
+  const [name, setName] = useState('');
+  const [experience, setExperience] = useState('');
 
   async function handleNext() {
     await AsyncStorage.setItem('ob_step1', JSON.stringify({ name, experience }));
@@ -88,7 +88,7 @@ const s = StyleSheet.create({
   input: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, height: 52, paddingHorizontal: SPACING.lg, color: COLORS.text.primary, fontSize: FONTS.sizes.base, borderWidth: 1, borderColor: COLORS.border },
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   option: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  optionActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  optionActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent, },
   optionText: { color: COLORS.text.secondary, fontWeight: FONTS.weights.medium, fontSize: FONTS.sizes.sm },
   optionTextActive: { color: '#FFF', fontWeight: FONTS.weights.bold },
   btn: { backgroundColor: COLORS.accent, borderRadius: RADIUS.md, height: 52, justifyContent: 'center', alignItems: 'center', marginTop: 'auto', marginBottom: 16 },

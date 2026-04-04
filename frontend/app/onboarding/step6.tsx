@@ -18,18 +18,19 @@ export default function OnboardingStep6() {
       const s4 = JSON.parse(await AsyncStorage.getItem('ob_step4') || '{}');
       const s5 = JSON.parse(await AsyncStorage.getItem('ob_step5') || '{}');
 
+      const today = new Date().toISOString().split('T')[0];
       const profile: Partial<AthleteProfile> = {
-        name: s1.name || 'Eric',
-        experience: s1.experience || 'Advanced',
-        currentBodyweight: s2.currentBodyweight || 274,
-        bw12WeekGoal: s2.bw12WeekGoal || 255,
-        bwLongRunGoal: s2.bwLongRunGoal || 230,
+        name: s1.name || '',
+        experience: s1.experience || 'Beginner',
+        currentBodyweight: s2.currentBodyweight || 0,
+        bw12WeekGoal: s2.bw12WeekGoal || 0,
+        bwLongRunGoal: s2.bwLongRunGoal || 0,
         basePRs: s3.basePRs || {},
         injuryFlags: s4.injuryFlags || [],
         avoidMovements: s4.avoidMovements || [],
         weaknesses: s4.weaknesses || [],
         currentWeek: s5.currentWeek || 1,
-        programStartDate: s5.programStartDate || '2026-03-16',
+        programStartDate: s5.programStartDate || today,
         units: 'lbs',
         onboardingComplete: true,
         loseitConnected: connectLoseIt,
@@ -49,8 +50,8 @@ export default function OnboardingStep6() {
       const prs = s3.basePRs || {};
       try {
         await programApi.submitIntake({
-          goal: 'Strongman',
-          experience: s1.experience || 'Advanced',
+          goal: s1.experience === 'Elite' ? 'strength' : 'strength', // derived from onboarding
+          experience: s1.experience || 'Beginner',
           lifts: {
             squat: prs.backSquat || prs.ssbBoxSquat || undefined,
             bench: prs.benchPress || undefined,

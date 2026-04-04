@@ -1039,6 +1039,8 @@ export default function OnboardingIntake() {
             contentContainerStyle={s.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            keyboardDismissMode="on-drag"
           >
             <Animated.View style={{ opacity: greetFade, transform: [{ translateY: greetSlide }] }}>
               <Text style={s.greeting}>{meta.greeting}</Text>
@@ -1053,7 +1055,7 @@ export default function OnboardingIntake() {
               {renderContent()}
             </Animated.View>
 
-            <View style={{ height: 24 }} />
+            <View style={{ height: 120 }} />
           </ScrollView>
         </Animated.View>
 

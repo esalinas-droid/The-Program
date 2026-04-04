@@ -107,7 +107,7 @@ export default function AuthScreen() {
       if (!available) {
         Alert.alert(
           'Apple Sign-In',
-          'Apple Sign-In will be available soon. Please use email to sign in for now.',
+          'Apple Sign-In requires a standalone build. Please use email for now.',
           [
             { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
             { text: 'Cancel', style: 'cancel' },
@@ -148,7 +148,7 @@ export default function AuthScreen() {
       // Any other error (e.g., no Apple ID configured, network timeout) → friendly alert
       Alert.alert(
         'Apple Sign-In',
-        'Apple Sign-In will be available soon. Please use email to sign in for now.',
+        'Apple Sign-In requires a standalone build. Please use email for now.',
         [
           { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
           { text: 'Cancel', style: 'cancel' },
@@ -204,22 +204,21 @@ export default function AuthScreen() {
 
           {/* ── Apple Sign-In (iOS only, App Store required) ── */}
           {Platform.OS === 'ios' && (
-            <View style={s.appleWrapper}>
+            <TouchableOpacity
+              style={[s.appleCustomBtn, appleLoading && { opacity: 0.7 }]}
+              onPress={handleAppleSignIn}
+              activeOpacity={0.85}
+              disabled={appleLoading}
+            >
               {appleLoading ? (
-                <View style={s.appleLoadingBtn}>
-                  <ActivityIndicator size="small" color={WHITE} />
-                  <Text style={s.appleLoadingText}>Signing in with Apple…</Text>
-                </View>
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <AppleAuthentication.AppleAuthenticationButton
-                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                  cornerRadius={12}
-                  style={s.appleBtn}
-                  onPress={handleAppleSignIn}
-                />
+                <MaterialCommunityIcons name="apple" size={20} color="#FFFFFF" />
               )}
-            </View>
+              <Text style={s.appleCustomText}>
+                {appleLoading ? 'Signing in…' : 'Sign in with Apple'}
+              </Text>
+            </TouchableOpacity>
           )}
 
           {/* Google — "Coming soon" */}
@@ -305,7 +304,7 @@ export default function AuthScreen() {
               <Text style={s.inputLabel}>FULL NAME</Text>
               <TextInput
                 style={s.input}
-                placeholder="Eric Salinas"
+                placeholder="Your full name"
                 placeholderTextColor={MUTED}
                 value={name}
                 onChangeText={setName}
@@ -397,14 +396,21 @@ const s = StyleSheet.create({
   socialSection: { paddingHorizontal: 24, gap: 12, marginBottom: 28 },
 
   // Apple Sign-In — black bg, Apple HIG required
-  appleWrapper:  { width: '100%' },
-  appleBtn:      { width: '100%', height: 50 },
-  appleLoadingBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: '#000', borderRadius: 12, height: 50,
+  appleCustomBtn: {
+    width: '100%', height: 50,
+    backgroundColor: '#000000',
+    borderRadius: RADIUS.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
-  appleLoadingText: { color: WHITE, fontSize: 15, fontWeight: '600' as any },
-
+  appleCustomText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600' as any,
+    letterSpacing: 0.1,
+  },
   // Generic social (Google / Facebook)
   socialBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
