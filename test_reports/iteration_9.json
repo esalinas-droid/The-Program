@@ -1,0 +1,25 @@
+{
+  "summary": "Retest of profile userId-scoping and injury_preview isolation fixes. All 12 backend tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_isolation_retest.py",
+    "/app/test_reports/pytest/iteration9_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_isolation_retest.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "not tested"},
+  "seed_data_creation": "Registered test_iso@theprogram.app / IsoTest999 as fresh user; upserted user_a profile with name=TEST_Athlete_UserA",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both fixes confirmed working: (1) GET/POST /api/profile now returns 404 for fresh users (not default user profile). (2) injury_preview for fresh user correctly shows SI Joint in addedInjuries (not alreadyExisting) with Deadlift restricted. (3) user_a and user_b have isolated profiles with different userIds. (4) user_b cannot see user_a profile updates."
+}

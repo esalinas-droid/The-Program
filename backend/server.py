@@ -190,33 +190,38 @@ def epley_e1rm(weight: float, reps: int) -> float:
 
 # ── Profile Endpoints ─────────────────────────────────────────────────────────
 @api_router.get("/profile")
-async def get_profile():
-    doc = await db.profile.find_one({})
+async def get_profile(userId: str = Depends(get_current_user)):
+    doc = await db.profile.find_one({"userId": userId})
     if not doc:
+        # Graceful fallback for users who haven't completed onboarding yet
         raise HTTPException(status_code=404, detail="Profile not found")
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
 
 @api_router.post("/profile")
-async def create_profile(profile: AthleteProfileUpdate):
-    existing = await db.profile.find_one({})
+async def create_profile(profile: AthleteProfileUpdate, userId: str = Depends(get_current_user)):
+    existing = await db.profile.find_one({"userId": userId})
     data = {k: v for k, v in profile.model_dump().items() if v is not None}
     data["updatedAt"] = datetime.now(timezone.utc)
+    data["userId"] = userId          # always stamp userId
     if existing:
         await db.profile.update_one({"_id": existing["_id"]}, {"$set": data})
         doc = await db.profile.find_one({"_id": existing["_id"]})
     else:
         default = AthleteProfile(**data)
-        result = await db.profile.insert_one(default.to_mongo())
+        d = default.to_mongo()
+        d["userId"] = userId
+        result = await db.profile.insert_one(d)
         doc = await db.profile.find_one({"_id": result.inserted_id})
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
 
 @api_router.put("/profile")
-async def update_profile(profile: AthleteProfileUpdate):
-    existing = await db.profile.find_one({})
+async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(get_current_user)):
+    existing = await db.profile.find_one({"userId": userId})
     if not existing:
         raise HTTPException(status_code=404, detail="Profile not found")
     data = {k: v for k, v in profile.model_dump().items() if v is not None}
     data["updatedAt"] = datetime.now(timezone.utc)
+    data["userId"] = userId          # keep userId stamped
     await db.profile.update_one({"_id": existing["_id"]}, {"$set": data})
     doc = await db.profile.find_one({"_id": existing["_id"]})
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
@@ -294,10 +299,8 @@ _EXERCISE_CONTRAINDICATIONS = [
 async def injury_preview(body: dict, userId: str = Depends(get_current_user)):
     """Preview how changing injury flags would affect the training program."""
     new_injuries = body.get("newInjuryFlags", [])
-    # Scope to current user
+    # Scope to current user only — never fall back to default user's injuries
     profile = await db.profile.find_one({"userId": userId})
-    if not profile:
-        profile = await db.profile.find_one({})
     current_injuries = profile.get("injuryFlags", []) if profile else []
 
     old_kw = _build_injury_keywords(current_injuries)
@@ -345,12 +348,10 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
     """
     new_injuries = body.get("newInjuryFlags", [])
 
-    # ── 1. Fetch profile (scoped to userId) ──────────────────────────────────
+    # ── 1. Fetch profile (scoped to userId — never inherit default user) ─────────
     profile = await db.profile.find_one({"userId": userId})
     if not profile:
-        profile = await db.profile.find_one({})
-    if not profile:
-        raise HTTPException(404, "Profile not found")
+        raise HTTPException(404, "Profile not found for this user")
 
     old_injuries = profile.get("injuryFlags", [])
     added   = [i for i in new_injuries   if i not in old_injuries]
