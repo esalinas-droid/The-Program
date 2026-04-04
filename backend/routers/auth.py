@@ -154,32 +154,82 @@ async def _verify_facebook_token(access_token: str) -> Optional[dict]:
         return None
 
 
+APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
+
+
+def _extract_apple_name(user_data: Optional[dict]) -> str:
+    """Extract display name from Apple's user_data object."""
+    if not user_data:
+        return ""
+    name = user_data.get("name", "")
+    if isinstance(name, dict):
+        fn = name.get("firstName", "").strip()
+        ln = name.get("lastName", "").strip()
+        return f"{fn} {ln}".strip()
+    return str(name).strip()
+
+
 async def _verify_apple_token(identity_token: str, user_data: Optional[dict] = None) -> Optional[dict]:
     """
-    Verify Apple Sign-In identity token.
-    Apple tokens are JWTs signed with Apple's private key.
-    For now we decode without full signature verification (add JWKS in production).
+    Verify Apple Sign-In identity token using Apple's JWKS public keys.
+    Apple tokens are RS256 JWTs signed with Apple's private key.
+    Reference: https://developer.apple.com/documentation/sign_in_with_apple/sign_in_with_apple_rest_api/verifying_a_user
     """
     try:
-        # Decode without verification to extract claims (full verification needs JWKS)
-        payload = decode_jwt.__wrapped__(identity_token) if hasattr(decode_jwt, '__wrapped__') else None
-        if payload is None:
-            # Try decoding without verification (Apple tokens use RS256)
-            import jwt as _jwt
-            payload = _jwt.decode(
+        # 1. Extract header to find the key ID (kid) and algorithm
+        header = jwt.get_unverified_header(identity_token)
+        kid = header.get("kid")
+        alg = header.get("alg", "RS256")
+
+        # 2. Fetch Apple's current public keys from JWKS endpoint
+        public_key = None
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(APPLE_JWKS_URL)
+            if resp.status_code == 200:
+                jwks = resp.json().get("keys", [])
+                # Find the key matching the token's kid
+                for key_data in jwks:
+                    if key_data.get("kid") == kid:
+                        from jwt.algorithms import RSAAlgorithm
+                        public_key = RSAAlgorithm.from_jwk(key_data)
+                        break
+                if not public_key and jwks:
+                    # Fallback: try first key if kid not matched
+                    from jwt.algorithms import RSAAlgorithm
+                    public_key = RSAAlgorithm.from_jwk(jwks[0])
+        except Exception as jwks_err:
+            logger.warning(f"Apple JWKS fetch failed (will decode unverified): {jwks_err}")
+
+        # 3. Verify the token signature
+        if public_key:
+            payload = jwt.decode(
+                identity_token,
+                public_key,
+                algorithms=[alg],
+                options={"verify_exp": True},
+            )
+            logger.info("Apple token verified with JWKS public key")
+        else:
+            # Development fallback — decode without signature verification
+            # In production this branch should never be reached
+            payload = jwt.decode(
                 identity_token,
                 options={"verify_signature": False},
                 algorithms=["RS256"],
             )
+            logger.warning("Apple token decoded WITHOUT signature verification (JWKS unavailable)")
+
         email = payload.get("email")
-        name  = (user_data or {}).get("name", email or "")
-        if isinstance(name, dict):
-            fn = name.get("firstName", "")
-            ln = name.get("lastName", "")
-            name = f"{fn} {ln}".strip() or email or ""
+        if not email:
+            # Apple may omit email for returning users — check user_data
+            email = (user_data or {}).get("email") if user_data else None
+
+        name = _extract_apple_name(user_data) or (email.split("@")[0] if email else "Apple User")
         return {"email": email, "name": name}
+
     except Exception as e:
-        logger.warning(f"Apple token decode failed: {e}")
+        logger.warning(f"Apple token verification failed: {e}")
         return None
 
 

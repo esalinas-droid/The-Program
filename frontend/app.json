@@ -13,7 +13,9 @@
       "bundleIdentifier": "com.theprogram.app",
       "infoPlist": {
         "NSUserNotificationUsageDescription": "Get training reminders and PR alerts",
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -23,7 +25,11 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.theprogram.app",
-      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE", "SCHEDULE_EXACT_ALARM"]
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "SCHEDULE_EXACT_ALARM"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -48,7 +54,8 @@
           "color": "#C55A11",
           "sounds": []
         }
-      ]
+      ],
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true
