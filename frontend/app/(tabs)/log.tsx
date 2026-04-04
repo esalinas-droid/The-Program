@@ -9,7 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, programApi } from '../../src/utils/api';
+import { logApi, programApi, rehabApi } from '../../src/utils/api';
 import { getTodayDayName, getTodaySession } from '../../src/data/programData';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -779,6 +779,8 @@ const sb = StyleSheet.create({
 });
 
 // ── Main LogScreen ─────────────────────────────────────────────────────────────
+const TEAL  = '#4DCEA6';
+const AMBER = '#F5A623';
 export default function LogScreen() {
   // Initialize directly from local programData for the current day — no async needed,
   // no ME Upper flash. useFocusEffect will override once profile week is loaded.
@@ -812,6 +814,14 @@ export default function LogScreen() {
   // Finish modal
   const [finishVisible, setFinishVisible] = useState(false);
 
+  // ── Rehab section (Task 8) ────────────────────────────────────────────────
+  const [rehabData, setRehabData] = useState<any | null>(null);
+  const [rehabExpanded, setRehabExpanded] = useState(true);
+  const [loggingRehabEx, setLoggingRehabEx] = useState<string | null>(null);
+  const [rehabSetsCompleted, setRehabSetsCompleted] = useState('3');
+  const [rehabPainLevel, setRehabPainLevel] = useState(0);
+  const [rehabLogSuccess, setRehabLogSuccess] = useState<string | null>(null);
+
   useFocusEffect(useCallback(() => {
     (async () => {
       const prof = await getProfile();
@@ -833,6 +843,12 @@ export default function LogScreen() {
         const apiExs = buildFromApi(todayData?.session?.exercises);
         if (apiExs.length > 0) setExercises(apiExs);
       } catch { /* Keep local data */ }
+
+      // ── Fetch active rehab exercises (Task 8) ─────────────────────────────
+      try {
+        const rData = await rehabApi.getExercises();
+        setRehabData(rData?.hasActiveRehab ? rData : null);
+      } catch { /* Rehab not critical */ }
 
       setLoading(false);
     })();
@@ -999,6 +1015,136 @@ export default function LogScreen() {
             />
           ))}
 
+          {/* ── REHAB EXERCISES SECTION (Task 8) ── */}
+          {rehabData?.hasActiveRehab && (
+            <View style={s.rehabSection}>
+              {/* Section header */}
+              <TouchableOpacity
+                style={s.rehabHeader}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setRehabExpanded(e => !e); }}
+                activeOpacity={0.8}
+              >
+                <View style={s.rehabHeaderLeft}>
+                  <View style={s.rehabBadge}>
+                    <MaterialCommunityIcons name="medical-bag" size={11} color={TEAL} />
+                  </View>
+                  <View>
+                    <Text style={s.rehabTitle}>REHAB EXERCISES</Text>
+                    <Text style={s.rehabSubtitle}>
+                      {rehabData.injuryInput} · Phase {rehabData.currentPhase} — {rehabData.phaseName}
+                    </Text>
+                  </View>
+                </View>
+                <View style={s.rehabHeaderRight}>
+                  <Text style={s.rehabCount}>{(rehabData.exercises || []).length} exercises</Text>
+                  <MaterialCommunityIcons name={rehabExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.text.muted} />
+                </View>
+              </TouchableOpacity>
+
+              {rehabExpanded && (
+                <View style={s.rehabContent}>
+                  {(rehabData.exercises || []).map((ex: any, i: number) => (
+                    <View key={i} style={s.rehabExCard}>
+                      <TouchableOpacity
+                        style={s.rehabExHeader}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setLoggingRehabEx(loggingRehabEx === ex.name ? null : ex.name);
+                          setRehabSetsCompleted('3');
+                          setRehabPainLevel(0);
+                          setRehabLogSuccess(null);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <View style={s.rehabExLeft}>
+                          <View style={[s.rehabLevelDot, {
+                            backgroundColor: ex.level === 'gentle' ? '#4DCEA650' : ex.level === 'light' ? '#5B9CF550' : ex.is_rag ? '#F5A62350' : '#EF535050',
+                          }]} />
+                          <View>
+                            <Text style={s.rehabExName}>{ex.name}</Text>
+                            <Text style={s.rehabExPrescription}>{ex.prescription}</Text>
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          {ex.is_rag && (
+                            <View style={s.rehabRagBadge}>
+                              <MaterialCommunityIcons name="dna" size={8} color={AMBER} />
+                            </View>
+                          )}
+                          <MaterialCommunityIcons
+                            name={loggingRehabEx === ex.name ? 'check-circle-outline' : 'plus-circle-outline'}
+                            size={20}
+                            color={loggingRehabEx === ex.name ? TEAL : COLORS.text.muted}
+                          />
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* Inline log form */}
+                      {loggingRehabEx === ex.name && (
+                        <View style={s.rehabLogForm}>
+                          {ex.notes ? <Text style={s.rehabExNote}>{ex.notes}</Text> : null}
+                          <View style={s.rehabFormRow}>
+                            <Text style={s.rehabFormLabel}>Sets completed</Text>
+                            <View style={s.rehabSetsPicker}>
+                              {['1','2','3','4','5'].map(n => (
+                                <TouchableOpacity
+                                  key={n}
+                                  style={[s.rehabSetBtn, rehabSetsCompleted === n && s.rehabSetBtnActive]}
+                                  onPress={() => setRehabSetsCompleted(n)}
+                                >
+                                  <Text style={[s.rehabSetBtnText, rehabSetsCompleted === n && s.rehabSetBtnTextActive]}>{n}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                          <View style={s.rehabFormRow}>
+                            <Text style={s.rehabFormLabel}>Pain (0 = none, 4 = severe)</Text>
+                            <View style={s.rehabSetsPicker}>
+                              {[0,1,2,3,4].map(n => (
+                                <TouchableOpacity
+                                  key={n}
+                                  style={[s.rehabSetBtn, rehabPainLevel === n && { ...s.rehabSetBtnActive, backgroundColor: n >= 3 ? '#EF535030' : TEAL + '25', borderColor: n >= 3 ? '#EF5350' : TEAL }]}
+                                  onPress={() => setRehabPainLevel(n)}
+                                >
+                                  <Text style={[s.rehabSetBtnText, rehabPainLevel === n && s.rehabSetBtnTextActive]}>{n}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            style={s.rehabLogBtn}
+                            onPress={async () => {
+                              try {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                const result = await rehabApi.log({
+                                  exerciseName: ex.name,
+                                  setsCompleted: parseInt(rehabSetsCompleted),
+                                  painLevel: rehabPainLevel,
+                                });
+                                setRehabLogSuccess(result.message || 'Logged!');
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                                // Refresh rehab data to show updated clean sessions
+                                const updated = await rehabApi.getExercises();
+                                if (updated?.hasActiveRehab) setRehabData(updated);
+                                setTimeout(() => { setLoggingRehabEx(null); setRehabLogSuccess(null); }, 1800);
+                              } catch { setRehabLogSuccess('Error logging — try again'); }
+                            }}
+                          >
+                            <MaterialCommunityIcons name="check" size={14} color={COLORS.primary} />
+                            <Text style={s.rehabLogBtnText}>LOG SET</Text>
+                          </TouchableOpacity>
+                          {rehabLogSuccess && (
+                            <Text style={s.rehabSuccessText}>{rehabLogSuccess}</Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
           <View style={{ height: SPACING.xxl }} />
         </ScrollView>
 
@@ -1108,4 +1254,34 @@ const s = StyleSheet.create({
   finishStatValue:{ fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
   finishDoneBtn:  { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 14, alignItems: 'center' },
   finishDoneBtnText:{ color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 0.5 },
+
+  // ── Rehab Section (Task 8) ──────────────────────────────────────────────
+  rehabSection:   { marginHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, borderWidth: 1.5, borderColor: TEAL + '40', overflow: 'hidden' },
+  rehabHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: TEAL + '20' },
+  rehabHeaderLeft:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  rehabHeaderRight:{ flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rehabBadge:     { width: 22, height: 22, borderRadius: 11, backgroundColor: TEAL + '25', justifyContent: 'center', alignItems: 'center' },
+  rehabTitle:     { fontSize: 10, fontWeight: '800' as any, color: TEAL, letterSpacing: 1.5 },
+  rehabSubtitle:  { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+  rehabCount:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  rehabContent:   { padding: SPACING.sm },
+  rehabExCard:    { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, marginBottom: 6, overflow: 'hidden' },
+  rehabExHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md },
+  rehabExLeft:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  rehabLevelDot:  { width: 8, height: 8, borderRadius: 4 },
+  rehabExName:    { fontSize: FONTS.sizes.sm, fontWeight: '600' as any, color: COLORS.text.primary },
+  rehabExPrescription: { fontSize: FONTS.sizes.xs, color: TEAL, marginTop: 1, fontWeight: '600' as any },
+  rehabRagBadge:  { width: 14, height: 14, borderRadius: 7, backgroundColor: AMBER + '20', justifyContent: 'center', alignItems: 'center' },
+  rehabLogForm:   { padding: SPACING.md, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border },
+  rehabExNote:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 16, marginBottom: SPACING.sm, fontStyle: 'italic' },
+  rehabFormRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
+  rehabFormLabel: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, flex: 1 },
+  rehabSetsPicker:{ flexDirection: 'row', gap: 4 },
+  rehabSetBtn:    { width: 32, height: 32, borderRadius: 8, backgroundColor: COLORS.border, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
+  rehabSetBtnActive: { backgroundColor: TEAL + '25', borderColor: TEAL },
+  rehabSetBtnText:   { fontSize: 13, color: COLORS.text.muted, fontWeight: '600' as any },
+  rehabSetBtnTextActive: { color: TEAL },
+  rehabLogBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: TEAL, borderRadius: RADIUS.md, paddingVertical: 10, marginTop: SPACING.sm },
+  rehabLogBtnText:{ color: '#000', fontWeight: '700' as any, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
+  rehabSuccessText: { fontSize: FONTS.sizes.xs, color: TEAL, textAlign: 'center', marginTop: 4 },
 });

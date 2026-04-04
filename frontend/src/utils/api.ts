@@ -291,3 +291,105 @@ export const warmupApi = {
     extended: boolean;
   }> => api('/warmup/today'),
 };
+
+// ─── Phase 2 Batch 3 APIs ──────────────────────────────────────────────────────
+
+// Task 8: Rehab Progression Tracking
+export const rehabApi = {
+  start: (injuryType: string) =>
+    api('/rehab/start', { method: 'POST', body: JSON.stringify({ injuryType }) }),
+  getStatus: (): Promise<{
+    hasActiveRehab: boolean;
+    protocolId?: string;
+    injuryKey?: string;
+    injuryInput?: string;
+    currentPhase?: number;
+    phaseName?: string;
+    durationLabel?: string;
+    goal?: string;
+    criteriaToAdvance?: string;
+    exercises?: Array<{ name: string; prescription: string; level: string; notes: string; is_rag: boolean }>;
+    cleanSessions?: number;
+    sessionsRequired?: number;
+    readyToAdvance?: boolean;
+    isFinalPhase?: boolean;
+  }> => api('/rehab/status'),
+  getExercises: (): Promise<{
+    hasActiveRehab: boolean;
+    injuryKey?: string;
+    injuryInput?: string;
+    currentPhase?: number;
+    phaseName?: string;
+    exercises?: Array<{ name: string; prescription: string; level: string; notes: string; is_rag: boolean }>;
+  }> => api('/rehab/exercises'),
+  log: (data: {
+    exerciseName: string;
+    setsCompleted: number;
+    repsCompleted?: string;
+    painLevel: number;
+    notes?: string;
+  }) => api('/rehab/log', { method: 'POST', body: JSON.stringify(data) }),
+  graduate: () => api('/rehab/graduate', { method: 'POST' }),
+};
+
+// Task 9: Competition Peaking
+export const competitionApi = {
+  set: (competitionDate: string, eventName?: string) =>
+    api('/competition/set', {
+      method: 'POST',
+      body: JSON.stringify({ competitionDate, eventName: eventName || 'Competition' }),
+    }),
+  getStatus: (): Promise<{
+    hasCompetition: boolean;
+    competitionDate?: string;
+    eventName?: string;
+    daysOut?: number;
+    weeksOut?: number;
+    phase?: string;
+    phaseLabel?: string;
+    color?: string;
+    bannerUrgency?: 'low' | 'medium' | 'high' | 'urgent';
+    adjustments?: string[];
+    ragTip?: string | null;
+  }> => api('/competition/status'),
+};
+
+// Task 10: Exercise Rotation Detection
+export const rotationApi = {
+  check: (): Promise<{
+    flagged: Array<{
+      exercise: string;
+      category: string;
+      weeksUsed: number;
+      windowWeeks: number;
+      overduByWeeks: number;
+      suggestion: { replacement: string; reason: string } | null;
+    }>;
+    count: number;
+    message: string;
+  }> => api('/rotation/check'),
+  apply: (swaps: Array<{ original: string; replacement: string; reason?: string }>) =>
+    api('/rotation/apply', { method: 'POST', body: JSON.stringify({ swaps }) }),
+};
+
+// Task 13: Changelog with Undo
+export const changeLogApi = {
+  get: (): Promise<{
+    changes: Array<{
+      changeId: string;
+      date: string;
+      week: number;
+      sessionType: string;
+      original: string;
+      replacement: string;
+      reason: string;
+      changeType: string;
+      undone: boolean;
+      undoable: boolean;
+      timestamp: string;
+    }>;
+    count: number;
+  }> => api('/coach/change-log'),
+  undo: (changeId: string) =>
+    api(`/coach/undo/${changeId}`, { method: 'POST' }),
+};

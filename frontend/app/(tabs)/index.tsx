@@ -7,7 +7,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -107,6 +107,8 @@ export default function Dashboard() {
   const [hasReadinessToday, setHasReadinessToday] = useState<boolean | null>(null);
   const [weeklyReview, setWeeklyReview] = useState<any | null>(null);
   const [deloadStatus, setDeloadStatus] = useState<any | null>(null);
+  const [competitionStatus, setCompetitionStatus] = useState<any | null>(null);
+  const [rotationStatus, setRotationStatus] = useState<any | null>(null);
 
   const loadData = useCallback(async () => {
     const prof = await getProfile();
@@ -151,6 +153,18 @@ export default function Dashboard() {
       const deload = await deloadApi.check();
       setDeloadStatus(deload);
     } catch { /* Deload check not critical */ }
+
+    // ── Fetch competition status (Task 9) ──────────────────────────────────
+    try {
+      const comp = await competitionApi.getStatus();
+      setCompetitionStatus(comp);
+    } catch { /* Competition check not critical */ }
+
+    // ── Fetch rotation status (Task 10) ───────────────────────────────────
+    try {
+      const rot = await rotationApi.check();
+      setRotationStatus(rot?.count > 0 ? rot : null);
+    } catch { /* Rotation check not critical */ }
 
     setLoading(false);
   }, []);
@@ -221,6 +235,31 @@ export default function Dashboard() {
         </View>
 
         {/* ── PRIORITY CARD STACK ── */}
+
+        {/* P0: Competition Countdown Banner (Task 9) */}
+        {competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0 && (
+          <View style={[s.competitionBanner, { borderLeftColor: competitionStatus.color || TEAL_COLOR }]} testID="competition-banner">
+            <View style={s.competitionBannerRow}>
+              <MaterialCommunityIcons name="trophy-outline" size={18} color={competitionStatus.color || TEAL_COLOR} />
+              <View style={{ flex: 1 }}>
+                <Text style={[s.competitionBannerTitle, { color: competitionStatus.color || TEAL_COLOR }]}>
+                  {(competitionStatus.weeksOut ?? 0) <= 0 ? '🏆 COMPETITION DAY' : `${competitionStatus.weeksOut} WEEKS OUT`}
+                </Text>
+                <Text style={s.competitionBannerEvent}>
+                  {competitionStatus.eventName || 'Competition'} · {competitionStatus.phaseLabel}
+                </Text>
+              </View>
+            </View>
+            {competitionStatus.adjustments?.[0] && (
+              <Text style={s.competitionAdjNote}>{competitionStatus.adjustments[0]}</Text>
+            )}
+            {competitionStatus.ragTip && (
+              <Text style={[s.competitionAdjNote, { color: TEAL_COLOR, fontStyle: 'italic' }]}>
+                Research: {competitionStatus.ragTip}
+              </Text>
+            )}
+          </View>
+        )}
 
         {/* P1: Pain Alert (shown when flagged regions detected) */}
         {flaggedRegions.length > 0 && (
@@ -345,6 +384,33 @@ export default function Dashboard() {
               <Text style={s.coachNoteLabel}>AI COACH · {programSession.session.sessionType?.toUpperCase()}</Text>
             </View>
             <Text style={s.coachNoteText}>{programSession.session.coachNote}</Text>
+          </View>
+        )}
+
+        {/* P3: Rotation Flag Card (Task 10) */}
+        {rotationStatus?.count > 0 && (
+          <View style={s.rotationCard} testID="rotation-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
+                <MaterialCommunityIcons name="rotate-3d-variant" size={14} color={COLORS.accentBlue} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>EXERCISE ROTATION DUE</Text>
+                <Text style={s.priorityCardSub}>
+                  {rotationStatus.count} exercise{rotationStatus.count > 1 ? 's' : ''} overdue for variation
+                </Text>
+              </View>
+            </View>
+            {rotationStatus.flagged?.slice(0, 2).map((item: any, i: number) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 }}>
+                <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.accentBlue} style={{ marginTop: 1 }} />
+                <Text style={[s.priorityCardSub, { flex: 1 }]}>
+                  <Text style={{ color: COLORS.text.primary }}>{item.exercise}</Text>
+                  {item.suggestion ? ` → ${item.suggestion.replacement}` : ''}
+                  {` (${item.weeksUsed}wk/${item.windowWeeks}wk window)`}
+                </Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -732,8 +798,18 @@ const s = StyleSheet.create({
   // Weekly Review + Deload cards
   weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, opacity: 0.95 },
   deloadWarningCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1.5, borderColor: '#FF980040' },
+  rotationCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.accentBlue + '30' },
   comingSoonPill:     { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
   comingSoonText:     { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
   nextWeekBox:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
   nextWeekText:       { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.accentBlue, lineHeight: 17, fontStyle: 'italic' },
+
+  // Competition Banner (Task 9)
+  competitionBanner:      { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4 },
+  competitionBannerRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 },
+  competitionBannerTitle: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  competitionBannerEvent: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+  competitionPhasePill:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
+  competitionPillText:    { fontSize: 12 },
+  competitionAdjNote:     { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 17, marginTop: 4, paddingLeft: 24 },
 });

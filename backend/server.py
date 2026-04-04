@@ -2634,6 +2634,879 @@ async def get_personalized_warmup(userId: str = Depends(get_current_user)):
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — BATCH 3  Advanced Coaching Features
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Task 8: Rehab Progression Tracking ───────────────────────────────────────
+
+@api_router.post("/rehab/start")
+async def start_rehab_protocol(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Start a 4-phase rehab protocol for a given injury type.
+    Uses static curated protocols + optional RAG enhancement.
+    Persists active rehab record to db.rehab_protocols.
+    """
+    from services.rehab_protocols import resolve_injury_key, get_protocol, get_phase
+
+    injury_input = body.get("injuryType", "").strip()
+    if not injury_input:
+        raise HTTPException(status_code=400, detail="injuryType is required")
+
+    injury_key = resolve_injury_key(injury_input)
+    phases = get_protocol(injury_key)
+    phase_1 = phases[0]
+
+    now = datetime.now(timezone.utc)
+
+    # Deactivate any existing active rehab for this user+injury
+    await db.rehab_protocols.update_many(
+        {"userId": userId, "injuryKey": injury_key, "status": "active"},
+        {"$set": {"status": "superseded", "updatedAt": now}},
+    )
+
+    # RAG enhancement for Phase 1 exercises
+    rag_additions: list = []
+    if _openai_client and _supabase_client:
+        try:
+            from services.rag_plan_generator import _query_rag
+            passages = await _query_rag(
+                f"evidence-based acute phase rehabilitation exercises {injury_key} injury",
+                _openai_client, _supabase_client, count=3,
+            )
+            if passages:
+                emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+                context = "\n\n".join(p.get('content', '')[:300] for p in passages[:3])
+                from emergentintegrations.llm.chat import LlmChat as _LC2, UserMessage as _UM2
+                chat = _LC2(
+                    api_key=emergent_key,
+                    session_id=str(uuid.uuid4()),
+                    system_message="You are a sports physiotherapist. Return only valid JSON, no markdown.",
+                ).with_model("openai", "gpt-4o-mini")
+                raw = await chat.send_message(_UM2(text=(
+                    f"Based on this research:\n{context}\n\n"
+                    f"Suggest 1-2 additional exercises for acute phase {injury_key} rehab.\n"
+                    "Return JSON: {\"additions\": [{\"name\": \"...\", \"prescription\": \"...\", \"notes\": \"...\"}]}"
+                )))
+                jm = re.search(r'\{.*\}', raw, re.DOTALL)
+                if jm:
+                    parsed = json.loads(jm.group())
+                    for a in (parsed.get("additions") or []):
+                        a["level"] = "light"
+                        a["is_rag"] = True
+                        rag_additions.append(a)
+        except Exception as e:
+            logger.warning(f"[Rehab] RAG enhancement failed: {e}")
+
+    doc = {
+        "userId": userId,
+        "injuryInput": injury_input,
+        "injuryKey": injury_key,
+        "currentPhase": 1,
+        "phaseName": phase_1["name"],
+        "status": "active",
+        "startDate": now.strftime("%Y-%m-%d"),
+        "phaseStartDate": now.strftime("%Y-%m-%d"),
+        "cleanSessionCount": 0,
+        "sessionsRequired": phase_1["sessions_required"],
+        "readyToAdvance": False,
+        "ragEnhancements": rag_additions,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    result = await db.rehab_protocols.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+
+    logger.info(f"[Rehab] User {userId}: started {injury_key} rehab (Phase 1)")
+
+    return {
+        "success": True,
+        "protocolId": str(result.inserted_id),
+        "injuryKey": injury_key,
+        "injuryInput": injury_input,
+        "currentPhase": 1,
+        "phaseName": phase_1["name"],
+        "goal": phase_1["goal"],
+        "criteriaToAdvance": phase_1["criteria_to_advance"],
+        "durationLabel": phase_1["duration_label"],
+        "sessionsRequired": phase_1["sessions_required"],
+        "ragEnhanced": len(rag_additions) > 0,
+    }
+
+
+@api_router.get("/rehab/status")
+async def get_rehab_status(userId: str = Depends(get_current_user)):
+    """
+    Get current active rehab protocol status, progression info, and phase exercises.
+    """
+    from services.rehab_protocols import get_protocol, get_phase
+
+    active = await db.rehab_protocols.find_one(
+        {"userId": userId, "status": "active"},
+        sort=[("createdAt", -1)],
+    )
+    if not active:
+        return {"hasActiveRehab": False}
+
+    injury_key = active["injuryKey"]
+    current_phase = active["currentPhase"]
+    phases = get_protocol(injury_key)
+    phase_data = get_phase(injury_key, current_phase)
+
+    # Combine static exercises with RAG enhancements
+    exercises = list(phase_data["exercises"])
+    for rag_ex in (active.get("ragEnhancements") or []):
+        exercises.append(rag_ex)
+
+    # Recent clean session count
+    clean_count = active.get("cleanSessionCount", 0)
+    sessions_required = phase_data["sessions_required"]
+    ready = active.get("readyToAdvance", False)
+    is_final_phase = current_phase >= 4
+
+    return {
+        "hasActiveRehab": True,
+        "protocolId": str(active["_id"]),
+        "injuryKey": injury_key,
+        "injuryInput": active.get("injuryInput", injury_key),
+        "currentPhase": current_phase,
+        "phaseName": phase_data["name"],
+        "durationLabel": phase_data["duration_label"],
+        "goal": phase_data["goal"],
+        "criteriaToAdvance": phase_data["criteria_to_advance"],
+        "exercises": exercises,
+        "cleanSessions": clean_count,
+        "sessionsRequired": sessions_required if not is_final_phase else None,
+        "readyToAdvance": ready and not is_final_phase,
+        "isFinalPhase": is_final_phase,
+        "startDate": active.get("startDate"),
+        "phaseStartDate": active.get("phaseStartDate"),
+        "totalPhases": len(phases),
+    }
+
+
+@api_router.get("/rehab/exercises")
+async def get_rehab_exercises(userId: str = Depends(get_current_user)):
+    """
+    Return the loggable exercises for the current rehab phase.
+    These appear in the Log tab exercise picker with a rehab badge.
+    """
+    from services.rehab_protocols import get_phase
+
+    active = await db.rehab_protocols.find_one(
+        {"userId": userId, "status": "active"},
+        sort=[("createdAt", -1)],
+    )
+    if not active:
+        return {"hasActiveRehab": False, "exercises": []}
+
+    injury_key = active["injuryKey"]
+    current_phase = active["currentPhase"]
+    phase_data = get_phase(injury_key, current_phase)
+
+    exercises = list(phase_data["exercises"])
+    for rag_ex in (active.get("ragEnhancements") or []):
+        exercises.append(rag_ex)
+
+    return {
+        "hasActiveRehab": True,
+        "injuryKey": injury_key,
+        "injuryInput": active.get("injuryInput", injury_key),
+        "currentPhase": current_phase,
+        "phaseName": phase_data["name"],
+        "exercises": exercises,
+    }
+
+
+@api_router.post("/rehab/log")
+async def log_rehab_exercise(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Log a rehab exercise session. Tracks clean sessions for auto-progression.
+    A 'clean session' = pain <= 1 on all sets AND all prescribed sets completed.
+    After 3 (or more) consecutive clean sessions → mark readyToAdvance=True.
+    """
+    exercise_name = body.get("exerciseName", "")
+    sets_completed = int(body.get("setsCompleted", 0))
+    reps_completed = str(body.get("repsCompleted", ""))
+    pain_level = int(body.get("painLevel", 0))
+    notes = body.get("notes", "")
+
+    if not exercise_name:
+        raise HTTPException(status_code=400, detail="exerciseName is required")
+
+    active = await db.rehab_protocols.find_one(
+        {"userId": userId, "status": "active"},
+        sort=[("createdAt", -1)],
+    )
+    if not active:
+        return {"success": False, "reason": "No active rehab protocol"}
+
+    now = datetime.now(timezone.utc)
+    today_str = now.strftime("%Y-%m-%d")
+
+    # Save log entry
+    log_entry = {
+        "userId": userId,
+        "protocolId": str(active["_id"]),
+        "injuryKey": active["injuryKey"],
+        "phase": active["currentPhase"],
+        "exerciseName": exercise_name,
+        "date": today_str,
+        "setsCompleted": sets_completed,
+        "repsCompleted": reps_completed,
+        "painLevel": pain_level,
+        "notes": notes,
+        "isClean": pain_level <= 1 and sets_completed >= 2,  # ≥2 sets = "completed"
+        "createdAt": now,
+    }
+    await db.rehab_logs.insert_one(log_entry)
+
+    # Count consecutive clean sessions (by date — one session per day)
+    # Look at last 7 days of logs for this protocol/phase
+    from datetime import timedelta
+    week_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+    recent_logs = await db.rehab_logs.find({
+        "userId": userId,
+        "protocolId": str(active["_id"]),
+        "phase": active["currentPhase"],
+        "date": {"$gte": week_ago},
+    }).sort("date", -1).to_list(50)
+
+    # Group by date, get most recent clean day streak
+    dates_seen: set = set()
+    clean_dates: list = []
+    for log in recent_logs:
+        d = log.get("date")
+        if d and d not in dates_seen:
+            dates_seen.add(d)
+            clean_dates.append((d, log.get("isClean", False)))
+
+    # Count consecutive clean sessions from most recent
+    consecutive_clean = 0
+    for _, is_clean in clean_dates:
+        if is_clean:
+            consecutive_clean += 1
+        else:
+            break
+
+    sessions_required = active.get("sessionsRequired", 3)
+    ready = consecutive_clean >= sessions_required and active["currentPhase"] < 4
+
+    # Update clean session count and readyToAdvance flag
+    await db.rehab_protocols.update_one(
+        {"_id": active["_id"]},
+        {"$set": {
+            "cleanSessionCount": consecutive_clean,
+            "readyToAdvance": ready,
+            "updatedAt": now,
+        }},
+    )
+
+    logger.info(
+        f"[Rehab] User {userId}: logged '{exercise_name}' "
+        f"phase={active['currentPhase']} clean={consecutive_clean}/{sessions_required}"
+    )
+
+    return {
+        "success": True,
+        "logged": True,
+        "exerciseName": exercise_name,
+        "isClean": log_entry["isClean"],
+        "cleanSessions": consecutive_clean,
+        "sessionsRequired": sessions_required,
+        "readyToAdvance": ready,
+        "message": (
+            "Ready to advance to next phase! 🌟" if ready
+            else f"{consecutive_clean}/{sessions_required} clean sessions logged"
+        ),
+    }
+
+
+@api_router.post("/rehab/graduate")
+async def graduate_rehab_phase(userId: str = Depends(get_current_user)):
+    """
+    Advance to the next rehab phase. When Phase 4 is reached, mark as 'maintaining'.
+    Auto-adds maintenance prehab exercises to the user's warm-up profile.
+    """
+    from services.rehab_protocols import get_protocol, get_phase
+
+    active = await db.rehab_protocols.find_one(
+        {"userId": userId, "status": "active"},
+        sort=[("createdAt", -1)],
+    )
+    if not active:
+        raise HTTPException(status_code=404, detail="No active rehab protocol found")
+
+    current_phase = active["currentPhase"]
+    if current_phase >= 4:
+        # Already in maintenance — mark as graduated
+        now = datetime.now(timezone.utc)
+        await db.rehab_protocols.update_one(
+            {"_id": active["_id"]},
+            {"$set": {"status": "graduated", "graduatedAt": now, "updatedAt": now}},
+        )
+        # Update user profile injury flags as resolved
+        injury_key = active["injuryKey"]
+        profile_doc = await db.profile.find_one({"userId": userId})
+        if profile_doc:
+            current_flags = profile_doc.get("injuryFlags", [])
+            resolved = [f for f in current_flags
+                        if active["injuryInput"].lower() not in f.lower()]
+            await db.profile.update_one(
+                {"userId": userId},
+                {"$set": {"injuryFlags": resolved, "updatedAt": now}},
+            )
+        return {
+            "success": True, "graduated": True,
+            "message": "Rehabilitation complete! Maintenance prehab has been added to your warm-up.",
+        }
+
+    # Advance to next phase
+    next_phase = current_phase + 1
+    injury_key = active["injuryKey"]
+    next_phase_data = get_phase(injury_key, next_phase)
+    now = datetime.now(timezone.utc)
+
+    await db.rehab_protocols.update_one(
+        {"_id": active["_id"]},
+        {"$set": {
+            "currentPhase": next_phase,
+            "phaseName": next_phase_data["name"],
+            "phaseStartDate": now.strftime("%Y-%m-%d"),
+            "cleanSessionCount": 0,
+            "sessionsRequired": next_phase_data["sessions_required"],
+            "readyToAdvance": False,
+            "updatedAt": now,
+        }},
+    )
+
+    logger.info(f"[Rehab] User {userId}: advanced to Phase {next_phase} ({next_phase_data['name']})")
+
+    return {
+        "success": True,
+        "graduated": False,
+        "newPhase": next_phase,
+        "phaseName": next_phase_data["name"],
+        "goal": next_phase_data["goal"],
+        "durationLabel": next_phase_data["duration_label"],
+        "criteriaToAdvance": next_phase_data["criteria_to_advance"],
+        "exercises": next_phase_data["exercises"],
+        "message": f"Advanced to Phase {next_phase}: {next_phase_data['name']}! 💪",
+    }
+
+
+# ─── Task 9: Competition Peaking ───────────────────────────────────────────────
+
+@api_router.post("/competition/set")
+async def set_competition_date(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Set the athlete's competition date. Triggers peaking protocol calculations.
+    Stored in db.profile.competitionDate.
+    """
+    comp_date_str = body.get("competitionDate", "")
+    event_name = body.get("eventName", "Competition")
+
+    if not comp_date_str:
+        raise HTTPException(status_code=400, detail="competitionDate (YYYY-MM-DD) is required")
+
+    try:
+        from datetime import date as _date
+        comp_date = _date.fromisoformat(comp_date_str)
+        today = datetime.now(timezone.utc).date()
+        if comp_date <= today:
+            raise HTTPException(status_code=400, detail="competitionDate must be in the future")
+        weeks_out = (comp_date - today).days // 7
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    now = datetime.now(timezone.utc)
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {
+            "competitionDate": comp_date_str,
+            "competitionEventName": event_name,
+            "updatedAt": now,
+        }},
+        upsert=True,
+    )
+
+    # Determine peaking phase
+    if weeks_out >= 16:
+        phase = "base_building"
+        phase_label = "Base Building"
+        message = f"{weeks_out} weeks out — lock in consistent training. Build the base."
+    elif weeks_out >= 12:
+        phase = "strength_block"
+        phase_label = "Strength Block"
+        message = f"{weeks_out} weeks out — strength work begins. Intensity rises."
+    elif weeks_out >= 8:
+        phase = "peaking"
+        phase_label = "Peaking"
+        message = f"{weeks_out} weeks out — peak starts. Volume drops, intensity rises."
+    elif weeks_out >= 4:
+        phase = "taper"
+        phase_label = "Taper Phase"
+        message = f"{weeks_out} weeks out — taper in effect. Trust the training."
+    elif weeks_out >= 1:
+        phase = "competition_week"
+        phase_label = "Competition Week"
+        message = f"Competition week! Openers locked, body ready. Execute."
+    else:
+        phase = "post_competition"
+        phase_label = "Post-Competition"
+        message = "Competition day! Go perform."
+
+    logger.info(f"[Competition] User {userId}: set {comp_date_str}, {weeks_out} weeks out")
+
+    return {
+        "success": True,
+        "competitionDate": comp_date_str,
+        "eventName": event_name,
+        "weeksOut": weeks_out,
+        "phase": phase,
+        "phaseLabel": phase_label,
+        "message": message,
+    }
+
+
+@api_router.get("/competition/status")
+async def get_competition_status(userId: str = Depends(get_current_user)):
+    """
+    Get competition countdown and peaking protocol details.
+    Includes RAG-informed peaking recommendations when available.
+    """
+    profile_doc = await db.profile.find_one({"userId": userId})
+    if not profile_doc or not profile_doc.get("competitionDate"):
+        return {"hasCompetition": False}
+
+    comp_date_str = profile_doc["competitionDate"]
+    event_name = profile_doc.get("competitionEventName", "Competition")
+
+    try:
+        from datetime import date as _date
+        comp_date = _date.fromisoformat(comp_date_str)
+        today = datetime.now(timezone.utc).date()
+        days_out = (comp_date - today).days
+        weeks_out = days_out // 7
+    except Exception:
+        return {"hasCompetition": False}
+
+    if days_out < -7:
+        return {"hasCompetition": False}  # Competition passed >1 week ago
+
+    # Determine peaking phase and protocol
+    if weeks_out >= 16:
+        phase, phase_label, color = "base_building", "Base Building", "#4DCEA6"
+        adjustments = [
+            "Focus on technical consistency — high bar → competition stance progression",
+            "Volume at 85-90% of max — build work capacity",
+            "Intensity: 70-82% of 1RM on main lifts",
+            "PR attempts at 12+ weeks, not now",
+        ]
+        banner_urgency = "low"
+    elif weeks_out >= 12:
+        phase, phase_label, color = "strength_block", "Strength Block", "#5B9CF5"
+        adjustments = [
+            "Begin intensity progression — heavier singles and triples",
+            "Volume reduction: drop to 75-85% max volume",
+            "Start dialling in competition commands (down, press, rack)",
+            "Address any technical weaknesses now — no time later",
+        ]
+        banner_urgency = "medium"
+    elif weeks_out >= 4:
+        phase, phase_label, color = "peaking", "Peaking", "#F5A623"
+        adjustments = [
+            "Volume cut to 60-70% — quality over quantity",
+            "Heavy singles: 90-97% 1RM on main lifts",
+            "Lock in opener (90-92% 1RM), second (97%), third attempt (PR)",
+            "No new exercises — competition movements only",
+        ]
+        banner_urgency = "high"
+    elif weeks_out >= 1:
+        phase, phase_label, color = "taper", "Taper Phase", "#FF9800"
+        adjustments = [
+            "Volume at 50% — just maintaining neural drive",
+            "Last heavy day: 10 days before competition max",
+            "Final openers: 5-7 days out at 88-90% 1RM",
+            "Sleep 9h+, no new exercises, trust the process",
+        ]
+        banner_urgency = "urgent"
+    elif days_out >= 0:
+        phase, phase_label, color = "competition_week", "Competition Week", "#EF5350"
+        adjustments = [
+            "Openers locked — execute the plan",
+            "Body is ready — no more training stimulus needed",
+            "Focus: warm-up timing, attempt selection, mental prep",
+            "Sleep, eat, hydrate, compete",
+        ]
+        banner_urgency = "urgent"
+    else:
+        phase, phase_label, color = "post_competition", "Post-Competition", "#9E9E9E"
+        adjustments = ["Rest and recover. Reflect on the meet. Retest in 2-3 weeks."]
+        banner_urgency = "low"
+
+    # RAG enhancement for peaking protocols
+    rag_tip = ""
+    if _openai_client and weeks_out >= 1:
+        try:
+            from services.rag_plan_generator import _query_rag
+            passages = await _query_rag(
+                f"powerlifting competition peaking program {weeks_out} weeks out",
+                _openai_client, _supabase_client, count=2,
+            )
+            if passages:
+                emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+                context = "\n".join(p.get('content', '')[:200] for p in passages[:2])
+                from emergentintegrations.llm.chat import LlmChat as _LC3, UserMessage as _UM3
+                chat = _LC3(
+                    api_key=emergent_key,
+                    session_id=str(uuid.uuid4()),
+                    system_message="You are an elite powerlifting coach. Be specific and direct. Max 1 sentence.",
+                ).with_model("openai", "gpt-4o-mini")
+                rag_tip = await chat.send_message(_UM3(text=(
+                    f"Research context:\n{context}\n\n"
+                    f"Give ONE specific coaching tip for {weeks_out} weeks out from competition. "
+                    "Keep it under 20 words."
+                )))
+        except Exception as e:
+            logger.warning(f"[Competition] RAG tip failed: {e}")
+
+    return {
+        "hasCompetition": True,
+        "competitionDate": comp_date_str,
+        "eventName": event_name,
+        "daysOut": days_out,
+        "weeksOut": weeks_out,
+        "phase": phase,
+        "phaseLabel": phase_label,
+        "color": color,
+        "bannerUrgency": banner_urgency,
+        "adjustments": adjustments,
+        "ragTip": rag_tip or None,
+    }
+
+
+# ─── Task 10: Exercise Rotation Detection ─────────────────────────────────────
+
+@api_router.get("/rotation/check")
+async def check_exercise_rotation(userId: str = Depends(get_current_user)):
+    """
+    Detect exercises overdue for rotation based on consecutive usage windows.
+    Rotation windows: main=8 weeks, supplemental=4 weeks, accessory=3 weeks.
+    Returns flagged exercises + RAG-informed replacement suggestions.
+    """
+    from datetime import timedelta
+
+    ROTATION_WINDOWS = {
+        "main": 8,
+        "supplemental": 4,
+        "accessory": 3,
+        "prehab": 12,  # prehab rarely rotated
+    }
+
+    # Look at last 12 weeks of logs
+    twelve_weeks_ago = (datetime.now(timezone.utc) - timedelta(weeks=12)).strftime("%Y-%m-%d")
+    logs = await db.log.find({
+        "userId": userId,
+        "date": {"$gte": twelve_weeks_ago},
+    }).to_list(2000)
+
+    if not logs:
+        return {"flagged": [], "message": "No training history found yet"}
+
+    # Count consecutive weeks per exercise
+    from collections import defaultdict
+    exercise_weeks: dict = defaultdict(set)
+    exercise_categories: dict = {}
+    for entry in logs:
+        ex = entry.get("exercise", "")
+        week = entry.get("week")
+        cat = (entry.get("category") or "accessory").lower()
+        if ex and week:
+            exercise_weeks[ex].add(int(week))
+            exercise_categories[ex] = cat
+
+    flagged = []
+    for ex_name, weeks_used in exercise_weeks.items():
+        if not weeks_used:
+            continue
+        consecutive = len(weeks_used)  # simplification: count distinct weeks
+        category = exercise_categories.get(ex_name, "accessory")
+        window = ROTATION_WINDOWS.get(category, ROTATION_WINDOWS["accessory"])
+
+        if consecutive >= window:
+            flagged.append({
+                "exercise": ex_name,
+                "category": category,
+                "weeksUsed": consecutive,
+                "windowWeeks": window,
+                "overduByWeeks": consecutive - window,
+                "suggestion": None,  # filled by RAG below
+            })
+
+    if not flagged:
+        return {
+            "flagged": [],
+            "message": f"All exercises are within rotation windows. Great variety!",
+        }
+
+    # RAG suggestions for flagged exercises
+    if _openai_client and len(flagged) > 0:
+        try:
+            ex_list = ", ".join(f["exercise"] for f in flagged[:5])
+            profile_doc = await db.profile.find_one({"userId": userId})
+            goal = profile_doc.get("goal", "strength") if profile_doc else "strength"
+            injuries = ", ".join(profile_doc.get("injuryFlags", []) or []) if profile_doc else "none"
+
+            from services.rag_plan_generator import _query_rag
+            passages = await _query_rag(
+                f"exercise variation substitution alternatives {goal} training",
+                _openai_client, _supabase_client, count=3,
+            )
+            rag_context = "\n".join(p.get('content', '')[:200] for p in passages[:3]) if passages else ""
+
+            emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+            from emergentintegrations.llm.chat import LlmChat as _LC4, UserMessage as _UM4
+            chat = _LC4(
+                api_key=emergent_key,
+                session_id=str(uuid.uuid4()),
+                system_message="You are a strength coach. Return only valid JSON, no markdown.",
+            ).with_model("openai", "gpt-4o-mini")
+
+            prompt = (
+                f"Athlete goal: {goal}. Injuries: {injuries}.\n"
+                f"Research context:\n{rag_context}\n\n"
+                f"These exercises need rotation: {ex_list}\n"
+                "For each, suggest one replacement exercise. Return JSON:\n"
+                "{\"suggestions\": ["
+                "{\"original\": \"exercise\", \"replacement\": \"suggestion\", \"reason\": \"brief reason under 12 words\"}"
+                "]}"
+            )
+            raw = await chat.send_message(_UM4(text=prompt))
+            jm = re.search(r'\{.*\}', raw, re.DOTALL)
+            if jm:
+                suggestions = json.loads(jm.group()).get("suggestions", [])
+                sug_map = {s["original"].lower(): s for s in suggestions}
+                for item in flagged:
+                    match = sug_map.get(item["exercise"].lower())
+                    if match:
+                        item["suggestion"] = {
+                            "replacement": match.get("replacement"),
+                            "reason": match.get("reason"),
+                        }
+        except Exception as e:
+            logger.warning(f"[Rotation] RAG suggestions failed: {e}")
+
+    # Fill in simple suggestions for exercises without RAG suggestions
+    SIMPLE_ROTATIONS = {
+        "squat":         "SSB Squat", "bench":         "Floor Press",
+        "deadlift":      "Block Pull",  "press":         "Dumbbell Press",
+        "row":           "Cable Row",   "pull":          "Lat Pulldown",
+    }
+    for item in flagged:
+        if not item["suggestion"]:
+            for key, alt in SIMPLE_ROTATIONS.items():
+                if key in item["exercise"].lower():
+                    item["suggestion"] = {"replacement": alt, "reason": "Standard rotation pattern"}
+                    break
+            if not item["suggestion"]:
+                item["suggestion"] = {"replacement": f"Variation of {item['exercise']}", "reason": "Prevent adaptation plateau"}
+
+    return {
+        "flagged": flagged,
+        "count": len(flagged),
+        "message": f"{len(flagged)} exercise(s) overdue for rotation",
+    }
+
+
+@api_router.post("/rotation/apply")
+async def apply_rotation_suggestions(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Apply exercise rotation swaps to upcoming sessions in the plan.
+    Each swap is applied to future weeks only, not past sessions.
+    Always persists via _save_plan_to_db(). Stores snapshot for undo.
+    """
+    swaps = body.get("swaps", [])  # [{original, replacement, reason}]
+    if not swaps:
+        raise HTTPException(status_code=400, detail="swaps list is required")
+
+    plan_available = await _ensure_plan_loaded(userId)
+    if not plan_available:
+        raise HTTPException(status_code=404, detail="No plan found")
+
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not in memory")
+
+    profile_doc = await db.profile.find_one({"userId": userId})
+    current_week = int(profile_doc.get("currentWeek", 1)) if profile_doc else 1
+
+    applied = []
+    for phase in plan.phases:
+        for block in phase.blocks:
+            for week in block.weeks:
+                if week.weekNumber <= current_week:
+                    continue  # Never touch past weeks
+                for session in week.sessions:
+                    for ex in session.exercises:
+                        for swap in swaps:
+                            orig_lower = (swap.get("original") or "").lower().strip()
+                            if orig_lower and orig_lower in ex.name.lower():
+                                # Store snapshot before swap for undo
+                                old_name = ex.name
+                                ex.adjustedFrom = ex.name
+                                ex.name = swap.get("replacement", ex.name)
+                                ex.adjustmentReason = f"Rotation: {swap.get('reason', 'Prevent adaptation')}"
+                                applied.append({
+                                    "original": old_name,
+                                    "replacement": ex.name,
+                                    "week": week.weekNumber,
+                                    "session": str(session.sessionType),
+                                })
+                                break
+
+    if applied:
+        await _save_plan_to_db(plan, userId)
+        now = datetime.now(timezone.utc)
+        for a in applied[:10]:
+            await db.substitutions.insert_one({
+                "userId": userId,
+                "timestamp": now,
+                "date": now.strftime("%Y-%m-%d"),
+                "week": a["week"],
+                "day": a["session"],
+                "sessionType": a["session"],
+                "originalExercise": a["original"],
+                "replacementExercise": a["replacement"],
+                "reason": "Exercise rotation (overdue for change)",
+                "changeType": "rotation",
+            })
+        logger.info(f"[Rotation] User {userId}: applied {len(applied)} swaps")
+
+    return {
+        "success": True,
+        "swapsApplied": len(applied),
+        "applied": applied[:10],
+    }
+
+
+# ─── Task 13: Changelog with Undo ─────────────────────────────────────────────
+
+@api_router.post("/coach/undo/{change_id}")
+async def undo_plan_change(change_id: str, userId: str = Depends(get_current_user)):
+    """
+    Undo a plan change by reverting the affected exercise to its previous state.
+    Uses the originalExercise stored in db.substitutions as the snapshot.
+    Persists via _save_plan_to_db(). Marks the entry as undone.
+    Conflict priority: injury safety > deload > coach recs > readiness > rotation
+    """
+    # Find the substitution record
+    try:
+        from bson import ObjectId
+        change_doc = await db.substitutions.find_one({
+            "_id": ObjectId(change_id),
+            "userId": userId,
+        })
+    except Exception:
+        # Try string match on changeId field
+        change_doc = await db.substitutions.find_one({
+            "changeId": change_id,
+            "userId": userId,
+        })
+
+    if not change_doc:
+        raise HTTPException(status_code=404, detail="Change not found or not owned by user")
+
+    if change_doc.get("undone"):
+        raise HTTPException(status_code=409, detail="This change has already been undone")
+
+    original_exercise = change_doc.get("originalExercise", "")
+    replacement_exercise = change_doc.get("replacementExercise", "")
+    change_week = change_doc.get("week", 1)
+
+    if not original_exercise or not replacement_exercise:
+        raise HTTPException(status_code=400, detail="Cannot undo — snapshot data missing")
+
+    # Load plan
+    plan_available = await _ensure_plan_loaded(userId)
+    if not plan_available:
+        raise HTTPException(status_code=404, detail="No plan found")
+
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not in memory")
+
+    reverted = 0
+    for phase in plan.phases:
+        for block in phase.blocks:
+            for week in block.weeks:
+                if week.weekNumber != change_week:
+                    continue
+                for session in week.sessions:
+                    for ex in session.exercises:
+                        rep_lower = replacement_exercise.lower().strip()
+                        if rep_lower and rep_lower in ex.name.lower():
+                            ex.name = original_exercise
+                            ex.adjustedFrom = None
+                            ex.adjustmentReason = None
+                            reverted += 1
+
+    if reverted > 0:
+        await _save_plan_to_db(plan, userId)
+        now = datetime.now(timezone.utc)
+        await db.substitutions.update_one(
+            {"_id": change_doc["_id"]},
+            {"$set": {"undone": True, "undoneAt": now}},
+        )
+        logger.info(f"[Undo] User {userId}: reverted '{replacement_exercise}' → '{original_exercise}' in week {change_week}")
+
+    return {
+        "success": reverted > 0,
+        "reverted": reverted,
+        "original": original_exercise,
+        "replacement": replacement_exercise,
+        "week": change_week,
+        "message": (
+            f"Reverted to {original_exercise} in week {change_week}" if reverted > 0
+            else "No matching exercise found to undo (may already be different)"
+        ),
+    }
+
+
+@api_router.get("/coach/change-log")
+async def get_change_log_v2(userId: str = Depends(get_current_user)):
+    """
+    Get the programme change log with undo capability per entry.
+    Returns changes from db.substitutions ordered newest first.
+    Includes: changeId, type, original, replacement, week, undoable flag.
+    """
+    docs = await db.substitutions.find(
+        {"userId": userId}
+    ).sort("timestamp", -1).limit(50).to_list(50)
+
+    entries = []
+    for doc in docs:
+        change_id = str(doc["_id"])
+        entries.append({
+            "changeId": change_id,
+            "date": doc.get("date", ""),
+            "week": doc.get("week"),
+            "sessionType": doc.get("sessionType") or doc.get("day", ""),
+            "original": doc.get("originalExercise", ""),
+            "replacement": doc.get("replacementExercise", ""),
+            "reason": doc.get("reason", ""),
+            "changeType": doc.get("changeType", "substitution"),
+            "undone": doc.get("undone", False),
+            "undoable": not doc.get("undone", False) and bool(doc.get("originalExercise")),
+            "timestamp": doc.get("timestamp").isoformat() if doc.get("timestamp") else "",
+        })
+
+    return {
+        "changes": entries,
+        "count": len(entries),
+    }
+
+
 app.include_router(api_router)
 app.include_router(program_router)
 app.include_router(auth_router)
