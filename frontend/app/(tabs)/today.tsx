@@ -8,7 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getBlock } from '../../src/utils/calculations';
 import {
@@ -877,7 +877,7 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
   loggedSets: Set<string>;
   painSets: Set<string>;
   onToggle: () => void;
-  onLog: (setId: string) => void;
+  onLog: (setId: string, exerciseName: string, set: ExSet) => void;
   onPain: (setId: string) => void;
   onAdjust: (id: string, name: string) => void;
   onReportPain: (exerciseName: string) => void;
@@ -952,7 +952,7 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
                 index={idx}
                 logged={loggedSets.has(set.id)}
                 painFlagged={painSets.has(set.id)}
-                onLog={() => onLog(set.id)}
+                onLog={() => onLog(set.id, swap?.replacement ?? exercise.name, set)}
                 onPain={() => onPain(set.id)}
               />
             ))}
@@ -1091,6 +1091,31 @@ export default function TodayScreen() {
           setExercises(apiExs);
           // Expand only the first exercise by default
           setExpanded(new Set([apiExs[0].id]));
+
+          // Bug 4 fix: Reload previously logged sets from backend
+          try {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const logsResp = await logApi.list();
+            const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+            const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+            if (todayLogs.length > 0) {
+              // Build a map: exerciseName → count of logged sets today
+              const logCountMap = new Map<string, number>();
+              for (const lg of todayLogs) {
+                const key = (lg.exercise || '').toLowerCase();
+                logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
+              }
+              // Mark the first N sets as logged for each exercise
+              const recovered = new Set<string>();
+              for (const ex of apiExs) {
+                const count = logCountMap.get(ex.name.toLowerCase()) || 0;
+                for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
+                  recovered.add(ex.sets[i].id);
+                }
+              }
+              if (recovered.size > 0) setLoggedSets(recovered);
+            }
+          } catch { /* Non-blocking — keep empty set if fetch fails */ }
         }
       } catch { /* No AI plan yet — keep local exercises */ }
 
@@ -1179,11 +1204,35 @@ export default function TodayScreen() {
     || "Drive through today's session with full intent. Build deliberately to your peak and leave no doubt in those supplemental sets.";
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
-  const handleLog = (setId: string) => {
+  const handleLog = async (setId: string, exerciseName?: string, set?: ExSet) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoggedSets(prev => new Set([...prev, setId]));
     setTimerSeconds(0);
     setTimerRunning(true);
+
+    // Bug 3 fix: Persist logged set to backend so Log tab sees it
+    if (exerciseName && set) {
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+        await logApi.create({
+          date: todayStr,
+          week: week || 1,
+          day: dayOfWeek,
+          sessionType: sessionType || 'Training',
+          exercise: exerciseName,
+          sets: 1,
+          weight: set.weight || 0,
+          reps: parseInt(set.reps) || 1,
+          rpe: 7,
+          pain: 0,
+          completed: 'yes',
+        });
+      } catch (err) {
+        // Non-blocking — log failure shouldn't interrupt the set indicator
+        console.log('[Today] Backend log failed:', err);
+      }
+    }
   };
 
   const handlePain = (setId: string) => {

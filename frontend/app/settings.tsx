@@ -231,7 +231,7 @@ export default function SettingsScreen() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Reset', style: 'destructive', onPress: async () => {
           await saveProfile({ onboardingComplete: false });
-          router.replace('/onboarding');
+          router.replace('/onboarding-intake');
         }},
       ]
     );
@@ -613,7 +613,6 @@ export default function SettingsScreen() {
                     style={s.modalChip}
                     onPress={() => {
                       setEditedInjuries(prev => [...prev, inj]);
-                      setShowAddInjury(false);
                     }}
                     activeOpacity={0.8}
                   >
@@ -622,6 +621,12 @@ export default function SettingsScreen() {
                 ))}
               </View>
             </ScrollView>
+            <TouchableOpacity
+              style={[s.saveBtn, { marginTop: 12, marginHorizontal: 0 }]}
+              onPress={() => setShowAddInjury(false)}
+            >
+              <Text style={s.saveBtnText}>Done</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -640,7 +645,6 @@ export default function SettingsScreen() {
                     style={s.modalChip}
                     onPress={() => {
                       setEditedWeaknesses(prev => [...prev, w]);
-                      setShowAddWeakness(false);
                     }}
                     activeOpacity={0.8}
                   >
@@ -649,6 +653,12 @@ export default function SettingsScreen() {
                 ))}
               </View>
             </ScrollView>
+            <TouchableOpacity
+              style={[s.saveBtn, { marginTop: 12, marginHorizontal: 0 }]}
+              onPress={() => setShowAddWeakness(false)}
+            >
+              <Text style={s.saveBtnText}>Done</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>

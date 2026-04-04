@@ -70,36 +70,149 @@ EXERCISE_DB = {
 
 # ─── Session Templates ────────────────────────────────────────────────────────
 
-def _build_me_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
+
+# ─── Injury Contraindication Filter ─────────────────────────────────────────
+
+_INJURY_CONTRAINDICATIONS: Dict[str, List[str]] = {
+    "Shoulder (general)":     ["Floor Press", "Speed Bench", "2-Board Press", "Close-Grip Bench", "Incline Bench", "Log Press", "Axle Press"],
+    "Rotator Cuff":           ["Floor Press", "Speed Bench", "2-Board Press", "Log Press", "Axle Press", "DB Lateral Raise"],
+    "Lower Back / Lumbar":    ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift", "Reverse Hyper"],
+    "SI Joint / Pelvis":      ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift", "Bulgarian Split Squat"],
+    "Hip / Hip Flexor":       ["Box Squat", "Bulgarian Split Squat", "Front Squat", "Yoke Walk", "Sled Push"],
+    "Knee (general)":         ["Box Squat", "SSB Squat", "Bulgarian Split Squat", "Belt Squat", "Front Squat"],
+    "Patellar Tendinitis":    ["Box Squat", "Front Squat", "Belt Squat"],
+    "Ankle / Foot":           ["Box Squat", "Front Squat", "Sled Push"],
+    "Elbow / Tennis Elbow":   ["Close-Grip Bench", "Tricep Pushdown", "Hammer Curl"],
+    "Wrist / Forearm":        ["Close-Grip Bench", "SSB Squat"],
+}
+
+def _filter_injured(exercises: List[SessionExercise], injuries: List[str]) -> List[SessionExercise]:
+    """Remove exercises contraindicated by user's active injuries."""
+    blocked: set = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+    filtered = []
+    for ex in exercises:
+        if ex.name in blocked:
+            # Find a safe substitute (basic barbell press / squat)
+            if ex.category == ExerciseCategory.MAIN:
+                ex.notes = (ex.notes or "") + " [Modified — original blocked by injury]"
+                ex.name = "Barbell Row" if ex.category == ExerciseCategory.SUPPLEMENTAL else ex.name
+            else:
+                continue  # Drop non-main blocked accessories
+        filtered.append(ex)
+    return filtered
+
+
+def _has_equip(equipment: List[str], key: str) -> bool:
+    """Check if equipment key matches any item in user's equipment list."""
+    if not equipment:
+        return False
+    key_lower = key.lower()
+    return any(key_lower in e.lower() or e.lower() in key_lower for e in equipment)
+
+
+# ─── Session Templates ────────────────────────────────────────────────────────
+
+def _build_me_upper(lifts: CurrentLifts, unit: str,
+                    goal: str = "strength",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    injuries = injuries or []
+    equipment = equipment or []
     bench_max = lifts.bench or 135
-    return [
-        SessionExercise(
-            sessionExerciseId=_id(), name="Floor Press", category=ExerciseCategory.MAIN,
-            prescription="Work to 1RM", cues=EXERCISE_DB["Floor Press"]["cues"],
-            targetSets=[
-                TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
-                TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.5)), targetReps="5", setType="warmup"),
-                TargetSet(setNumber=3, targetLoad=str(int(bench_max * 0.7)), targetReps="3", setType="ramp"),
-                TargetSet(setNumber=4, targetLoad=str(int(bench_max * 0.85)), targetReps="1", setType="ramp"),
-                TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.95)), targetReps="1", setType="work"),
-                TargetSet(setNumber=6, targetLoad=str(int(bench_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
-            ],
-            notes="Rotate variation weekly", lastPerformance=f"{bench_max} × 1"
-        ),
-        SessionExercise(
+
+    # ── Goal-specific main exercise ───────────────────────────────────────────
+    blocked_upper = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked_upper.update(ex_list)
+
+    if goal in ("strongman", "strongman_competition"):
+        if _has_equip(equipment, "log") and "Log Press" not in blocked_upper:
+            main_name, main_label = "Log Press", "Log clean & press"
+        elif _has_equip(equipment, "axle") and "Axle Press" not in blocked_upper:
+            main_name, main_label = "Axle Press", "Axle strict/push press"
+            if "Axle Press" not in EXERCISE_DB:
+                EXERCISE_DB["Axle Press"] = {"pattern": "Push", "muscles": ["Shoulders", "Triceps"], "equipment": "Axle", "cues": ["Clean to rack or from stands", "Full lockout overhead"]}
+        else:
+            main_name, main_label = "Incline Bench", "Incline bench — overhead carry-over"
+    elif goal in ("powerlifting", "powerlifting_competition"):
+        candidates = ["2-Board Press", "Close-Grip Bench", "Incline Bench", "Floor Press"]
+        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        main_label = "Competition bench variation"
+    elif goal in ("hypertrophy", "bodybuilding"):
+        candidates = ["Incline Bench", "Floor Press", "Incline DB Press"]
+        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        main_label = "Hypertrophy pressing — control the eccentric"
+    else:  # strength / general
+        candidates = ["Floor Press", "2-Board Press", "Close-Grip Bench", "Incline Bench"]
+        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        main_label = "Rotate variation weekly"
+
+    # ── Rep/load scheme varies by goal ────────────────────────────────────────
+    if goal in ("hypertrophy", "bodybuilding"):
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="15", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.55)), targetReps="10", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(bench_max * 0.70)), targetReps="8", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(bench_max * 0.75)), targetReps="8", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.80)), targetReps="6-8", setType="work", targetRPE=8.0),
+        ]
+        main_prx = "5×8 — moderate load, controlled reps"
+    else:
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.5)), targetReps="5", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(bench_max * 0.7)), targetReps="3", setType="ramp"),
+            TargetSet(setNumber=4, targetLoad=str(int(bench_max * 0.85)), targetReps="1", setType="ramp"),
+            TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.95)), targetReps="1", setType="work"),
+            TargetSet(setNumber=6, targetLoad=str(int(bench_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
+        ]
+        main_prx = "Work to 1RM"
+
+    main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+
+    # ── Supplemental ─────────────────────────────────────────────────────────
+    if goal in ("strongman", "strongman_competition"):
+        supp = [SessionExercise(
+            sessionExerciseId=_id(), name="Weighted Pull-Up", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×5-8 — lat strength for overhead stability",
+            targetSets=[TargetSet(setNumber=i, targetReps="5-8", setType="work") for i in range(1, 5)],
+        )]
+    elif goal in ("hypertrophy", "bodybuilding"):
+        supp = [SessionExercise(
+            sessionExerciseId=_id(), name="DB Lateral Raise", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×12-15 — superset with front raises",
+            targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 5)],
+        )]
+    else:
+        supp = [SessionExercise(
             sessionExerciseId=_id(), name="Pendlay Row", category=ExerciseCategory.SUPPLEMENTAL,
             prescription="4×6-8", cues=EXERCISE_DB["Pendlay Row"]["cues"],
             targetSets=[TargetSet(setNumber=i, targetLoad=str(int(bench_max * 0.7)), targetReps="6-8", setType="work") for i in range(1, 5)],
+        )]
+
+    exercises = [
+        SessionExercise(
+            sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+            prescription=main_prx, cues=main_cues,
+            targetSets=main_sets, notes=main_label, lastPerformance=f"{bench_max} × 1"
+        ),
+        *supp,
+        SessionExercise(
+            sessionExerciseId=_id(), name="Incline DB Press" if goal in ("hypertrophy", "bodybuilding") else "Tricep Pushdown",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="3×10-12" if goal in ("hypertrophy", "bodybuilding") else "3×15-20",
+            targetSets=[TargetSet(setNumber=i, targetReps="10-12" if goal in ("hypertrophy", "bodybuilding") else "15-20", setType="work") for i in range(1, 4)],
         ),
         SessionExercise(
-            sessionExerciseId=_id(), name="Incline DB Press", category=ExerciseCategory.ACCESSORY,
-            prescription="3×10-12", cues=EXERCISE_DB["Incline DB Press"]["cues"],
-            targetSets=[TargetSet(setNumber=i, targetReps="10-12", setType="work") for i in range(1, 4)],
-        ),
-        SessionExercise(
-            sessionExerciseId=_id(), name="Tricep Pushdown", category=ExerciseCategory.ACCESSORY,
-            prescription="3×15-20",
-            targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
+            sessionExerciseId=_id(), name="Hammer Curl", category=ExerciseCategory.ACCESSORY,
+            prescription="3×12-15",
+            targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 4)],
         ),
         SessionExercise(
             sessionExerciseId=_id(), name="Face Pull", category=ExerciseCategory.PREHAB,
@@ -108,37 +221,126 @@ def _build_me_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
             notes="Rear delt health — don't skip"
         ),
     ]
+    return _filter_injured(exercises, injuries)
 
 
-def _build_me_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
+def _build_me_lower(lifts: CurrentLifts, unit: str,
+                    goal: str = "strength",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    injuries = injuries or []
+    equipment = equipment or []
     squat_max = lifts.squat or 185
-    return [
-        SessionExercise(
-            sessionExerciseId=_id(), name="SSB Squat", category=ExerciseCategory.MAIN,
-            prescription="Work to 1RM", cues=EXERCISE_DB["SSB Squat"]["cues"],
-            targetSets=[
-                TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
-                TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.5)), targetReps="5", setType="warmup"),
-                TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.7)), targetReps="3", setType="ramp"),
-                TargetSet(setNumber=4, targetLoad=str(int(squat_max * 0.85)), targetReps="1", setType="ramp"),
-                TargetSet(setNumber=5, targetLoad=str(int(squat_max * 0.95)), targetReps="1", setType="work"),
-                TargetSet(setNumber=6, targetLoad=str(int(squat_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
-            ],
-            notes="Rotate variation weekly", lastPerformance=f"{squat_max} × 1"
-        ),
-        SessionExercise(
-            sessionExerciseId=_id(), name="Block Pull", category=ExerciseCategory.SUPPLEMENTAL,
-            prescription="3×3-5", cues=EXERCISE_DB["Block Pull"]["cues"],
+    dl_max = lifts.deadlift or 225
+
+    blocked_lower = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked_lower.update(ex_list)
+
+    # ── Goal-specific main exercise ───────────────────────────────────────────
+    if goal in ("strongman", "strongman_competition"):
+        if _has_equip(equipment, "yoke") and "Yoke Walk" not in blocked_lower:
+            main_name = "Yoke Walk"
+            main_prx = "Work to max 20m carry + heavy singles"
+            main_label = "Yoke — pick to hips, short fast steps"
+            main_sets = [
+                TargetSet(setNumber=1, targetLoad=str(int(squat_max * 0.6)), targetReps="20m", setType="warmup"),
+                TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.8)), targetReps="20m", setType="ramp"),
+                TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.95)), targetReps="20m", setType="work"),
+                TargetSet(setNumber=4, targetLoad=str(int(squat_max * 1.0)), targetReps="20m", setType="work", targetRPE=9.0),
+            ]
+            main_cues = EXERCISE_DB["Yoke Walk"]["cues"]
+        else:
+            main_name = "Axle Deadlift" if _has_equip(equipment, "axle") else "Block Pull"
+            main_prx = "Work to 1RM"
+            main_label = "Strongman pull variation"
+            main_sets = [
+                TargetSet(setNumber=1, targetLoad="Bar", targetReps="5", setType="warmup"),
+                TargetSet(setNumber=2, targetLoad=str(int(dl_max * 0.55)), targetReps="3", setType="warmup"),
+                TargetSet(setNumber=3, targetLoad=str(int(dl_max * 0.75)), targetReps="2", setType="ramp"),
+                TargetSet(setNumber=4, targetLoad=str(int(dl_max * 0.90)), targetReps="1", setType="ramp"),
+                TargetSet(setNumber=5, targetLoad=str(int(dl_max * 1.00)), targetReps="1", setType="work", targetRPE=9.5),
+            ]
+            main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+    elif goal in ("powerlifting", "powerlifting_competition"):
+        candidates = ["Box Squat", "Pause Squat", "Front Squat", "SSB Squat"]
+        if "Pause Squat" not in EXERCISE_DB:
+            EXERCISE_DB["Pause Squat"] = {"pattern": "Squat", "muscles": ["Quads", "Glutes"], "equipment": "Barbell", "cues": ["3s pause in hole", "Stay tight", "Drive knees out"]}
+        main_name = next((c for c in candidates if c not in blocked_lower), "SSB Squat")
+        main_prx = "Work to 1RM — competition squat variation"
+        main_label = "Competition squat building block"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.5)), targetReps="5", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.7)), targetReps="3", setType="ramp"),
+            TargetSet(setNumber=4, targetLoad=str(int(squat_max * 0.85)), targetReps="1", setType="ramp"),
+            TargetSet(setNumber=5, targetLoad=str(int(squat_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
+        ]
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+    elif goal in ("hypertrophy", "bodybuilding"):
+        candidates = ["Romanian Deadlift", "Bulgarian Split Squat", "SSB Squat"]
+        main_name = next((c for c in candidates if c not in blocked_lower), "Romanian Deadlift")
+        main_prx = "4×10-12 — controlled, feel the hamstrings"
+        main_label = "Hypertrophy lower — build the posterior chain"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="15", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(dl_max * 0.45)), targetReps="12", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(dl_max * 0.55)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(dl_max * 0.60)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(dl_max * 0.65)), targetReps="8-10", setType="work", targetRPE=8.0),
+        ]
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+    else:  # strength / general
+        candidates = ["SSB Squat", "Box Squat", "Front Squat"]
+        main_name = next((c for c in candidates if c not in blocked_lower), "Box Squat")
+        main_prx = "Work to 1RM"
+        main_label = "Rotate variation weekly"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.5)), targetReps="5", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.7)), targetReps="3", setType="ramp"),
+            TargetSet(setNumber=4, targetLoad=str(int(squat_max * 0.85)), targetReps="1", setType="ramp"),
+            TargetSet(setNumber=5, targetLoad=str(int(squat_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
+        ]
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+
+    # ── Supplemental ─────────────────────────────────────────────────────────
+    if goal in ("strongman", "strongman_competition"):
+        supp_name = "Atlas Stone" if (_has_equip(equipment, "stone") and "Atlas Stone" not in blocked_lower) else "Block Pull"
+        supp = [SessionExercise(
+            sessionExerciseId=_id(), name=supp_name, category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="3×3-5 — heavy", cues=EXERCISE_DB.get(supp_name, {}).get("cues", []),
             targetSets=[TargetSet(setNumber=i, targetReps="3-5", setType="work") for i in range(1, 4)],
-        ),
+        )]
+    elif goal in ("hypertrophy", "bodybuilding"):
+        supp = [SessionExercise(
+            sessionExerciseId=_id(), name="Bulgarian Split Squat" if "Bulgarian Split Squat" not in blocked_lower else "GHR",
+            category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×10-12/side", cues=EXERCISE_DB.get("Bulgarian Split Squat", {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="10-12/side", setType="work") for i in range(1, 5)],
+        )]
+    else:
+        supp = [SessionExercise(
+            sessionExerciseId=_id(), name="Block Pull" if "Block Pull" not in blocked_lower else "Romanian Deadlift",
+            category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="3×3-5", cues=EXERCISE_DB.get("Block Pull", {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="3-5", setType="work") for i in range(1, 4)],
+        )]
+
+    exercises = [
         SessionExercise(
-            sessionExerciseId=_id(), name="Bulgarian Split Squat", category=ExerciseCategory.ACCESSORY,
-            prescription="3×8-10/side",
-            targetSets=[TargetSet(setNumber=i, targetReps="8-10/side", setType="work") for i in range(1, 4)],
+            sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+            prescription=main_prx, cues=main_cues,
+            targetSets=main_sets, notes=main_label,
+            lastPerformance=f"{squat_max} × 1" if "Squat" in main_name or "Yoke" in main_name else f"{dl_max} × 1"
         ),
+        *supp,
         SessionExercise(
-            sessionExerciseId=_id(), name="GHR", category=ExerciseCategory.ACCESSORY,
-            prescription="3×12-15", cues=EXERCISE_DB["GHR"]["cues"],
+            sessionExerciseId=_id(), name="GHR" if "GHR" not in blocked_lower else "Reverse Hyper",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="3×12-15", cues=EXERCISE_DB.get("GHR", {}).get("cues", []),
             targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 4)],
         ),
         SessionExercise(
@@ -147,17 +349,50 @@ def _build_me_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
             targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)],
         ),
     ]
+    return _filter_injured(exercises, injuries)
 
 
-def _build_de_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
+def _build_de_upper(lifts: CurrentLifts, unit: str,
+                    goal: str = "strength",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    injuries = injuries or []
+    equipment = equipment or []
     bench_max = lifts.bench or 135
     speed_load = int(bench_max * 0.5)
-    return [
+
+    blocked = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+
+    if goal in ("strongman", "strongman_competition"):
+        if _has_equip(equipment, "log") and "Log Press" not in blocked:
+            main_name = "Log Press"
+            main_prx = f"6×2 @ {speed_load}{unit} — speed + technique focus"
+        else:
+            main_name = "Speed Bench"
+            main_prx = f"9×3 @ {speed_load}{unit}"
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+        main_sets = [TargetSet(setNumber=i, targetLoad=str(speed_load), targetReps="2" if "Log" in main_name else "3", setType="work") for i in range(1, 7 if "Log" in main_name else 10)]
+    elif goal in ("hypertrophy", "bodybuilding"):
+        main_name = "Incline Bench" if "Incline Bench" not in blocked else "Floor Press"
+        main_prx = f"4×8 @ {int(bench_max * 0.65)}{unit} — moderate load, control"
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+        main_sets = [TargetSet(setNumber=i, targetLoad=str(int(bench_max * 0.65)), targetReps="8", setType="work") for i in range(1, 5)]
+    else:
+        main_name = "Speed Bench" if "Speed Bench" not in blocked else "Close-Grip Bench"
+        main_prx = f"9×3 @ {speed_load}{unit}"
+        main_cues = EXERCISE_DB.get(main_name, {}).get("cues", [])
+        main_sets = [TargetSet(setNumber=i, targetLoad=str(speed_load), targetReps="3", setType="work") for i in range(1, 10)]
+
+    exercises = [
         SessionExercise(
-            sessionExerciseId=_id(), name="Speed Bench", category=ExerciseCategory.MAIN,
-            prescription=f"9×3 @ {speed_load}{unit}", cues=EXERCISE_DB["Speed Bench"]["cues"],
-            targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_load), targetReps="3", setType="work") for i in range(1, 10)],
-            notes="EMOM — explosive"
+            sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+            prescription=main_prx, cues=main_cues,
+            targetSets=main_sets,
+            notes="EMOM — every rep explosive" if goal not in ("hypertrophy", "bodybuilding") else "Control the negative"
         ),
         SessionExercise(
             sessionExerciseId=_id(), name="Weighted Pull-Up", category=ExerciseCategory.SUPPLEMENTAL,
@@ -180,36 +415,117 @@ def _build_de_upper(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
             targetSets=[TargetSet(setNumber=1, targetReps="100 total", setType="work")],
         ),
     ]
+    return _filter_injured(exercises, injuries)
 
 
-def _build_de_lower(lifts: CurrentLifts, unit: str) -> List[SessionExercise]:
+def _build_de_lower(lifts: CurrentLifts, unit: str,
+                    goal: str = "strength",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    injuries = injuries or []
+    equipment = equipment or []
     squat_max = lifts.squat or 185
     dl_max = lifts.deadlift or 225
     speed_squat = int(squat_max * 0.55)
     speed_dl = int(dl_max * 0.65)
-    return [
-        SessionExercise(
-            sessionExerciseId=_id(), name="Speed Squat", category=ExerciseCategory.MAIN,
-            prescription=f"10×2 @ {speed_squat}{unit}+bands", cues=EXERCISE_DB["Speed Squat"]["cues"],
-            targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_squat), targetReps="2", setType="work") for i in range(1, 11)],
-            notes="EMOM — fast out of the hole"
-        ),
-        SessionExercise(
-            sessionExerciseId=_id(), name="Speed Deadlift", category=ExerciseCategory.SUPPLEMENTAL,
-            prescription=f"8×1 @ {speed_dl}{unit}",
-            targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_dl), targetReps="1", setType="work") for i in range(1, 9)],
-        ),
-        SessionExercise(
-            sessionExerciseId=_id(), name="Reverse Hyper", category=ExerciseCategory.ACCESSORY,
-            prescription="3×15-20",
-            targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
-        ),
-        SessionExercise(
-            sessionExerciseId=_id(), name="Sled Push", category=ExerciseCategory.ACCESSORY,
-            prescription="4×40yd",
-            targetSets=[TargetSet(setNumber=i, targetReps="40yd", setType="work") for i in range(1, 5)],
-        ),
-    ]
+
+    blocked = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+
+    if goal in ("strongman", "strongman_competition"):
+        # Events day — strongman specific
+        if _has_equip(equipment, "farmers") and "Farmer Carry" not in blocked:
+            main_name = "Farmer Carry"
+            main_prx = f"6×30m @ {int(squat_max * 0.5)}{unit}/hand — fast turns"
+            main_sets = [TargetSet(setNumber=i, targetLoad=str(int(squat_max * 0.5)), targetReps="30m", setType="work") for i in range(1, 7)]
+        elif _has_equip(equipment, "yoke") and "Yoke Walk" not in blocked:
+            main_name = "Yoke Walk"
+            main_prx = f"6×20m @ {int(squat_max * 0.7)}{unit} — speed runs"
+            main_sets = [TargetSet(setNumber=i, targetLoad=str(int(squat_max * 0.7)), targetReps="20m", setType="work") for i in range(1, 7)]
+        else:
+            main_name = "Sandbag Carry" if _has_equip(equipment, "sandbag") else "Sled Push"
+            main_prx = f"6×30m — strongman conditioning"
+            main_sets = [TargetSet(setNumber=i, targetReps="30m", setType="work") for i in range(1, 7)]
+
+        exercises = [
+            SessionExercise(
+                sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+                prescription=main_prx, cues=EXERCISE_DB.get(main_name, {}).get("cues", []),
+                targetSets=main_sets, notes="Events day — build speed and efficiency"
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Speed Deadlift" if "Speed Deadlift" not in blocked else "Romanian Deadlift",
+                category=ExerciseCategory.SUPPLEMENTAL,
+                prescription=f"6×1 @ {speed_dl}{unit} — reset each rep",
+                targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_dl), targetReps="1", setType="work") for i in range(1, 7)],
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Reverse Hyper", category=ExerciseCategory.ACCESSORY,
+                prescription="3×15-20",
+                targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
+            ),
+        ]
+    elif goal in ("hypertrophy", "bodybuilding"):
+        hip_thrust_name = "Hip Thrust"
+        if "Hip Thrust" not in EXERCISE_DB:
+            EXERCISE_DB["Hip Thrust"] = {"pattern": "Hinge", "muscles": ["Glutes", "Hamstrings"], "equipment": "Barbell", "cues": ["Drive through heels", "Full hip extension at top"]}
+        exercises = [
+            SessionExercise(
+                sessionExerciseId=_id(), name="Romanian Deadlift" if "Romanian Deadlift" not in blocked else "GHR",
+                category=ExerciseCategory.MAIN,
+                prescription=f"4×10-12 @ {int(dl_max * 0.55)}{unit} — slow eccentric",
+                cues=EXERCISE_DB.get("Romanian Deadlift", {}).get("cues", []),
+                targetSets=[TargetSet(setNumber=i, targetLoad=str(int(dl_max * 0.55)), targetReps="10-12", setType="work") for i in range(1, 5)],
+                notes="Feel the hamstrings stretch at the bottom"
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name=hip_thrust_name, category=ExerciseCategory.SUPPLEMENTAL,
+                prescription="4×12-15 — glute squeeze at top",
+                cues=EXERCISE_DB["Hip Thrust"]["cues"],
+                targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 5)],
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Leg Press" if "Leg Press" not in blocked else "Goblet Squat",
+                category=ExerciseCategory.ACCESSORY,
+                prescription="3×15-20",
+                targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
+            ),
+        ]
+        if "Leg Press" not in EXERCISE_DB:
+            EXERCISE_DB["Leg Press"] = {"pattern": "Squat", "muscles": ["Quads", "Glutes"], "equipment": "Machine", "cues": ["Full depth", "Drive through heels"]}
+        if "Goblet Squat" not in EXERCISE_DB:
+            EXERCISE_DB["Goblet Squat"] = {"pattern": "Squat", "muscles": ["Quads", "Core"], "equipment": "Dumbbells", "cues": ["Elbows inside knees", "Chest up"]}
+    else:
+        exercises = [
+            SessionExercise(
+                sessionExerciseId=_id(), name="Speed Squat" if "Speed Squat" not in blocked else "Box Squat",
+                category=ExerciseCategory.MAIN,
+                prescription=f"10×2 @ {speed_squat}{unit}+bands", cues=EXERCISE_DB.get("Speed Squat", {}).get("cues", []),
+                targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_squat), targetReps="2", setType="work") for i in range(1, 11)],
+                notes="EMOM — fast out of the hole"
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Speed Deadlift" if "Speed Deadlift" not in blocked else "Romanian Deadlift",
+                category=ExerciseCategory.SUPPLEMENTAL,
+                prescription=f"8×1 @ {speed_dl}{unit}",
+                targetSets=[TargetSet(setNumber=i, targetLoad=str(speed_dl), targetReps="1", setType="work") for i in range(1, 9)],
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Reverse Hyper", category=ExerciseCategory.ACCESSORY,
+                prescription="3×15-20",
+                targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
+            ),
+            SessionExercise(
+                sessionExerciseId=_id(), name="Sled Push" if "Sled Push" not in blocked else "Farmer Carry",
+                category=ExerciseCategory.ACCESSORY,
+                prescription="4×40yd",
+                targetSets=[TargetSet(setNumber=i, targetReps="40yd", setType="work") for i in range(1, 5)],
+            ),
+        ]
+    return _filter_injured(exercises, injuries)
 
 
 def _build_gpp() -> List[SessionExercise]:
@@ -221,6 +537,8 @@ def _build_gpp() -> List[SessionExercise]:
         SessionExercise(sessionExerciseId=_id(), name="Ab Wheel", category=ExerciseCategory.PREHAB, prescription="3×10-15",
             targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)]),
     ]
+
+
 
 
 # ─── Warmup Templates ────────────────────────────────────────────────────────
@@ -240,7 +558,10 @@ WARMUPS = {
 
 # ─── Session Builder ──────────────────────────────────────────────────────────
 
-def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, week: int, day: int, block_id: str) -> Session:
+def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, week: int, day: int, block_id: str,
+                   goal: str = "strength", injuries: List[str] = None, equipment: List[str] = None) -> Session:
+    injuries = injuries or []
+    equipment = equipment or []
     type_map = {
         SessionType.ME_UPPER: ("Max effort pressing day. Work to a heavy single, then build volume.", _build_me_upper, "upper"),
         SessionType.ME_LOWER: ("Max effort squat/pull day. Work to a heavy single, then accessories.", _build_me_lower, "lower"),
@@ -254,7 +575,7 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
     if session_type == SessionType.GPP:
         exercises = builder()
     else:
-        exercises = builder(lifts, unit)
+        exercises = builder(lifts, unit, goal=goal, injuries=injuries, equipment=equipment)
 
     return Session(
         sessionId=_id(),
@@ -410,7 +731,12 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)
                 sessions = []
                 for stype, cal_day in day_map:
-                    session = _build_session(stype, intake.lifts, intake.liftUnit, current_week, cal_day, block_id)
+                    session = _build_session(
+                        stype, intake.lifts, intake.liftUnit, current_week, cal_day, block_id,
+                        goal=intake.goal,
+                        injuries=intake.injuries,
+                        equipment=(intake.specialtyEquipment or []) + (intake.gym or []),
+                    )
                     sessions.append(session)
 
                 week_obj = Week(

@@ -947,7 +947,7 @@ function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => voi
 
       {/* ── Description ── */}
       <Text style={sp.sub}>
-        Trained on 485 sources — strength science, programming methodology, rehab protocols, and elite coaching wisdom. Ask me anything about your training.
+        Backed by strength science, programming methodology, rehab protocols, and elite coaching wisdom. Ask me anything about your training.
       </Text>
 
       {/* ── Context banner ── */}
@@ -983,7 +983,7 @@ function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => voi
       ))}
 
       {/* ── Footer ── */}
-      <Text style={sp.footer}>Powered by 25,088 knowledge chunks · 485 sources</Text>
+      <Text style={sp.footer}>Powered by The Program's knowledge engine</Text>
     </View>
   );
 }

@@ -361,6 +361,15 @@ class IntakeRequest(BaseModel):
     injuries: List[str] = []
     gym: List[str] = []
     bodyweight: Optional[float] = None
+    # Extended intake fields (Phase 2)
+    primaryWeaknesses: List[str] = []
+    specialtyEquipment: List[str] = []
+    sleepHours: Optional[float] = None
+    stressLevel: Optional[str] = None
+    occupationType: Optional[str] = None
+    competitionDate: Optional[str] = None
+    competitionType: Optional[str] = None
+    name: Optional[str] = None
 
 class LogSetRequest(BaseModel):
     sessionExerciseId: str

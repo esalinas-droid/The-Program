@@ -49,7 +49,7 @@ export default function TabLayout() {
         tabBarIcon: ({ color }) => <MaterialCommunityIcons name="toolbox-outline" size={24} color={color} />,
         tabBarTestID: 'tab-tools',
       }} />
-      <Tabs.Screen name="changes" options={{ href: null }} />
+      
     </Tabs>
   );
 }

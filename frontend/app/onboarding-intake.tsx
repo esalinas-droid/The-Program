@@ -9,8 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
-import { submitIntake } from '../services/api';
-import { profileApi } from '../src/utils/api';
+import { programApi, profileApi } from '../src/utils/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -438,16 +437,23 @@ export default function OnboardingIntake() {
         loseitConnected: false,
       } as any);
 
-      // 2. Generate plan via backend (in-memory plan store)
-      const response = await submitIntake({
-        name:         experience ? `${experience} Athlete` : 'Athlete',
-        goal:         GOAL_MAP[goal] || goal.toLowerCase(),
-        experience:   experience.toLowerCase(),
-        currentLifts,
+      // 2. Generate plan via backend with auth (saves under correct userId)
+      const response = await programApi.submitIntake({
+        goal:               GOAL_MAP[goal] || goal.toLowerCase(),
+        experience:         experience.toLowerCase(),
+        lifts:              currentLifts,
         liftUnit,
-        trainingDays: DAY_MAP[trainingDays] || DAY_MAP[4],
-        injuries:     cleanInjuries,
-        gymTypes,
+        frequency:          trainingDays,
+        injuries:           cleanInjuries,
+        gym:                gymTypes,
+        bodyweight:         bwNum,
+        primaryWeaknesses,
+        specialtyEquipment: cleanEquip,
+        sleepHours:         sleepNum,
+        stressLevel:        stressLevel || undefined,
+        occupationType:     occupationType || undefined,
+        competitionDate:    hasCompetition ? competitionDate : undefined,
+        competitionType:    hasCompetition ? competitionType : undefined,
       });
 
       // 3. Sync all new fields to MongoDB profile (non-blocking)
@@ -480,7 +486,7 @@ export default function OnboardingIntake() {
       router.replace({
         pathname: '/program-reveal',
         params: {
-          userId:  response.userId,
+          userId:  response.profile?.userId || response.userId,
           planId:  response.plan?.planId,
           planName: response.plan?.planName,
         },

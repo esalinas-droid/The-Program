@@ -1,0 +1,57 @@
+{
+  "summary": "Backend regression test for Bugs 2, 5, 6, 8, 14. Auth flow, onboarding with all fields, goal-specific exercises, bodyweight, and settings save flow tested with two fresh users (strongman + hypertrophy). 20/24 tests passed. 2 real backend bugs found, 2 are RAG behavior edge cases.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/plan/apply-injury-update",
+        "issue": "Returns 404 'Profile not found for this user' for newly registered users. Root cause: POST /api/profile/intake only calls db.profile.update_one if existing_profile is found (line 2016-2018), never upserts. New users therefore have no db.profile document. Fix: change to upsert=True or use update_one with upsert.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/coach/change-log",
+        "issue": "Returns 0 entries for new users after intake. Change-log reads from db.substitutions (written only by apply-injury-update), but apply-injury-update fails for new users → no entries ever written. Also, intake events are logged to in-memory _prog_store['changes'] which the change-log endpoint does NOT read. Change-log will always show 0 for new users until apply-injury-update is fixed.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/profile/intake (strongman goal with Shoulder injury)",
+        "issue": "Strongman with log equipment + Shoulder injury → Shoulder injury blocks Log Press AND Incline Bench, resulting in Incline Bench as fallback (it's also blocked). Both strongman and hypertrophy end up with 'Incline Bench' as ME_UPPER main when Shoulder injury is present. The fallback in _build_me_upper for strongman doesn't check if the fallback 'Incline Bench' is also blocked."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bugs_2_5_6_8_14.py",
+    "/app/test_reports/pytest/bugs_2_5_6_8_14_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL (Bug 8): Fix POST /api/profile/intake to upsert db.profile instead of update-only. In server.py ~line 2016: change `if existing_profile: db.profile.update_one(...)` to `db.profile.update_one({'userId': user_id}, {'$set': profile_update}, upsert=True)`. This will also fix change-log being empty.",
+    "MINOR: In plan_generator.py _build_me_upper, strongman fallback 'Incline Bench' is itself blocked by Shoulder injury. Add a final safety fallback that checks blocked set before assigning, e.g. use 'Overhead Press' or 'DB Press' that's not in blocked list.",
+    "NOTE (Bug 2 CONFIRMED FIXED): JWT userId correctly used (not DEFAULT_USER 'user_001'). profile.userId returns the actual auth user UUID.",
+    "NOTE (Bug 6 CONFIRMED FIXED): All fields including primaryWeaknesses, specialtyEquipment, sleepHours, stressLevel accepted by intake endpoint.",
+    "NOTE (Bug 14 CONFIRMED FIXED): bodyweight=220 stored and returned in profile.bodyweight.",
+    "NOTE (Bug 5 PARTIALLY FIXED): ME Lower is correctly goal-specific (Yoke Walk for strongman vs Sumo Deadlift for hypertrophy via RAG). ME Upper both get Incline Bench when Shoulder injury blocks all pressing variants — this is edge case overlap, not a full bug."
+  ],
+  "critical_code_review_comments": [
+    "server.py ~line 2016: intake endpoint uses if/update pattern instead of upsert for db.profile — new users never get a profile document written",
+    "plan_generator.py _build_me_upper: Strongman fallback to 'Incline Bench' doesn't verify it's not in blocked_upper set. Incline Bench IS blocked by Shoulder injury, leading to blocked exercise being selected anyway"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bugs_2_5_6_8_14.py"
+  ],
+  "success_rate": {
+    "backend": "83% (20/24 tests passed)",
+    "frontend": "not tested"
+  },
+  "seed_data_creation": "Registered test_strongman@test.com and test_hypertrophy@test.com and ran intake for both.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug 8 (settings save flow) is NOT fully fixed. apply-injury-update returns 404 for new users because intake doesn't upsert db.profile. After E1 fixes the upsert issue, rerun TestSettingsSaveFlow tests. Bug 2/6/14 are confirmed fixed. Bug 5 is mostly fixed - RAG generates goal-different plans but when Shoulder injury is present both strongman+hypertrophy ME Upper converge on Incline Bench.",
+  "rca_of_issue": "Bug 8 RCA: POST /api/profile/intake (server.py ~L2016) uses `find_one` + conditional `update_one` pattern. For new users, `find_one` returns None, so the `if existing_profile:` block is skipped and db.profile is never populated. Then apply-injury-update reads `db.profile.find_one` → None → raises 404. Fix: use `update_one({userId}, {$set: ...}, upsert=True)` to create profile if missing."
+}

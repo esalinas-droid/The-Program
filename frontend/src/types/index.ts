@@ -114,12 +114,21 @@ export interface WeekStats {
 export interface IntakeData {
   goal: string;
   experience: string;
-  lifts: { squat?: number; bench?: number; deadlift?: number; ohp?: number };
+  lifts: { squat?: number; bench?: number; deadlift?: number; ohp?: number; log?: number; axle?: number; yoke?: number };
   liftUnit: string;
   frequency: number;
   injuries: string[];
   gym: string[];
   bodyweight?: number;
+  // Extended fields
+  primaryWeaknesses?: string[];
+  specialtyEquipment?: string[];
+  sleepHours?: number;
+  stressLevel?: string;
+  occupationType?: string;
+  competitionDate?: string;
+  competitionType?: string;
+  name?: string;
 }
 
 export interface TargetSet {
