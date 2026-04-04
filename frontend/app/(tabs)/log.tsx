@@ -779,8 +779,6 @@ const sb = StyleSheet.create({
 });
 
 // ── Main LogScreen ─────────────────────────────────────────────────────────────
-const TEAL  = '#4DCEA6';
-const AMBER = '#F5A623';
 export default function LogScreen() {
   // Initialize directly from local programData for the current day — no async needed,
   // no ME Upper flash. useFocusEffect will override once profile week is loaded.

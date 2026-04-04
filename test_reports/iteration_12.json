@@ -1,0 +1,50 @@
+{
+  "summary": "Phase 2 Batch 3 backend testing. 19/20 tests passed (1 real bug found). All 4 task groups tested: Rehab Progression (Task 8), Competition Peaking (Task 9), Exercise Rotation (Task 10), Changelog Undo (Task 13). Batch 2 regression checks all pass. Data isolation between user_a and user_b verified.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/coach/undo/{changeId}",
+        "issue": "Undo always returns success=false with 'No matching exercise found to undo'. Two root causes: (1) All changelog entries created by rehab auto-swap have original='(none)' — original exercise name not stored at changelog write time. (2) Entries that do have a non-empty original contain 'Injury Flags:' metadata strings, not exercise names, so undo cannot find them in the plan. The undo endpoint returns HTTP 200 but success=false — functionally broken.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/competition/set",
+        "issue": "Response schema mismatch with spec. Returns {success: true, phase, phaseLabel, weeksOut, message} but spec says hasCompetition=true. Frontend consuming this should use 'success' field, not 'hasCompetition'.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_batch3.py",
+    "/app/test_reports/pytest/phase2_batch3_results.xml"
+  ],
+  "action_items": [
+    "Fix undo: When writing a changelog entry (at change time), always record the original exercise name in the 'original' field before swapping. The original field must be the exact exercise name string as it appears in the plan week slot.",
+    "Fix undo logic: After restoring the original exercise, verify the plan was mutated (reverted > 0) before marking success=true. Current undo uses text-search which fails if original text differs in casing or whitespace.",
+    "Optional: Add hasCompetition=true to competition/set response for spec consistency (currently returns 'success' only)"
+  ],
+  "critical_code_review_comments": [
+    "Changelog undo (Task 13) is functionally broken: original field is (none) for all rehab auto-swap changes, so undo cannot find what to revert. Need to capture original value at write time.",
+    "Competition/set response schema deviates from spec (hasCompetition missing, returns success instead)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_batch3.py"
+  ],
+  "success_rate": {
+    "backend": "95% (19/20 tests passed — 1 real bug, 1 skipped with known bug documented)",
+    "frontend": "not tested"
+  },
+  "seed_data_creation": "No seed data created. Used existing user_a and user_b accounts.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Batch 3 mostly working. Task 8 (Rehab), Task 9 (Competition), Task 10 (Rotation) all pass. Task 13 (Undo) broken — original field not stored at changelog write time. After fix, re-run TestChangelogUndo::test_undo_change_if_available. Batch 2 regression: all pass.",
+  "rca_of_issue": "Undo bug RCA: When the coaching engine or rehab module auto-swaps an exercise and writes to db.coach_changes, it sets original='(none)' instead of the actual exercise name being replaced. The undo endpoint at POST /api/coach/undo/{changeId} fetches the change, then does a text search for change['original'] in the plan's week slot. Because original='(none)', it searches for '(none)' in the plan, finds nothing, returns success=false. Fix: In the changelog write path, capture the actual current exercise name before swapping and store it as 'original'. Look for where db.coach_changes.insert_one() or equivalent is called in server.py and ensure original is populated."
+}

@@ -379,6 +379,78 @@ agent_communication:
       All three tabs must show identical session type.
 
 backend:
+  # ── Phase 2 Batch 3 NEW TASKS ──────────────────────────────────────────────
+
+  - task: "Phase 2 Batch 3 — Task 8: Rehab Progression Tracking"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py, backend/services/rehab_protocols.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Implemented: GET /api/rehab/exercises, GET /api/rehab/status, POST /api/rehab/start,
+          POST /api/rehab/log, POST /api/rehab/graduate. Static core rehab protocols + RAG enhancement.
+          4-phase rehab (Pain-Free ROM → Strength Foundation → Load Tolerance → Return to Training).
+          Auto-progression after N clean sessions. Loggable exercises in log tab via rehabApi.
+          Manual smoke test passed: rehab/start, rehab/status, rehab/exercises, rehab/log all HTTP 200.
+
+  - task: "Phase 2 Batch 3 — Task 9: Competition Peaking"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Implemented: POST /api/competition/set (set comp date), GET /api/competition/status.
+          Returns: hasCompetition, weeksOut, phaseLabel, color, adjustments[], ragTip.
+          Phase labels: Foundation (>12wk), Build (8-12wk), Peaking (4-8wk), Competition Prep (2-4wk),
+          Taper (1-2wk), Competition Week (<1wk). Frontend: competition banner in index.tsx.
+          Manual smoke test: POST /api/competition/set HTTP 200, GET /api/competition/status HTTP 200.
+
+  - task: "Phase 2 Batch 3 — Task 10: Exercise Rotation Detection"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Implemented: GET /api/rotation/check (detects stale exercises per rotation window),
+          POST /api/rotation/apply (applies suggested swaps to the plan).
+          Rotation windows: main lifts 6wk, supplemental 4wk, accessories 3wk.
+          Returns: flagged[], count, message. Each flagged item has exercise, weeksUsed, suggestion.
+          Frontend: rotation card in index.tsx shown when count > 0.
+          Manual smoke test: GET /api/rotation/check HTTP 200.
+
+  - task: "Phase 2 Batch 3 — Task 13: Changelog with Undo"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py, frontend/app/tools/changelog.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Implemented: GET /api/coach/change-log (returns all changelog entries with undoable flag),
+          POST /api/coach/undo/{change_id} (reverts substitution back to original exercise in plan).
+          Each entry: changeId, date, week, sessionType, original, replacement, reason, changeType,
+          undone bool, undoable bool. Undo button reverts plan in MongoDB via _save_plan_to_db().
+          Frontend changelog.tsx: full UI with type badges, Undo buttons, confirmation Alert.
+          Manual smoke test: GET /api/coach/change-log HTTP 200 (returned entries).
+
   - task: "Remove hardcoded Eric profile data from server.py seed endpoint"
     implemented: true
     working: true
@@ -619,11 +691,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Task 3 - Settings injury update ACTUALLY modifies plan exercises (SI Joint / Pelvis)"
-    - "injury_preview now userId-scoped and SI Joint generates 7 restricted exercises"
-    - "apply_injury_update now runs full exercise swap loop + persists to MongoDB"
-    - "Auth endpoints still working after new session changes"
-    - "User data isolation still working"
+    - "Phase 2 Batch 3 — Task 8: Rehab Progression Tracking (GET /api/rehab/exercises, POST /api/rehab/log)"
+    - "Phase 2 Batch 3 — Task 9: Competition Peaking (GET /api/competition/status)"
+    - "Phase 2 Batch 3 — Task 10: Exercise Rotation Detection (GET /api/rotation/check)"
+    - "Phase 2 Batch 3 — Task 13: Changelog with Undo (GET /api/coach/change-log, POST /api/coach/undo/{id})"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -772,4 +843,45 @@ agent_communication:
       - POST /api/plan/auto-adjust (RPE analysis + load adjustment)
       - POST /api/plan/autoregulate (mid-session RPE feedback)
       Also verify POST /api/profile/intake still works (RAG-enhanced version)
+
+
+
+  - agent: "main"
+    message: >
+      Phase 2 Batch 3 — Tasks 8, 9, 10, 13 implemented. Please test these NEW backend endpoints:
+      
+      SETUP: Use credentials user_a@theprogram.app / StrongmanA123 for JWT token.
+      First call: POST /api/auth/login → get JWT token for all authenticated requests.
+      Then call: POST /api/profile/intake to generate user_a's plan (required for rotation check).
+      
+      TASK 8 — Rehab Progression Tracking:
+      1. POST /api/rehab/start {"injuryType": "lower_back"} — should return phase 1 protocol
+      2. GET /api/rehab/status — should return hasActiveRehab=true, currentPhase=1, exercises list
+      3. GET /api/rehab/exercises — should return exercises for current rehab phase
+      4. POST /api/rehab/log {"exerciseName": "Cat-cow stretch", "setsCompleted": 3, "painLevel": 0}
+         → should log and return clean session count
+      5. POST /api/rehab/start {"injuryType": "knee"} — test different injury type
+      
+      TASK 9 — Competition Peaking:
+      6. POST /api/competition/set {"competitionDate": "2026-09-15", "eventName": "Regional Powerlifting"}
+         → should return hasCompetition=true, weeksOut~23, phaseLabel
+      7. GET /api/competition/status — should return competition info, phase, color, adjustments
+      8. POST /api/competition/set {"competitionDate": "2026-04-20"} — test close date (taper phase)
+         → should return taper or competition-week phase
+      
+      TASK 10 — Exercise Rotation Detection:
+      9. GET /api/rotation/check — should return flagged exercises (count, flagged[], message)
+      
+      TASK 13 — Changelog with Undo:
+      10. GET /api/coach/change-log — should return changes array with changeId, date, undoable
+      11. If any changes exist with undoable=true, test:
+          POST /api/coach/undo/{changeId} → should return success=true
+      12. GET /api/coach/change-log again — the undone change should have undone=true
+      
+      Also verify Phase 2 Batch 2 endpoints still work (no regressions):
+      - GET /api/weekly-review
+      - GET /api/deload/check
+      - GET /api/warmup/today
+      
+      DATA ISOLATION: Test Batch 3 endpoints with user_b@theprogram.app / HypertrophyB123 — separate rehab data expected.
 
