@@ -680,7 +680,12 @@ for goal in [GoalType.POWERLIFTING, GoalType.HYPERTROPHY, GoalType.ATHLETIC, Goa
 def generate_plan(intake: IntakeRequest) -> AnnualPlan:
     """Generate a complete 12-month training plan from intake data."""
 
-    goal = GoalType(intake.goal) if intake.goal in [g.value for g in GoalType] else GoalType.STRENGTH
+    # Case-insensitive GoalType lookup: "strongman" matches "Strongman"
+    _goal_str = (intake.goal or "").strip()
+    goal = next(
+        (g for g in GoalType if g.value.lower() == _goal_str.lower()),
+        GoalType.STRENGTH,
+    )
     plan_id = _id()
     start_date = datetime.now()
     frequency = intake.frequency or 4

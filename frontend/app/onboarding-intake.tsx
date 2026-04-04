@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, KeyboardAvoidingView, Platform, Animated,
-  TextInput, ActivityIndicator,
+  TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -215,12 +215,12 @@ const GYM_TYPES = [
 
 // ── Goal → backend key map ────────────────────────────────────────────────────
 const GOAL_MAP: Record<string, string> = {
-  'Strength':            'strength',
-  'Hypertrophy':         'hypertrophy',
-  'Powerlifting':        'powerlifting',
-  'Strongman':           'strongman',
-  'Athletic Performance':'athletic',
-  'General Fitness':     'general',
+  'Strength':            'Strength',
+  'Hypertrophy':         'Hypertrophy',
+  'Powerlifting':        'Powerlifting',
+  'Strongman':           'Strongman',
+  'Athletic Performance':'Athletic Performance',
+  'General Fitness':     'General Fitness',
 };
 
 const DAY_MAP: Record<number, string[]> = {
@@ -405,9 +405,11 @@ export default function OnboardingIntake() {
       const sleepNum      = parseFloat(selectedSleep) || 7;
       const cleanEquip    = specialtyEquipment.filter(e => e !== 'None of the above');
 
+      console.log('[Onboarding] Step 1 — Saving profile locally...');
+
       // 1. Save locally — keeps offline fallback
       await saveProfile({
-        goal:            GOAL_MAP[goal] || goal.toLowerCase(),
+        goal:            GOAL_MAP[goal] || goal,
         experience,
         basePRs:         currentLifts,
         units:           liftUnit,
@@ -438,9 +440,9 @@ export default function OnboardingIntake() {
       } as any);
 
       // 2. Generate plan via backend with auth (saves under correct userId)
-      const response = await programApi.submitIntake({
-        goal:               GOAL_MAP[goal] || goal.toLowerCase(),
-        experience:         experience.toLowerCase(),
+      const payload = {
+        goal:               GOAL_MAP[goal] || goal,
+        experience:         experience,           // keep Title Case (matches ExperienceLevel enum)
         lifts:              currentLifts,
         liftUnit,
         frequency:          trainingDays,
@@ -454,7 +456,11 @@ export default function OnboardingIntake() {
         occupationType:     occupationType || undefined,
         competitionDate:    hasCompetition ? competitionDate : undefined,
         competitionType:    hasCompetition ? competitionType : undefined,
-      });
+      };
+      console.log('[Onboarding] Step 2 — Calling programApi.submitIntake with payload:', JSON.stringify(payload, null, 2));
+
+      const response = await programApi.submitIntake(payload);
+      console.log('[Onboarding] Step 2 — Response received:', JSON.stringify(response, null, 2));
 
       // 3. Sync all new fields to MongoDB profile (non-blocking)
       try {
@@ -465,7 +471,7 @@ export default function OnboardingIntake() {
           basePRs:           currentLifts,
           injuryFlags:       cleanInjuries,
           gymTypes,
-          goal:              GOAL_MAP[goal] || goal.toLowerCase(),
+          goal:              GOAL_MAP[goal] || goal,  // Title Case — no toLowerCase
           primaryWeaknesses,
           specialtyEquipment: cleanEquip,
           sleepHours:         sleepNum,
@@ -483,6 +489,11 @@ export default function OnboardingIntake() {
       }
 
       // 4. Navigate to reveal screen
+      console.log('[Onboarding] Step 4 — Navigating to program-reveal with:', {
+        userId: response.profile?.userId || response.userId,
+        planId: response.plan?.planId,
+        planName: response.plan?.planName,
+      });
       router.replace({
         pathname: '/program-reveal',
         params: {
@@ -491,8 +502,16 @@ export default function OnboardingIntake() {
           planName: response.plan?.planName,
         },
       });
-    } catch (_error) {
-      router.replace('/(tabs)');
+    } catch (_error: any) {
+      console.error('[Onboarding] ❌ ERROR in handleComplete:', _error);
+      console.error('[Onboarding] Error message:', _error?.message);
+      console.error('[Onboarding] Error stack:', _error?.stack);
+      Alert.alert(
+        'Onboarding Error',
+        _error?.message || 'Failed to generate program. Please try again.',
+        [{ text: 'OK' }],
+      );
+      // Do NOT redirect — let the user fix and retry
     } finally {
       setSaving(false);
     }

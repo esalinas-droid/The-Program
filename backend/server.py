@@ -218,14 +218,12 @@ async def create_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
 
 @api_router.put("/profile")
 async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(get_current_user)):
-    existing = await db.profile.find_one({"userId": userId})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Profile not found")
     data = {k: v for k, v in profile.model_dump().items() if v is not None}
     data["updatedAt"] = datetime.now(timezone.utc)
     data["userId"] = userId          # keep userId stamped
-    await db.profile.update_one({"_id": existing["_id"]}, {"$set": data})
-    doc = await db.profile.find_one({"_id": existing["_id"]})
+    # Upsert — create profile if it doesn't exist yet (e.g. during onboarding)
+    await db.profile.update_one({"userId": userId}, {"$set": data}, upsert=True)
+    doc = await db.profile.find_one({"userId": userId})
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
 
 # ── Injury Intelligence ───────────────────────────────────────────────────────
