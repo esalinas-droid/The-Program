@@ -2215,6 +2215,9 @@ Write a weekly review as JSON (no markdown):
         review_data = _fallback_review()
 
     # ── Cache in MongoDB ───────────────────────────────────────────────────────
+    # Ensure highlights are never empty (fallback for AI returning empty array)
+    if not review_data.get("highlights"):
+        review_data["highlights"] = ["Complete more sessions this week to unlock insights"]
     doc = {
         "userId": userId,
         "week": current_week,
