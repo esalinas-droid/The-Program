@@ -839,7 +839,27 @@ export default function LogScreen() {
           setSessionType(todayData.session.sessionType);
         }
         const apiExs = buildFromApi(todayData?.session?.exercises);
-        if (apiExs.length > 0) setExercises(apiExs);
+        if (apiExs.length > 0) {
+          // ── Sync logged sets with Today tab ──────────────────────────────────
+          try {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const logsResp = await logApi.list();
+            const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+            const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+            const logCountMap = new Map<string, number>();
+            for (const lg of todayLogs) {
+              const key = (lg.exercise || '').toLowerCase();
+              logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
+            }
+            const synced = apiExs.map(ex => {
+              const count = logCountMap.get(ex.name.toLowerCase()) || 0;
+              return { ...ex, sets: ex.sets.map((s: any, i: number) => ({ ...s, logged: i < count })) };
+            });
+            setExercises(synced);
+          } catch {
+            setExercises(apiExs);
+          }
+        }
       } catch { /* Keep local data */ }
 
       // ── Fetch active rehab exercises (Task 8) ─────────────────────────────

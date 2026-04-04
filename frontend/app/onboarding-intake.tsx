@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, KeyboardAvoidingView, Platform, Animated,
+  SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -13,7 +13,7 @@ import { programApi, profileApi } from '../src/utils/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 10;
 
 const STEP_META = [
   {
@@ -75,12 +75,6 @@ const STEP_META = [
     question:  "Where do you train &\ndo you have a competition?",
     subtext:   "Gym environment + competition timeline shape your periodization.",
     canSkip:   false,
-  },
-  {
-    greeting:  "One more thing.",
-    question:  "Upload anything that helps\nyour coach know you better.",
-    subtext:   "Training logs, test results, health history — optional but valuable.",
-    canSkip:   true,
   },
 ];
 
@@ -280,7 +274,7 @@ export default function OnboardingIntake() {
   const [competitionDate,  setCompetitionDate] = useState('');
 
   // Step 11 — Upload
-  const [hasUpload, setHasUpload] = useState(false);
+  // (Step 11 upload removed — fake upload step deleted)
 
   // ── Animation refs ──────────────────────────────────────────────────────────
   const containerFade = useRef(new Animated.Value(1)).current;
@@ -338,7 +332,6 @@ export default function OnboardingIntake() {
       case 8:  return injuries.length > 0;
       case 9:  return !!selectedSleep && !!stressLevel && !!occupationType;
       case 10: return gymTypes.length > 0 && hasCompetition !== null;
-      case 11: return true;
       default: return false;
     }
   };
@@ -966,34 +959,6 @@ export default function OnboardingIntake() {
     </View>
   );
 
-  // Step 11 — Upload
-  const renderStep11 = () => (
-    <View>
-      <TouchableOpacity
-        style={[s.uploadZone, hasUpload && s.uploadZoneDone]}
-        onPress={() => { haptic(); setHasUpload(true); }}
-        activeOpacity={0.8}
-      >
-        <View style={[s.uploadIconRing, hasUpload && s.uploadIconRingDone]}>
-          <MaterialCommunityIcons
-            name={hasUpload ? 'check-circle-outline' : 'cloud-upload-outline'}
-            size={40}
-            color={hasUpload ? COLORS.status.success : COLORS.accent}
-          />
-        </View>
-        <Text style={s.uploadTitle}>
-          {hasUpload ? 'File attached — nice work' : 'Tap to browse files'}
-        </Text>
-        <Text style={s.uploadSub}>PDFs, images, spreadsheets, text files</Text>
-      </TouchableOpacity>
-
-      <View style={s.uploadOptRow}>
-        <MaterialCommunityIcons name="information-outline" size={13} color={COLORS.text.muted} />
-        <Text style={s.uploadOptText}>This step is optional — tap Skip to continue</Text>
-      </View>
-    </View>
-  );
-
   const renderContent = () => {
     switch (step) {
       case 1:  return renderStep1();
@@ -1006,7 +971,6 @@ export default function OnboardingIntake() {
       case 8:  return renderStep8();
       case 9:  return renderStep9();
       case 10: return renderStep10();
-      case 11: return renderStep11();
       default: return null;
     }
   };
@@ -1018,10 +982,6 @@ export default function OnboardingIntake() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
         {/* ── Top bar ── */}
         <View style={s.topBar}>
           {step > 1 ? (
@@ -1066,6 +1026,7 @@ export default function OnboardingIntake() {
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
             keyboardDismissMode="on-drag"
+            contentInset={{ bottom: 120 }}
           >
             <Animated.View style={{ opacity: greetFade, transform: [{ translateY: greetSlide }] }}>
               <Text style={s.greeting}>{meta.greeting}</Text>
@@ -1112,7 +1073,6 @@ export default function OnboardingIntake() {
           </TouchableOpacity>
           <Text style={s.stepCounter}>{step} of {TOTAL_STEPS}</Text>
         </View>
-      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

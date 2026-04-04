@@ -205,14 +205,14 @@ export default function AuthScreen() {
           {/* ── Apple Sign-In (iOS only, uses same SocialButton style but without "Soon" badge) ── */}
           {Platform.OS === 'ios' && (
             <TouchableOpacity
-              style={[s.socialBtn, { borderColor: '#55555555', opacity: appleLoading ? 0.7 : 1 }]}
+              style={[s.socialBtn, { borderColor: '#FFFFFF55', opacity: appleLoading ? 0.7 : 1 }]}
               onPress={handleAppleSignIn}
               activeOpacity={0.8}
               disabled={appleLoading}
             >
               {appleLoading
-                ? <ActivityIndicator size="small" color={GOLD} />
-                : <MaterialCommunityIcons name="apple" size={22} color={GOLD} />
+                ? <ActivityIndicator size="small" color="#FFFFFF" />
+                : <MaterialCommunityIcons name="apple" size={22} color="#FFFFFF" />
               }
               <Text style={s.socialBtnText}>
                 {appleLoading ? 'Signing in…' : 'Sign in with Apple'}

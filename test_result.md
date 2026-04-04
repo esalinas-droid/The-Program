@@ -833,40 +833,26 @@ agent_communication:
 
   - agent: "main"
     message: >
-      Phase 2 Batch 3 — Tasks 8, 9, 10, 13 implemented. Please test these NEW backend endpoints:
+      7 CRITICAL BUG FIXES applied in this session. Please run backend tests ONLY for:
+      
+      BUG 3 (Goal Mapping): POST /api/profile/intake with goal='Strongman' and goal='General Fitness'
+      — verify the generated plan name matches (e.g. 'The Program — Strongman', 'The Program — General Strength').
+      Before: GoalType(intake.goal) would throw ValueError on case mismatch, fallback to STRENGTH.
+      After: Case-insensitive next() lookup.
+      
+      BUG 6 (Changelog): GET /api/coach/change-log — should return empty array (no changes) without error.
       
       SETUP: Use credentials user_a@theprogram.app / StrongmanA123 for JWT token.
-      First call: POST /api/auth/login → get JWT token for all authenticated requests.
-      Then call: POST /api/profile/intake to generate user_a's plan (required for rotation check).
+      1. POST /api/auth/login to get token
+      2. POST /api/profile/intake {"goal":"Strongman","experience":"Intermediate","lifts":{},"frequency":4}
+         → response should contain planName containing 'Strongman'
+      3. POST /api/profile/intake {"goal":"General Fitness","experience":"Beginner","lifts":{},"frequency":3}
+         → response should contain planName containing 'General'
+      4. GET /api/coach/change-log → should return {"changes": []} without 500 error
+      5. POST /api/log {"date":"2025-06-04","week":1,"day":"Wednesday","sessionType":"Max Effort Upper",
+         "exercise":"Squat","sets":1,"weight":100,"reps":5,"rpe":7,"pain":0,"completed":"yes"}
+         → should return 200 OK
+      6. GET /api/log → should list the logged entry
       
-      TASK 8 — Rehab Progression Tracking:
-      1. POST /api/rehab/start {"injuryType": "lower_back"} — should return phase 1 protocol
-      2. GET /api/rehab/status — should return hasActiveRehab=true, currentPhase=1, exercises list
-      3. GET /api/rehab/exercises — should return exercises for current rehab phase
-      4. POST /api/rehab/log {"exerciseName": "Cat-cow stretch", "setsCompleted": 3, "painLevel": 0}
-         → should log and return clean session count
-      5. POST /api/rehab/start {"injuryType": "knee"} — test different injury type
-      
-      TASK 9 — Competition Peaking:
-      6. POST /api/competition/set {"competitionDate": "2026-09-15", "eventName": "Regional Powerlifting"}
-         → should return hasCompetition=true, weeksOut~23, phaseLabel
-      7. GET /api/competition/status — should return competition info, phase, color, adjustments
-      8. POST /api/competition/set {"competitionDate": "2026-04-20"} — test close date (taper phase)
-         → should return taper or competition-week phase
-      
-      TASK 10 — Exercise Rotation Detection:
-      9. GET /api/rotation/check — should return flagged exercises (count, flagged[], message)
-      
-      TASK 13 — Changelog with Undo:
-      10. GET /api/coach/change-log — should return changes array with changeId, date, undoable
-      11. If any changes exist with undoable=true, test:
-          POST /api/coach/undo/{changeId} → should return success=true
-      12. GET /api/coach/change-log again — the undone change should have undone=true
-      
-      Also verify Phase 2 Batch 2 endpoints still work (no regressions):
-      - GET /api/weekly-review
-      - GET /api/deload/check
-      - GET /api/warmup/today
-      
-      DATA ISOLATION: Test Batch 3 endpoints with user_b@theprogram.app / HypertrophyB123 — separate rehab data expected.
+      All other previously-passing endpoints should still work (no regressions).
 

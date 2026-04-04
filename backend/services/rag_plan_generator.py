@@ -67,7 +67,7 @@ async def generate_plan_with_rag(intake, openai_client, supabase_client):
 
     # Step 3: Build contextual RAG queries
     injuries_list = [i for i in (intake.injuries or []) if i and i.lower() not in ("none", "")]
-    goal = intake.goal or "strength"
+    goal = (intake.goal or "strength").lower()
 
     queries = []
     if injuries_list:

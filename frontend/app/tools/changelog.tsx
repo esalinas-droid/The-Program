@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, SafeAreaView, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
@@ -20,14 +20,20 @@ export default function ChangeLogScreen() {
   const router = useRouter();
   const [changes, setChanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [undoingId, setUndoingId] = useState<string | null>(null);
 
   const loadChanges = useCallback(async () => {
+    setLoading(true);
+    setFetchError(false);
     try {
       const data = await changeLogApi.get();
       setChanges(data.changes || []);
-    } catch { /* No changes yet */ }
-    setLoading(false);
+    } catch {
+      setFetchError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useFocusEffect(useCallback(() => { loadChanges(); }, [loadChanges]));
@@ -76,6 +82,9 @@ export default function ChangeLogScreen() {
           <Text style={s.title}>CHANGE LOG</Text>
           <Text style={s.subtitle}>AI program decisions — transparent & undoable</Text>
         </View>
+        <TouchableOpacity onPress={loadChanges} style={s.backBtn}>
+          <MaterialCommunityIcons name="refresh" size={20} color={COLORS.text.secondary} />
+        </TouchableOpacity>
       </View>
 
       {/* Info banner */}
@@ -87,7 +96,16 @@ export default function ChangeLogScreen() {
       </View>
 
       <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
-        {changes.length === 0 && (
+        {fetchError && (
+          <View style={s.emptyCard}>
+            <Text style={s.emptyIcon}>⚠️</Text>
+            <Text style={s.emptyTitle}>Could not load changes</Text>
+            <TouchableOpacity onPress={loadChanges} style={{ marginTop: 8 }}>
+              <Text style={{ color: COLORS.accent, fontSize: 14 }}>Tap to retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {!fetchError && changes.length === 0 && (
           <View style={s.emptyCard}>
             <Text style={s.emptyIcon}>📋</Text>
             <Text style={s.emptyTitle}>No changes yet</Text>
