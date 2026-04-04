@@ -10,7 +10,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
 import { programApi, profileApi } from '../src/utils/api';
-import { getStoredUser } from '../src/utils/auth';
+import { getStoredUser, getAuthToken } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -455,6 +455,10 @@ export default function OnboardingIntake() {
         competitionDate:    hasCompetition ? competitionDate : undefined,
         competitionType:    hasCompetition ? competitionType : undefined,
       };
+      // CHECK 3: Verify auth token exists before calling backend
+      const _token = await getAuthToken();
+      console.log('[Onboarding] AUTH TOKEN EXISTS:', !!_token, '| prefix:', _token?.substring(0, 20));
+
       console.log('[Onboarding] Step 2 — Calling programApi.submitIntake with payload:', JSON.stringify(payload, null, 2));
 
       const response = await programApi.submitIntake(payload);

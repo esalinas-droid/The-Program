@@ -1982,7 +1982,8 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
     )
 
     user_id = userId
-    logger.info(f"[INTAKE] Goal received from frontend: '{intake.goal}' | Experience: '{intake.experience}' | UserId: {user_id}")
+    logger.info(f"[INTAKE] userId from auth: '{user_id}' (DEFAULT_USER is '{_PROG_USER}')")
+    logger.info(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}'")
     print(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}' | userId: {user_id}")
 
     # ── Root Cause A Fix: Delete stale saved plans so a fresh generation always wins ──

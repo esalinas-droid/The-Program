@@ -7,6 +7,7 @@ Maps goals to periodization models, builds phases/blocks/sessions with real exer
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import uuid
+import logging
 
 from models.schemas import (
     AnnualPlan, Phase, Block, Week, Session, SessionExercise,
@@ -14,6 +15,8 @@ from models.schemas import (
     GoalType, SessionType, ExerciseCategory, PhaseStatus, SessionStatus,
     IntakeRequest, CurrentLifts
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _id():
@@ -701,7 +704,7 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         GoalType.ATHLETIC: "The Program — Athletic Performance",
         GoalType.GENERAL: "The Program — General Strength",
     }
-    print(f"[PLANGEN] intake.goal='{intake.goal}' -> GoalType={goal} -> planName={plan_names.get(goal)}")
+    print(f"[PLANGEN] intake.goal='{intake.goal}' -> GoalType={goal.value} -> planName={plan_names.get(goal)}")
 
     phases = []
     running_week = 1
