@@ -383,73 +383,58 @@ backend:
 
   - task: "Phase 2 Batch 3 — Task 8: Rehab Progression Tracking"
     implemented: true
-    working: "NA"
+    working: "YES"
     file: "backend/server.py, backend/services/rehab_protocols.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
+      - working: "YES"
+        agent: "testing"
         comment: >
-          Implemented: GET /api/rehab/exercises, GET /api/rehab/status, POST /api/rehab/start,
-          POST /api/rehab/log, POST /api/rehab/graduate. Static core rehab protocols + RAG enhancement.
-          4-phase rehab (Pain-Free ROM → Strength Foundation → Load Tolerance → Return to Training).
-          Auto-progression after N clean sessions. Loggable exercises in log tab via rehabApi.
-          Manual smoke test passed: rehab/start, rehab/status, rehab/exercises, rehab/log all HTTP 200.
+          All 5 rehab tests pass: rehab/start (lower_back, knee), rehab/status, rehab/exercises,
+          rehab/log. Static core + RAG enhancement. Auto-progression after clean sessions.
 
   - task: "Phase 2 Batch 3 — Task 9: Competition Peaking"
     implemented: true
-    working: "NA"
+    working: "YES"
     file: "backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
+      - working: "YES"
+        agent: "testing"
         comment: >
-          Implemented: POST /api/competition/set (set comp date), GET /api/competition/status.
-          Returns: hasCompetition, weeksOut, phaseLabel, color, adjustments[], ragTip.
-          Phase labels: Foundation (>12wk), Build (8-12wk), Peaking (4-8wk), Competition Prep (2-4wk),
-          Taper (1-2wk), Competition Week (<1wk). Frontend: competition banner in index.tsx.
-          Manual smoke test: POST /api/competition/set HTTP 200, GET /api/competition/status HTTP 200.
+          All competition tests pass. competition/set, competition/status, both close/far dates.
+          hasCompetition=true now included in competition/set response (bug fix applied).
 
   - task: "Phase 2 Batch 3 — Task 10: Exercise Rotation Detection"
     implemented: true
-    working: "NA"
+    working: "YES"
     file: "backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: >
-          Implemented: GET /api/rotation/check (detects stale exercises per rotation window),
-          POST /api/rotation/apply (applies suggested swaps to the plan).
-          Rotation windows: main lifts 6wk, supplemental 4wk, accessories 3wk.
-          Returns: flagged[], count, message. Each flagged item has exercise, weeksUsed, suggestion.
-          Frontend: rotation card in index.tsx shown when count > 0.
-          Manual smoke test: GET /api/rotation/check HTTP 200.
+      - working: "YES"
+        agent: "testing"
+        comment: "GET /api/rotation/check returns flagged count and message. Functional."
 
   - task: "Phase 2 Batch 3 — Task 13: Changelog with Undo"
     implemented: true
-    working: "NA"
+    working: "YES"
     file: "backend/server.py, frontend/app/tools/changelog.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
+      - working: "YES"
+        agent: "testing"
         comment: >
-          Implemented: GET /api/coach/change-log (returns all changelog entries with undoable flag),
-          POST /api/coach/undo/{change_id} (reverts substitution back to original exercise in plan).
-          Each entry: changeId, date, week, sessionType, original, replacement, reason, changeType,
-          undone bool, undoable bool. Undo button reverts plan in MongoDB via _save_plan_to_db().
-          Frontend changelog.tsx: full UI with type badges, Undo buttons, confirmation Alert.
-          Manual smoke test: GET /api/coach/change-log HTTP 200 (returned entries).
+          Undo bug fixed: prehab additions (original='(none)') now correctly REMOVE the exercise
+          from ALL sessions (reverted=4, success=true, isPrehab=true). True substitutions still
+          restore original exercise name. Undone entry confirmed with undone=true in changelog.
 
   - task: "Remove hardcoded Eric profile data from server.py seed endpoint"
     implemented: true

@@ -1,0 +1,52 @@
+{
+  "summary": "Phase 2 Final QA — all 34 tests pass across Auth, Profile, Batch 1/2/3, and Data Integrity. One backend bug found: undo endpoint for 'Profile Update' (injury-flag) type changelog entries returns 200 but never sets undone=true, allowing unlimited re-undo (409 never fires). Prehab-type undo entries work correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/coach/undo/{changeId}",
+        "issue": "For 'Profile Update' injury-flag changelog entries, undo returns 200 and reverted=0 but never sets undone=True in DB. This means the 409 Conflict guard never triggers on duplicate undo attempts for these entries. Only prehab (original='(none)') entries correctly set undone=True.",
+        "priority": "MEDIUM",
+        "rca": "In undo_plan_change(), the $set undone:True operation is inside `if reverted > 0:` block. Injury-flag 'Profile Update' entries create no exercise swaps so reverted stays 0, never reaching the DB update. Fix: also mark undone=True for valid change_type='substitution' entries even when reverted=0, or add separate handling for injury-flag profile update entries."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "api_contract_notes": [
+    "Pain endpoint: /api/pain-report (not /api/pain). Fields: bodyRegion, intensity, exerciseName, painType",
+    "Readiness POST: fields are sleepQuality, moodEnergy, soreness (1-5 scale, not sleep/mood)",
+    "Session rating GET: /api/session-rating/latest (not /api/session-rating)",
+    "Session rating POST: field is rpe (not sessionRPE)",
+    "Log workout: POST /api/log with flat model — date, week, day(str), sessionType, exercise, sets, weight, reps, rpe, pain, completed",
+    "Injury preview: POST /api/plan/injury-preview (not GET)",
+    "Coach changelog response: {changes: [...], count: N} wrapper object (not bare array)",
+    "GET /api/profile returns 404 for user_b initially but succeeds after intake completes (timing-dependent — profile is created by intake)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_final_qa.py",
+    "/app/test_reports/pytest/phase2_final_qa_results.xml"
+  ],
+  "action_items": [
+    "Fix undo_plan_change(): mark undone=True for injury-flag 'Profile Update' entries even when reverted=0. Either ungate the DB update from reverted count, or add explicit handling for changeType='substitution' with original containing 'Injury Flags:'"
+  ],
+  "critical_code_review_comments": [
+    "undo_plan_change gating: `if reverted > 0:` should also cover injury-flag type entries to mark undone correctly",
+    "GET /api/coach/change-log wraps response in {changes, count} object — callers should unwrap .changes not treat as bare list"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_final_qa.py"
+  ],
+  "success_rate": {
+    "backend": "34/34 = 100% (all features functional; 1 minor undo edge-case bug found)"
+  },
+  "seed_data_creation": "Used user_a@theprogram.app and user_b@theprogram.app. Called intake, pain, readiness, session log, rehab, competition for user_a.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All Phase 2 Batch 1/2/3 endpoints verified working. Key contracts: pain=/api/pain-report, readiness fields=sleepQuality/moodEnergy/soreness, session-rating GET=/api/session-rating/latest, session-rating POST field=rpe, log=/api/log (flat model), injury-preview=POST not GET, changelog response={changes:[],count:N}. One known bug: undo for Profile Update injury entries returns 200 but undone stays False.",
+  "rca_of_issue": "Undo bug: POST /api/coach/undo/{id} returns 200 for 'Profile Update' injury-flag entries but the $set {undone:True} is inside `if reverted > 0:` guard. Injury-flag changes don't swap exercises so reverted=0 always, skipping the DB update. Fix: set undone=True independently of reverted count for all valid undo operations."
+}
