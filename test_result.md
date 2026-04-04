@@ -439,6 +439,66 @@ backend:
         agent: "main"
         comment: "POST /api/coach/apply-recommendation inserts to substitutions collection and marks conversation as applied."
 
+  - task: "Phase 2 Batch 2 — Task 2: RAG-Enhanced Plan Generation"
+    implemented: true
+    working: true
+    file: "backend/services/rag_plan_generator.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Created services/rag_plan_generator.py with async generate_plan_with_rag(). POST /api/profile/intake added to api_router (shadows program_router). Queries Supabase, calls GPT-4o-mini, applies exercise swaps + prehab. Fallback to base plan on any failure. Persists via _save_plan_to_db(). Supabase verified live: returned 4 passages for test query."
+
+  - task: "Phase 2 Batch 2 — Task 5: Weekly Auto-Review"
+    implemented: true
+    working: true
+    file: "backend/server.py, frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/weekly-review added. Caches in db.weekly_reviews by (userId, week). Generates AI review (Claude Sonnet) or fallback rule-based review. Second call returns cached=True. Frontend index.tsx replaced COMING SOON with real review card showing highlights, concerns, nextWeekFocus, stats."
+
+  - task: "Phase 2 Batch 2 — Task 6: Auto Load & Volume Adjustment + Autoregulation"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/plan/auto-adjust: analyzes last 5 RPEs, adjusts main/supplemental loads by +/-5-10%, persists via _save_plan_to_db(). POST /api/plan/autoregulate: mid-session RPE feedback, returns suggestion+message+suggestedLoad. Tested: autoregulate returns 'reduce' + '285 lbs' for RPE 8.5/target 7.5/load 300."
+
+  - task: "Phase 2 Batch 2 — Task 7: Deload Detection"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/deload/check: scoring system (RPE fatigue +2/+3, pain count +2/+3, flagged regions +2, completion +2, scheduled week +2, max 12). score>=4 -> immediate deload. Logs to db.deload_history (no duplicate per week). Frontend index.tsx shows orange DELOAD RECOMMENDED card with signals."
+
+  - task: "Phase 2 Batch 2 — Task 11: Personalized Warm-Up"
+    implemented: true
+    working: true
+    file: "backend/server.py, frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/warmup/today: session_focus (upper/lower) from plan or weekday calendar. Injury-specific steps added (knee TKEs, shoulder IR/ER, back cat-cow/bird-dog). Extended warm-up when readiness<3.5. Frontend today.tsx: replaced static WARMUP_STEPS with API data, added injury mod badge and readiness note."
+
 frontend:
   - task: "Coach screen: conversation history modal with New/Load/Delete"
     implemented: true
@@ -644,34 +704,72 @@ agent_communication:
 
   - agent: "main"
     message: >
-      Phase 2 Batch 1 fully implemented. All new backend endpoints added to server.py.
-      
-      NEW BACKEND ENDPOINTS:
-      - POST /api/pain-report (create pain report, pattern detection after 3rd same-region in 7 days)
-      - GET /api/pain-report (get recent reports, flaggedRegions list)
-      - POST /api/readiness (sleepQuality/soreness/moodEnergy 1-5, returns adjustmentNote)
-      - GET /api/readiness/today (check if user has checked in today)
-      - POST /api/session-rating (rpe, sessionType, week, setsLogged, totalSets → AI insight)
-      - GET /api/session-rating/latest (most recent rating)
-      
-      FIXED: coach_chat now scoped by userId (was using find_one({}) without filter).
-      FIXED: conversations now save with actual userId (not hardcoded 'default').
-      FIXED: conversation fetch in GET /api/coach/conversations now filters by actual userId.
-      
-      ENHANCED: Coach system prompt now includes:
-      - Today's readiness context (score + adjustment note if applied)
-      - Recent pain log (last 14 days, last 5 entries, with pattern flags)
-      - Last 3 session RPE ratings
-      - History limited to last 5 messages (token budget)
-      
-      NEW FRONTEND FEATURES:
-      - ReadinessModal: auto-shows on Today tab first focus of the day, 3×5-dot pickers
-      - PainReportModal: 3-step flow (body region → pain type → intensity/timing) triggered from ExerciseCard "Report Pain" button
-      - RPE Rating Card on review.tsx: bubble selectors (1-10), submits to session-rating API, shows AI insight with fade animation
-      - "Report Pain" link on review.tsx CTA bar
-      - Home Tab: P1 Pain Alert card (red), P2 Readiness Nudge card (gold), P4 Weekly Review placeholder (blue COMING SOON)
-      
-      Please test all backend endpoints using credentials in /app/memory/test_credentials.md.
-      Test sequence: pain-report → readiness → session-rating → coach/chat.
-      DO NOT test frontend yet.
+      Phase 2 Batch 2 fully implemented. All 5 tasks complete.
+
+      TASK 2 — RAG-Enhanced Plan Generation:
+      - Created /app/backend/services/rag_plan_generator.py
+      - New async generate_plan_with_rag(intake, openai_client, supabase_client)
+      - Queries Supabase vector DB (verified: 4 passages returned for test query)
+      - Uses GPT-4o-mini to generate exercise swaps + prehab based on RAG context
+      - Applies modifications to ALL phases/blocks in the plan
+      - Graceful fallback to base plan if RAG/AI unavailable
+      - RAG intake endpoint (POST /api/profile/intake) added to api_router in server.py
+        (shadows program_router version — api_router is included first)
+      - Plan marked "(Research-Optimized)" when RAG modifications applied
+      - Persists via _save_plan_to_db() as required
+
+      TASK 5 — Weekly Auto-Review:
+      - GET /api/weekly-review — generates AI review (Claude Sonnet) based on:
+        session_ratings, pain_reports, log data, PR detection
+      - Caches in db.weekly_reviews by (userId, week) — generates ONCE per week
+      - Fallback review if AI unavailable (rule-based analysis)
+      - Frontend index.tsx: replaced COMING SOON with real review card
+        (highlights, concerns, nextWeekFocus, stats strip)
+      - TESTED: cache works — second call returns cached=True ✓
+
+      TASK 6 — Automatic Load & Volume Adjustment:
+      - POST /api/plan/auto-adjust: analyzes last 5 session RPEs
+        - avg RPE >= 8.5: reduce loads 10%
+        - avg RPE >= 8.0: reduce loads 5%
+        - avg RPE <= 6.0: increase loads 5%
+        - 5+ pain reports in 2 weeks: extra reduction cap
+        - Adjusts only current + next 2 weeks, main/supplemental exercises
+        - Persists via _save_plan_to_db()
+      - POST /api/plan/autoregulate: real-time mid-session RPE feedback
+        - Returns: suggestion (reduce/increase/maintain) + message + suggestedLoad
+        - TESTED: RPE 8.5, target 7.5 → "reduce", suggested 285 lbs ✓
+
+      TASK 7 — Deload Detection:
+      - GET /api/deload/check: scoring system (max 12 points)
+        - avg RPE >= 8.5/9.0: +2/+3
+        - pain count >= 4/7 in 2 weeks: +2/+3
+        - flagged regions: +2
+        - completion < 60%: +2
+        - scheduled deload week (every 4th): +2
+        - score >= 4: immediate deload recommended
+        - Logs to db.deload_history (no duplicate per week)
+      - Frontend index.tsx: shows orange DELOAD RECOMMENDED card with signals
+        (conflict priority: injury safety > deload > everything else)
+
+      TASK 11 — Personalized Warm-Up:
+      - GET /api/warmup/today: tailored to session type, injury flags, readiness
+        - Detects session_focus (upper/lower) from plan or weekday calendar
+        - Adds injury-specific steps (knee TKEs, shoulder IR/ER, back bird-dogs etc.)
+        - Extends warm-up if readiness_score < 3.5
+      - Frontend today.tsx: replaced static WARMUP_STEPS with API data
+        - Shield icon shows when injury modifications present
+        - Orange readiness note shows if readiness < 3.5
+
+      api.ts: Added weeklyReviewApi, autoAdjustApi, deloadApi, warmupApi
+
+      TEST RESULTS (manual): All 5 new endpoints return HTTP 200 ✓
+      Test credentials: /app/memory/test_credentials.md
+
+      Please test these backend endpoints:
+      - GET /api/weekly-review (cached and non-cached)
+      - GET /api/deload/check (signals + scoring logic)
+      - GET /api/warmup/today (injury modifications + session focus)
+      - POST /api/plan/auto-adjust (RPE analysis + load adjustment)
+      - POST /api/plan/autoregulate (mid-session RPE feedback)
+      Also verify POST /api/profile/intake still works (RAG-enhanced version)
 

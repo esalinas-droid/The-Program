@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from typing import List, Optional, Any, Annotated
 from datetime import datetime, timezone
 import os
+import re
+import json
 import logging
 from pathlib import Path
 ROOT_DIR = Path(__file__).parent
@@ -1932,6 +1934,701 @@ async def get_compliance_breakdown():
         }
         for st in session_types
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — BATCH 2  Intelligent Coaching Upgrades
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Task 2: RAG-Enhanced Plan Generation ─────────────────────────────────────
+# This route shadows the one in program_router because api_router is included
+# first, so every POST /api/profile/intake comes here.
+
+@api_router.post("/profile/intake")
+async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_current_user)):
+    """
+    RAG-Enhanced intake endpoint.
+    Generates a 12-month plan augmented with Supabase knowledge retrieval.
+    Falls back to rule-based plan if RAG / AI is unavailable.
+    Every plan generation is persisted via _save_plan_to_db().
+    """
+    from services.rag_plan_generator import generate_plan_with_rag
+    from models.schemas import (
+        UserProfile, GoalType, ExperienceLevel,
+        CoachMemoryFact, ProgramChange, ChangeScope, ChangeTrigger,
+    )
+
+    user_id = userId
+
+    # Build in-memory profile
+    try:
+        goal_enum = GoalType(intake.goal)
+    except ValueError:
+        goal_enum = GoalType.STRENGTH
+    try:
+        exp_enum = ExperienceLevel(intake.experience)
+    except ValueError:
+        exp_enum = ExperienceLevel.INTERMEDIATE
+
+    profile = UserProfile(
+        userId=user_id,
+        goal=goal_enum,
+        experience=exp_enum,
+        currentLifts=intake.lifts,
+        liftUnit=intake.liftUnit,
+        bodyweight=intake.bodyweight,
+        trainingDays=intake.frequency,
+        injuries=intake.injuries,
+        gymTypes=intake.gym,
+        onboardingComplete=True,
+    )
+    _prog_store["profiles"][user_id] = profile
+
+    # Generate RAG-enhanced plan (graceful fallback inside)
+    plan = await generate_plan_with_rag(intake, _openai_client, _supabase_client)
+    plan.userId = user_id
+    _prog_store["plans"][user_id] = plan
+    rag_enhanced = "(Research-Optimized)" in plan.planName
+
+    # Persist plan to MongoDB (CRITICAL — survives restarts)
+    await _save_plan_to_db(plan, user_id)
+
+    # Mark onboarding complete in db.users
+    if user_id != _PROG_USER:
+        await db.users.update_one(
+            {"userId": user_id},
+            {"$set": {"onboardingComplete": True, "goal": intake.goal, "experience": intake.experience}},
+        )
+
+    # Update db.profile with intake data
+    injury_flags = [i for i in (intake.injuries or []) if i and i.lower() not in ("none", "")]
+    profile_update = {
+        "goal": intake.goal,
+        "trainingGoal": intake.goal,
+        "trainingDaysCount": intake.frequency,
+        "onboardingComplete": True,
+        "updatedAt": datetime.now(timezone.utc),
+    }
+    if injury_flags:
+        profile_update["injuryFlags"] = injury_flags
+    if intake.bodyweight:
+        profile_update["currentBodyweight"] = intake.bodyweight
+    existing_profile = await db.profile.find_one({"userId": user_id})
+    if existing_profile:
+        await db.profile.update_one({"userId": user_id}, {"$set": profile_update})
+
+    # Log initial program change
+    _prog_store["changes"].append(ProgramChange(
+        changeId=_prog_id(), userId=user_id,
+        triggerType=ChangeTrigger.USER_REQUEST,
+        scope=ChangeScope.YEAR,
+        oldValue="No program",
+        newValue=plan.planName,
+        explanation=(
+            f"Generated {plan.planName} (RAG-enhanced) — "
+            f"{intake.goal} goal, {intake.experience} level, "
+            f"{intake.frequency} days/week."
+        ),
+    ))
+
+    # Seed coach memory facts
+    for inj in (intake.injuries or []):
+        if inj and inj.lower() not in ("none", ""):
+            _prog_store["memory_facts"].append(CoachMemoryFact(
+                factId=_prog_id(), userId=user_id,
+                factType="injury", factValue=inj,
+                source="onboarding", confirmed=True,
+            ))
+
+    return {
+        "success": True,
+        "profile": profile.model_dump(),
+        "plan": plan.model_dump(),
+        "rag_enhanced": rag_enhanced,
+    }
+
+
+# ─── Task 5: Weekly Auto-Review ────────────────────────────────────────────────
+
+@api_router.get("/weekly-review")
+async def get_weekly_review(userId: str = Depends(get_current_user)):
+    """
+    Return a weekly AI coaching review, cached once per training week.
+    Generates on first call for the week; returns cache on subsequent calls.
+    Stored in db.weekly_reviews.
+    """
+    from datetime import timedelta
+
+    profile_doc = await db.profile.find_one({"userId": userId})
+    current_week = int(profile_doc.get("currentWeek", 1)) if profile_doc else 1
+    now = datetime.now(timezone.utc)
+    today_str = now.strftime("%Y-%m-%d")
+
+    # ── Cache check ────────────────────────────────────────────────────────────
+    existing = await db.weekly_reviews.find_one({"userId": userId, "week": current_week})
+    if existing:
+        existing.pop("_id", None)
+        return {
+            "hasReview": True,
+            "cached": True,
+            **{k: existing.get(k) for k in ("week", "generatedAt", "summary", "highlights", "concerns", "nextWeekFocus", "stats")},
+        }
+
+    # ── Gather data ────────────────────────────────────────────────────────────
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    session_ratings = await db.session_ratings.find(
+        {"userId": userId}
+    ).sort("createdAt", -1).limit(10).to_list(10)
+
+    pain_docs = await db.pain_reports.find({
+        "userId": userId, "date": {"$gte": week_ago},
+    }).to_list(30)
+
+    log_docs = await db.log.find({"userId": userId, "week": current_week}).to_list(500)
+
+    # Stats
+    sessions_planned = int(profile_doc.get("trainingDaysCount", 4)) if profile_doc else 4
+    session_dates = set(d.get("date") for d in log_docs if d.get("date"))
+    sessions_completed = len(session_dates)
+
+    week_ratings = [r for r in session_ratings if r.get("week") == current_week]
+    avg_rpe = (
+        sum(r.get("rpe", 0) for r in week_ratings) / len(week_ratings)
+        if week_ratings else 0.0
+    )
+
+    pain_count = len(pain_docs)
+    pain_regions = list(set(d.get("bodyRegion") for d in pain_docs if d.get("bodyRegion")))
+
+    # PR detection (e1rm improvement vs prev week)
+    prev_logs = await db.log.find({"userId": userId, "week": current_week - 1}).to_list(500)
+    this_best: dict = {}
+    for d in log_docs:
+        ex = d.get("exercise", "")
+        e1rm = float(d.get("e1rm", 0) or 0)
+        if ex and e1rm > this_best.get(ex, 0):
+            this_best[ex] = e1rm
+    prev_best: dict = {}
+    for d in prev_logs:
+        ex = d.get("exercise", "")
+        e1rm = float(d.get("e1rm", 0) or 0)
+        if ex and e1rm > prev_best.get(ex, 0):
+            prev_best[ex] = e1rm
+    pr_count = sum(
+        1 for ex, val in this_best.items()
+        if val > prev_best.get(ex, 0) and prev_best.get(ex, 0) > 0
+    )
+
+    stats = {
+        "sessionsCompleted": sessions_completed,
+        "sessionsPlanned": sessions_planned,
+        "avgRPE": round(avg_rpe, 1),
+        "prsHit": pr_count,
+        "painReports": pain_count,
+    }
+
+    # ── Fallback review (no AI needed) ────────────────────────────────────────
+    def _fallback_review() -> dict:
+        highlights = []
+        concerns = []
+        completion_pct = round(sessions_completed / max(sessions_planned, 1) * 100)
+
+        if sessions_completed >= sessions_planned:
+            highlights.append(f"Full attendance — {sessions_completed}/{sessions_planned} sessions completed")
+        elif sessions_completed > 0:
+            highlights.append(f"{sessions_completed}/{sessions_planned} sessions logged")
+        if pr_count > 0:
+            highlights.append(f"{pr_count} new e1RM PRs this week")
+        if pain_count == 0 and sessions_completed > 0:
+            highlights.append("Zero pain reports — clean week")
+
+        if avg_rpe >= 8.5:
+            concerns.append(f"Average RPE {avg_rpe:.1f}/10 is high — prioritise recovery")
+        if pain_count >= 4:
+            concerns.append(f"{pain_count} pain reports in 7 days — monitor closely")
+        if sessions_completed < sessions_planned * 0.6 and sessions_planned > 0:
+            concerns.append(f"Attendance at {completion_pct}% — log sessions consistently")
+
+        if avg_rpe >= 8.5:
+            next_focus = "Recovery is the priority. Lower loads 10%, extend warm-ups."
+        elif avg_rpe <= 6.0 and avg_rpe > 0:
+            next_focus = "RPE headroom available — push intensity next week."
+        else:
+            next_focus = "Continue progressive overload with full intent."
+
+        summary = f"Week {current_week} — {completion_pct}% attendance" + (
+            f", avg RPE {avg_rpe:.1f}/10" if avg_rpe > 0 else ""
+        ) + "."
+
+        return {
+            "summary": summary,
+            "highlights": highlights or ["Complete more sessions to unlock insights"],
+            "concerns": concerns,
+            "nextWeekFocus": next_focus,
+        }
+
+    # ── AI-generated review ────────────────────────────────────────────────────
+    review_data: dict = {}
+    if _openai_client:
+        try:
+            context_lines = [
+                f"Week {current_week} summary:",
+                f"- Sessions: {sessions_completed}/{sessions_planned} completed",
+                f"- Avg RPE: {avg_rpe:.1f}/10" if avg_rpe > 0 else "- No RPE data yet",
+                f"- PRs logged: {pr_count}",
+                f"- Pain reports: {pain_count}" + (f" ({', '.join(pain_regions)})" if pain_regions else ""),
+            ]
+            if week_ratings:
+                context_lines.append("Session RPEs: " + ", ".join(
+                    f"{r.get('sessionType','?')} {r.get('rpe','?')}" for r in week_ratings[:4]
+                ))
+            context = "\n".join(context_lines)
+
+            emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+            from emergentintegrations.llm.chat import LlmChat as _LC, UserMessage as _UM
+            chat = _LC(
+                api_key=emergent_key,
+                session_id=str(uuid.uuid4()),
+                system_message="You are an expert strength coach writing weekly training reviews. Be specific, data-driven, and use a direct coaching voice. Return ONLY valid JSON.",
+            ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+
+            ai_prompt = f"""{context}
+
+Write a weekly review as JSON (no markdown):
+{{
+  "summary": "2-3 sentences: what happened this week and overall quality",
+  "highlights": ["specific achievement 1", "specific achievement 2"],
+  "concerns": ["specific concern if any (omit if none)"],
+  "nextWeekFocus": "1-2 concrete action items for next training week"
+}}"""
+
+            raw = await chat.send_message(_UM(text=ai_prompt))
+            j = re.search(r'\{.*\}', raw, re.DOTALL)
+            if j:
+                review_data = json.loads(j.group())
+                logger.info(f"[WeeklyReview] AI review generated for user {userId} week {current_week}")
+        except Exception as e:
+            logger.warning(f"[WeeklyReview] AI failed: {e} — using fallback")
+
+    if not review_data:
+        review_data = _fallback_review()
+
+    # ── Cache in MongoDB ───────────────────────────────────────────────────────
+    doc = {
+        "userId": userId,
+        "week": current_week,
+        "generatedAt": today_str,
+        "stats": stats,
+        "createdAt": now,
+        **review_data,
+    }
+    await db.weekly_reviews.insert_one(doc)
+    logger.info(f"[WeeklyReview] Cached week {current_week} review for user {userId}")
+
+    return {
+        "hasReview": True,
+        "cached": False,
+        "week": current_week,
+        "generatedAt": today_str,
+        "stats": stats,
+        **review_data,
+    }
+
+
+# ─── Task 6: Automatic Load & Volume Adjustment ────────────────────────────────
+
+@api_router.post("/plan/auto-adjust")
+async def auto_adjust_plan(userId: str = Depends(get_current_user)):
+    """
+    Analyse recent RPE trends and automatically adjust upcoming loads.
+    - avg RPE >= 8.5  → reduce loads 10% for recovery
+    - avg RPE >= 8.0  → reduce loads 5%
+    - avg RPE <= 6.0  → increase loads 5% (room to push)
+    - 5+ pain reports in 2 weeks → additional reduction cap
+    Always persists via _save_plan_to_db().
+    """
+    from datetime import timedelta
+
+    recent_ratings = await db.session_ratings.find(
+        {"userId": userId}
+    ).sort("createdAt", -1).limit(5).to_list(5)
+
+    if len(recent_ratings) < 2:
+        return {"adjusted": False, "reason": "Not enough session data (need at least 2 sessions)"}
+
+    avg_rpe = sum(r.get("rpe", 7) for r in recent_ratings) / len(recent_ratings)
+
+    if avg_rpe >= 8.5:
+        factor, direction, note = 0.90, "reduce", f"Avg RPE {avg_rpe:.1f}/10 — loads reduced 10% for recovery"
+    elif avg_rpe >= 8.0:
+        factor, direction, note = 0.95, "reduce", f"Avg RPE {avg_rpe:.1f}/10 — loads reduced 5%"
+    elif avg_rpe <= 6.0:
+        factor, direction, note = 1.05, "increase", f"Avg RPE {avg_rpe:.1f}/10 — loads increased 5% (RPE headroom)"
+    else:
+        return {
+            "adjusted": False,
+            "reason": f"RPE {avg_rpe:.1f}/10 is optimal — no adjustment needed",
+            "avgRPE": round(avg_rpe, 1),
+        }
+
+    # Pain data: extra reduction cap
+    two_weeks_ago = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+    pain_docs = await db.pain_reports.find({
+        "userId": userId, "date": {"$gte": two_weeks_ago},
+    }).to_list(30)
+    if len(pain_docs) >= 5:
+        factor = min(factor, 0.90)
+        direction = "reduce"
+        note += f"; {len(pain_docs)} pain reports → extra caution"
+
+    # Load plan into memory
+    plan_available = await _ensure_plan_loaded(userId)
+    if not plan_available:
+        return {"adjusted": False, "reason": "No plan found — complete onboarding first"}
+
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        return {"adjusted": False, "reason": "Plan not in memory"}
+
+    profile_doc = await db.profile.find_one({"userId": userId})
+    current_week = int(profile_doc.get("currentWeek", 1)) if profile_doc else 1
+
+    sets_adjusted = 0
+    changes: list = []
+
+    for phase in plan.phases:
+        for block in phase.blocks:
+            for week in block.weeks:
+                if not (current_week <= week.weekNumber <= current_week + 2):
+                    continue  # Only adjust current + next 2 weeks
+                for session in week.sessions:
+                    for ex in session.exercises:
+                        cat_str = str(ex.category).lower()
+                        if cat_str not in ("main", "supplemental"):
+                            continue
+                        for ts in ex.targetSets:
+                            if ts.setType not in ("work", "ramp"):
+                                continue
+                            load_str = (ts.targetLoad or "").strip()
+                            numeric = re.sub(r'[^0-9.]', '', load_str)
+                            if not numeric or float(numeric) <= 0:
+                                continue
+                            old_load = float(numeric)
+                            new_load = round(old_load * factor / 5) * 5
+                            if new_load != round(old_load / 5) * 5:
+                                ts.targetLoad = str(int(new_load))
+                                sets_adjusted += 1
+                    if sets_adjusted > 0 and not any(
+                        c["exercise"] == ex.name and c["week"] == week.weekNumber
+                        for c in changes
+                    ):
+                        changes.append({
+                            "exercise": ex.name,
+                            "session": str(session.sessionType),
+                            "week": week.weekNumber,
+                            "direction": direction,
+                        })
+
+    if sets_adjusted > 0:
+        await _save_plan_to_db(plan, userId)
+        # Log adjustment
+        now = datetime.now(timezone.utc)
+        await db.substitutions.insert_one({
+            "userId": userId,
+            "timestamp": now,
+            "date": now.strftime("%Y-%m-%d"),
+            "week": current_week,
+            "day": "Auto-Adjustment",
+            "sessionType": "Multiple Sessions",
+            "originalExercise": f"Target loads (avg RPE {avg_rpe:.1f})",
+            "replacementExercise": f"Loads {direction}d {abs(1 - factor) * 100:.0f}%",
+            "reason": note,
+        })
+        logger.info(f"[AutoAdjust] User {userId}: {sets_adjusted} sets {direction}d (RPE {avg_rpe:.1f})")
+
+    return {
+        "adjusted": sets_adjusted > 0,
+        "direction": direction if sets_adjusted > 0 else "none",
+        "setsAdjusted": sets_adjusted,
+        "avgRPE": round(avg_rpe, 1),
+        "factor": factor,
+        "note": note,
+        "changes": changes[:10],
+    }
+
+
+@api_router.post("/plan/autoregulate")
+async def autoregulate_session(body: dict, userId: str = Depends(get_current_user)):
+    """
+    Mid-session RPE feedback — real-time load suggestion after each set.
+    Returns: suggestion (reduce/increase/maintain) + coaching message + suggested load.
+    """
+    current_rpe = float(body.get("currentRPE", 7.0))
+    target_rpe = float(body.get("targetRPE", 7.5))
+    current_load = float(body.get("currentLoad", 0) or 0)
+    diff = current_rpe - target_rpe
+    new_load = None
+
+    if diff >= 2.0:
+        suggestion = "reduce"
+        pct = 15 if diff >= 2.5 else 10
+        new_load = round(current_load * (1 - pct / 100) / 5) * 5 if current_load > 0 else None
+        load_msg = f" Drop to ~{new_load} lbs next set ({pct}% less)." if new_load else f" Reduce by {pct}%."
+        message = f"RPE {int(current_rpe)}/10 — that was heavy.{load_msg}"
+    elif diff >= 1.0:
+        suggestion = "reduce"
+        new_load = round(current_load * 0.95 / 5) * 5 if current_load > 0 else None
+        load_msg = f" Try {new_load} lbs next set." if new_load else " Reduce slightly."
+        message = f"RPE {int(current_rpe)}/10 slightly high.{load_msg}"
+    elif diff <= -2.0:
+        suggestion = "increase"
+        new_load = round(current_load * 1.10 / 5) * 5 if current_load > 0 else None
+        load_msg = f" Add {new_load} lbs next set." if new_load else " Add 10–15 lbs."
+        message = f"RPE {int(current_rpe)}/10 — plenty in the tank.{load_msg}"
+    elif diff <= -1.0:
+        suggestion = "increase"
+        new_load = round(current_load * 1.05 / 5) * 5 if current_load > 0 else None
+        load_msg = f" Try {new_load} lbs next set." if new_load else " Add 5 lbs."
+        message = f"RPE {int(current_rpe)}/10 — room to push.{load_msg}"
+    else:
+        suggestion = "maintain"
+        message = f"RPE {int(current_rpe)}/10 — right in the zone. Stay at current load."
+
+    return {
+        "suggestion": suggestion,
+        "message": message,
+        "currentRPE": current_rpe,
+        "targetRPE": target_rpe,
+        "suggestedLoad": new_load,
+    }
+
+
+# ─── Task 7: Deload Detection ──────────────────────────────────────────────────
+
+@api_router.get("/deload/check")
+async def check_deload_needed(userId: str = Depends(get_current_user)):
+    """
+    Analyse training signals to detect if a deload week is needed.
+    Scoring: RPE fatigue + pain frequency + session completion rate.
+    Logs recommendation to db.deload_history when score >= 4.
+    Conflict priority: injury safety > deload > all else.
+    """
+    from datetime import timedelta
+
+    profile_doc = await db.profile.find_one({"userId": userId})
+    current_week = int(profile_doc.get("currentWeek", 1)) if profile_doc else 1
+    now = datetime.now(timezone.utc)
+    two_weeks_ago = (now - timedelta(weeks=2)).strftime("%Y-%m-%d")
+    three_weeks_ago = (now - timedelta(weeks=3)).strftime("%Y-%m-%d")
+
+    # Recent RPE (last 5 sessions)
+    recent_ratings = await db.session_ratings.find(
+        {"userId": userId}
+    ).sort("createdAt", -1).limit(5).to_list(5)
+    avg_rpe = sum(r.get("rpe", 7) for r in recent_ratings) / len(recent_ratings) if recent_ratings else 7.0
+
+    # Pain frequency (last 2 weeks)
+    pain_docs = await db.pain_reports.find({
+        "userId": userId, "date": {"$gte": two_weeks_ago},
+    }).to_list(50)
+    pain_count = len(pain_docs)
+    flagged_regions = list({
+        d.get("bodyRegion") for d in pain_docs
+        if d.get("flagged") and d.get("bodyRegion")
+    })
+
+    # Session completion rate (last 3 weeks)
+    log_docs = await db.log.find({
+        "userId": userId, "date": {"$gte": three_weeks_ago},
+    }).to_list(500)
+    sessions_completed = len({d.get("date") for d in log_docs if d.get("date")})
+    expected = int(profile_doc.get("trainingDaysCount", 4)) * 3 if profile_doc else 12
+    completion_rate = sessions_completed / expected if expected > 0 else 1.0
+
+    # Scoring
+    deload_score = 0
+    signals: list = []
+
+    if avg_rpe >= 9.0:
+        deload_score += 3
+        signals.append(f"Avg RPE {avg_rpe:.1f}/10 — near-maximal fatigue sustained")
+    elif avg_rpe >= 8.5:
+        deload_score += 2
+        signals.append(f"Avg RPE {avg_rpe:.1f}/10 — high systemic fatigue")
+
+    if pain_count >= 7:
+        deload_score += 3
+        signals.append(f"{pain_count} pain reports in 2 weeks — injury risk elevated")
+    elif pain_count >= 4:
+        deload_score += 2
+        signals.append(f"{pain_count} pain reports in 2 weeks — accumulating")
+
+    if flagged_regions:
+        deload_score += 2
+        signals.append(f"Recurring pain in: {', '.join(flagged_regions)}")
+
+    if completion_rate < 0.60:
+        deload_score += 2
+        signals.append(f"Completion {round(completion_rate * 100)}% — possible overreaching or fatigue")
+
+    # Scheduled deload weeks (every 4th week per block)
+    SCHEDULED_DELOAD_WEEKS = {4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52}
+    if current_week in SCHEDULED_DELOAD_WEEKS:
+        deload_score += 2
+        signals.append(f"Week {current_week} is a scheduled deload week in the programme")
+
+    # Verdict
+    if deload_score >= 4:
+        urgency = "immediate"
+        recommended = True
+        message = "Deload recommended immediately. Clear signs of systemic overreaching."
+    elif deload_score >= 2:
+        urgency = "soon"
+        recommended = False
+        message = f"Fatigue building (score {deload_score}/12). Consider a deload within 1–2 weeks."
+    else:
+        urgency = "none"
+        recommended = False
+        message = f"No deload needed. Training fatigue is well managed (score {deload_score}/12)."
+
+    # Log when deload is recommended (prevent duplicate entries per week)
+    if recommended:
+        exists = await db.deload_history.find_one({"userId": userId, "week": current_week})
+        if not exists:
+            await db.deload_history.insert_one({
+                "userId": userId,
+                "week": current_week,
+                "triggeredAt": now,
+                "date": now.strftime("%Y-%m-%d"),
+                "deloadScore": deload_score,
+                "signals": signals,
+                "avgRPE": round(avg_rpe, 1),
+                "painCount": pain_count,
+                "completionRate": round(completion_rate, 2),
+                "urgency": urgency,
+            })
+            logger.info(f"[Deload] User {userId}: deload logged — score={deload_score}, RPE={avg_rpe:.1f}")
+
+    return {
+        "deloadRecommended": recommended,
+        "urgency": urgency,
+        "deloadScore": deload_score,
+        "signals": signals,
+        "message": message,
+        "stats": {
+            "avgRPE": round(avg_rpe, 1),
+            "painReports": pain_count,
+            "completionRate": round(completion_rate * 100),
+            "currentWeek": current_week,
+        },
+    }
+
+
+# ─── Task 11: Personalized Warm-Up ────────────────────────────────────────────
+
+@api_router.get("/warmup/today")
+async def get_personalized_warmup(userId: str = Depends(get_current_user)):
+    """
+    Return a personalized warm-up for today's session.
+    Tailored to: session focus (upper/lower), injury flags, and readiness score.
+    """
+    profile_doc = await db.profile.find_one({"userId": userId})
+    injuries = profile_doc.get("injuryFlags", []) if profile_doc else []
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    readiness_doc = await db.readiness_checks.find_one({"userId": userId, "date": today_str})
+    readiness_score = float(readiness_doc.get("totalScore", 5.0)) if readiness_doc else 5.0
+
+    # Determine session focus
+    today_day = datetime.now().weekday() + 1  # 1=Mon … 7=Sun
+    CALENDAR = {1: "lower", 2: "upper", 4: "lower", 5: "upper"}
+    session_focus = CALENDAR.get(today_day, "upper")
+
+    # Override with actual plan session type if available
+    plan_available = await _ensure_plan_loaded(userId)
+    if plan_available:
+        plan = _prog_store["plans"].get(userId)
+        if plan:
+            for phase in plan.phases:
+                for block in phase.blocks:
+                    for week in block.weeks:
+                        for session in week.sessions:
+                            if session.dayNumber == today_day:
+                                stype = str(session.sessionType or "").lower()
+                                session_focus = "lower" if "lower" in stype else "upper"
+
+    # Injury flags
+    inj_lower = any(
+        any(k in inj.lower() for k in ["knee", "hip", "lower back", "lumbar", "si joint", "hamstring", "quad"])
+        for inj in injuries
+    )
+    inj_upper = any(
+        any(k in inj.lower() for k in ["shoulder", "elbow", "wrist", "rotator", "bicep", "pec"])
+        for inj in injuries
+    )
+    extended = readiness_score < 3.5
+
+    if session_focus == "lower":
+        steps = [
+            "Hip circles — 10 reps each direction (slow, deliberate)",
+            "Leg swings — 10 forward / 10 lateral per leg",
+            "Goblet squat — 10 reps bodyweight (pause 1s at bottom)",
+            "Hip flexor stretch — 30s per side",
+            "Band walks — 15 steps each direction",
+        ]
+        if extended:
+            steps += ["Cossack squat — 5 per side (mobility)", "Glute bridge — 15 reps (hip activation)"]
+        if inj_lower:
+            if any("knee" in i.lower() for i in injuries):
+                steps.insert(2, "Terminal knee extensions (band) — 20 reps per leg")
+            if any(k in i.lower() for i in injuries for k in ["si", "hip"]):
+                steps.insert(2, "Dead bug — 8 per side (core / SI stability)")
+                steps.append("Clamshell (band) — 20 per side")
+            if any(k in i.lower() for i in injuries for k in ["back", "lumbar"]):
+                steps.insert(1, "Cat-cow — 10 reps (lumbar mobility)")
+                steps.insert(2, "McGill bird-dog — 6 per side")
+        steps.append("Empty bar squat — 2 × 10 (groove the pattern)")
+        duration = "10–15 min" if extended else "8–12 min"
+        title = "Lower Body Warm-Up"
+    else:
+        steps = [
+            "Band pull-aparts — 3 × 20 (scapular retraction)",
+            "Shoulder dislocates (band) — 15 reps slow",
+            "Face pulls (light) — 20 reps",
+            "Light dumbbell press — 12 reps (not taxing)",
+            "Thoracic extension over foam roller — 30s",
+        ]
+        if extended:
+            steps += ["Wrist circles — 10 each direction", "Scapular push-ups — 10 reps"]
+        if inj_upper:
+            if any(k in i.lower() for i in injuries for k in ["shoulder", "rotator"]):
+                steps.insert(1, "External rotation (band) — 20 per arm")
+                steps.insert(2, "Internal rotation (band) — 20 per arm")
+            if any("elbow" in i.lower() for i in injuries):
+                steps.insert(0, "Forearm flexor stretch — 30s per arm")
+                steps.insert(1, "Forearm extensor stretch — 30s per arm")
+        steps.append("Empty bar press — 2 × 10 slow tempo (groove the press)")
+        duration = "8–12 min" if extended else "6–10 min"
+        title = "Upper Body Warm-Up"
+
+    readiness_note = ""
+    if readiness_score < 2.5:
+        readiness_note = "Low readiness today — take your time, extend rest between warm-up sets."
+    elif readiness_score < 3.5:
+        readiness_note = "Moderate readiness — thorough warm-up is key. Don't rush this."
+
+    return {
+        "title": title,
+        "sessionFocus": session_focus,
+        "duration": duration,
+        "steps": steps,
+        "stepCount": len(steps),
+        "readinessScore": readiness_score,
+        "readinessNote": readiness_note,
+        "hasInjuryModifications": inj_lower or inj_upper,
+        "extended": extended,
+    }
 
 
 app.include_router(api_router)

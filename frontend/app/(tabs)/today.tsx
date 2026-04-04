@@ -8,7 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getBlock } from '../../src/utils/calculations';
 import {
@@ -1036,6 +1036,15 @@ export default function TodayScreen() {
   });
   const [swaps, setSwaps]             = useState<SwapMap>({});
   const [warmupExpanded, setWarmupExpanded] = useState(false);
+  const [warmupData, setWarmupData] = useState<{
+    title: string;
+    sessionFocus: string;
+    duration: string;
+    steps: string[];
+    readinessNote: string;
+    hasInjuryModifications: boolean;
+    extended: boolean;
+  } | null>(null);
 
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
@@ -1098,6 +1107,12 @@ export default function TodayScreen() {
           }
         }
       } catch { /* Readiness check not critical */ }
+
+      // ── Fetch personalized warm-up (Task 11) ─────────────────────────────
+      try {
+        const wu = await warmupApi.getToday();
+        setWarmupData(wu);
+      } catch { /* Warm-up not critical */ }
 
       setLoading(false);
     })();
@@ -1298,7 +1313,7 @@ export default function TodayScreen() {
           <Text style={s.coachText}>{coachNote}</Text>
         </View>
 
-        {/* ── WARM-UP SECTION ── */}
+        {/* ── WARM-UP SECTION (Task 11 — Personalized) ── */}
         <TouchableOpacity
           style={s.warmupBar}
           onPress={() => {
@@ -1309,11 +1324,18 @@ export default function TodayScreen() {
         >
           <View style={s.warmupBarLeft}>
             <MaterialCommunityIcons name="run-fast" size={17} color={COLORS.text.secondary} />
-            <Text style={s.warmupBarTitle}>Upper Body Warm-Up Protocol</Text>
+            <Text style={s.warmupBarTitle}>
+              {warmupData?.title ?? 'Warm-Up Protocol'}
+            </Text>
+            {warmupData?.hasInjuryModifications && (
+              <View style={s.warmupInjuryBadge}>
+                <MaterialCommunityIcons name="shield-check-outline" size={10} color='#4DCEA6' />
+              </View>
+            )}
           </View>
           <View style={s.warmupBarRight}>
             <View style={s.warmupDurationBadge}>
-              <Text style={s.warmupDurationText}>8–10 min</Text>
+              <Text style={s.warmupDurationText}>{warmupData?.duration ?? '8–10 min'}</Text>
             </View>
             <MaterialCommunityIcons
               name={warmupExpanded ? 'chevron-up' : 'chevron-down'}
@@ -1325,17 +1347,19 @@ export default function TodayScreen() {
 
         {warmupExpanded && (
           <View style={s.warmupContent}>
-            {WARMUP_STEPS.map((step, i) => (
+            {warmupData?.readinessNote ? (
+              <View style={s.warmupReadinessNote}>
+                <MaterialCommunityIcons name="information-outline" size={13} color='#FF9800' />
+                <Text style={s.warmupReadinessNoteText}>{warmupData.readinessNote}</Text>
+              </View>
+            ) : null}
+            {(warmupData?.steps ?? WARMUP_STEPS.map(st => `${st.name} — ${st.sets}`)).map((step, i) => (
               <View key={i} style={s.warmupStep}>
                 <View style={s.warmupStepNum}>
                   <Text style={s.warmupStepNumText}>{i + 1}</Text>
                 </View>
                 <View style={s.warmupStepInfo}>
-                  <View style={s.warmupStepTop}>
-                    <Text style={s.warmupStepName}>{step.name}</Text>
-                    <Text style={s.warmupStepSets}>{step.sets}</Text>
-                  </View>
-                  <Text style={s.warmupStepNote}>{step.note}</Text>
+                  <Text style={s.warmupStepName}>{step}</Text>
                 </View>
               </View>
             ))}
@@ -1497,6 +1521,9 @@ const s = StyleSheet.create({
   warmupStepName: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary, flex: 1 },
   warmupStepSets: { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
   warmupStepNote: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 16 },
+  warmupInjuryBadge: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#4DCEA620', justifyContent: 'center', alignItems: 'center', marginLeft: 4 },
+  warmupReadinessNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md, backgroundColor: '#FF980015', borderRadius: RADIUS.md, marginBottom: SPACING.sm },
+  warmupReadinessNoteText: { flex: 1, fontSize: FONTS.sizes.xs, color: '#FF9800', lineHeight: 16 },
 
   // Exercises section label
   sectionLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm },

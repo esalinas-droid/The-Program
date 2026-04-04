@@ -210,3 +210,84 @@ export const sessionRatingApi = {
     api('/session-rating', { method: 'POST', body: JSON.stringify(data) }),
   getLatest: () => api('/session-rating/latest'),
 };
+
+// ─── Phase 2 Batch 2 APIs ──────────────────────────────────────────────────────
+
+// Task 5: Weekly Auto-Review
+export const weeklyReviewApi = {
+  get: (): Promise<{
+    hasReview: boolean;
+    cached: boolean;
+    week: number;
+    generatedAt: string;
+    summary: string;
+    highlights: string[];
+    concerns: string[];
+    nextWeekFocus: string;
+    stats: {
+      sessionsCompleted: number;
+      sessionsPlanned: number;
+      avgRPE: number;
+      prsHit: number;
+      painReports: number;
+    };
+  }> => api('/weekly-review'),
+};
+
+// Task 6: Auto Load/Volume Adjustment
+export const autoAdjustApi = {
+  adjust: (): Promise<{
+    adjusted: boolean;
+    direction: string;
+    setsAdjusted: number;
+    avgRPE: number;
+    note: string;
+    changes: Array<{ exercise: string; session: string; week: number; direction: string }>;
+  }> => api('/plan/auto-adjust', { method: 'POST' }),
+
+  autoregulate: (data: {
+    currentRPE: number;
+    targetRPE: number;
+    exercise?: string;
+    setNumber?: number;
+    currentLoad?: number;
+  }): Promise<{
+    suggestion: 'reduce' | 'increase' | 'maintain';
+    message: string;
+    currentRPE: number;
+    targetRPE: number;
+    suggestedLoad: number | null;
+  }> => api('/plan/autoregulate', { method: 'POST', body: JSON.stringify(data) }),
+};
+
+// Task 7: Deload Detection
+export const deloadApi = {
+  check: (): Promise<{
+    deloadRecommended: boolean;
+    urgency: 'immediate' | 'soon' | 'none';
+    deloadScore: number;
+    signals: string[];
+    message: string;
+    stats: {
+      avgRPE: number;
+      painReports: number;
+      completionRate: number;
+      currentWeek: number;
+    };
+  }> => api('/deload/check'),
+};
+
+// Task 11: Personalized Warm-Up
+export const warmupApi = {
+  getToday: (): Promise<{
+    title: string;
+    sessionFocus: 'upper' | 'lower';
+    duration: string;
+    steps: string[];
+    stepCount: number;
+    readinessScore: number;
+    readinessNote: string;
+    hasInjuryModifications: boolean;
+    extended: boolean;
+  }> => api('/warmup/today'),
+};

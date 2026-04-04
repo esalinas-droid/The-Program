@@ -7,7 +7,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, prApi, programApi, painReportApi, readinessApi } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -91,6 +91,7 @@ function getCoachingDirective(week: number, block: number, phase: string): strin
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
+const TEAL_COLOR = '#4DCEA6';
 export default function Dashboard() {
   const router = useRouter();
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
@@ -104,6 +105,8 @@ export default function Dashboard() {
   // ── Priority card state ──────────────────────────────────────────────────────
   const [flaggedRegions, setFlaggedRegions] = useState<string[]>([]);
   const [hasReadinessToday, setHasReadinessToday] = useState<boolean | null>(null);
+  const [weeklyReview, setWeeklyReview] = useState<any | null>(null);
+  const [deloadStatus, setDeloadStatus] = useState<any | null>(null);
 
   const loadData = useCallback(async () => {
     const prof = await getProfile();
@@ -136,6 +139,18 @@ export default function Dashboard() {
       setFlaggedRegions((painData as any)?.flaggedRegions || []);
       setHasReadinessToday((readinessData as any)?.hasCheckedIn ?? false);
     } catch { /* Priority data not critical */ }
+
+    // ── Fetch weekly review (Task 5) ────────────────────────────────────────
+    try {
+      const reviewData = await weeklyReviewApi.get();
+      setWeeklyReview(reviewData);
+    } catch { /* Weekly review not critical */ }
+
+    // ── Fetch deload status (Task 7) ───────────────────────────────────────
+    try {
+      const deload = await deloadApi.check();
+      setDeloadStatus(deload);
+    } catch { /* Deload check not critical */ }
 
     setLoading(false);
   }, []);
@@ -333,24 +348,95 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* P4: Weekly Review Placeholder Card */}
-        <View style={s.weeklyReviewCard} testID="weekly-review-card">
-          <View style={s.priorityCardHeader}>
-            <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
-              <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
+        {/* P4: Deload Warning Card (Task 7) */}
+        {deloadStatus?.deloadRecommended && (
+          <View style={s.deloadWarningCard} testID="deload-warning-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: '#FF980025' }]}>
+                <MaterialCommunityIcons name="sleep" size={14} color='#FF9800' />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: '#FF9800' }]}>DELOAD RECOMMENDED</Text>
+                <Text style={s.priorityCardSub}>Score {deloadStatus.deloadScore}/12 — recovery needed</Text>
+              </View>
+              <View style={[s.comingSoonPill, { backgroundColor: '#FF980020', borderColor: '#FF980040', borderWidth: 1 }]}>
+                <Text style={[s.comingSoonText, { color: '#FF9800' }]}>
+                  {deloadStatus.urgency === 'immediate' ? 'URGENT' : 'SOON'}
+                </Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEKLY REVIEW</Text>
-              <Text style={s.priorityCardSub}>AI-powered weekly analysis</Text>
-            </View>
-            <View style={s.comingSoonPill}>
-              <Text style={s.comingSoonText}>COMING SOON</Text>
-            </View>
+            <Text style={s.priorityCardBody}>{deloadStatus.message}</Text>
+            {deloadStatus.signals?.length > 0 && (
+              <View style={{ marginTop: SPACING.sm, gap: 4 }}>
+                {deloadStatus.signals.slice(0, 2).map((sig: string, i: number) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                    <MaterialCommunityIcons name="circle-small" size={16} color='#FF9800' style={{ marginTop: -2 }} />
+                    <Text style={[s.priorityCardSub, { flex: 1, color: COLORS.text.secondary }]}>{sig}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
-          <Text style={s.priorityCardBody}>
-            Your weekly training summary — volume load trends, fatigue signals, and coach recommendations — is being built.
-          </Text>
-        </View>
+        )}
+
+        {/* P4: Weekly Review Card (Task 5) */}
+        {weeklyReview?.hasReview ? (
+          <View style={s.weeklyReviewCard} testID="weekly-review-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
+                <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEK {weeklyReview.week} REVIEW</Text>
+                <Text style={s.priorityCardSub}>
+                  {weeklyReview.stats?.sessionsCompleted ?? 0}/{weeklyReview.stats?.sessionsPlanned ?? 4} sessions
+                  {weeklyReview.stats?.avgRPE > 0 ? `  ·  RPE ${weeklyReview.stats.avgRPE}/10` : ''}
+                  {weeklyReview.stats?.prsHit > 0 ? `  ·  ${weeklyReview.stats.prsHit} PR${weeklyReview.stats.prsHit > 1 ? 's' : ''}` : ''}
+                </Text>
+              </View>
+              {weeklyReview.cached && (
+                <View style={s.comingSoonPill}>
+                  <Text style={s.comingSoonText}>CACHED</Text>
+                </View>
+              )}
+            </View>
+            <Text style={s.priorityCardBody}>{weeklyReview.summary}</Text>
+            {weeklyReview.highlights?.length > 0 && (
+              <View style={{ marginTop: SPACING.sm, gap: 4 }}>
+                {weeklyReview.highlights.slice(0, 2).map((h: string, i: number) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                    <MaterialCommunityIcons name="check-circle-outline" size={14} color={TEAL_COLOR} style={{ marginTop: 1 }} />
+                    <Text style={[s.priorityCardSub, { flex: 1, color: COLORS.text.secondary }]}>{h}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {weeklyReview.nextWeekFocus && (
+              <View style={s.nextWeekBox}>
+                <MaterialCommunityIcons name="arrow-right-circle-outline" size={13} color={COLORS.accentBlue} />
+                <Text style={s.nextWeekText}>{weeklyReview.nextWeekFocus}</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={s.weeklyReviewCard} testID="weekly-review-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
+                <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEKLY REVIEW</Text>
+                <Text style={s.priorityCardSub}>AI-powered weekly analysis</Text>
+              </View>
+              <View style={s.comingSoonPill}>
+                <Text style={s.comingSoonText}>LOADING</Text>
+              </View>
+            </View>
+            <Text style={s.priorityCardBody}>
+              Complete your first session this week to unlock your personalised AI training review.
+            </Text>
+          </View>
+        )}
 
         {/* Week Stats */}
         <Text style={s.sectionTitle}>THIS WEEK</Text>
@@ -643,8 +729,11 @@ const s = StyleSheet.create({
   priorityBtn:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: 9, paddingHorizontal: SPACING.md, borderRadius: RADIUS.md, alignSelf: 'flex-start' },
   priorityBtnText:    { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy },
 
-  // Weekly Review Placeholder
-  weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, opacity: 0.85 },
+  // Weekly Review + Deload cards
+  weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, opacity: 0.95 },
+  deloadWarningCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1.5, borderColor: '#FF980040' },
   comingSoonPill:     { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
   comingSoonText:     { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  nextWeekBox:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
+  nextWeekText:       { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.accentBlue, lineHeight: 17, fontStyle: 'italic' },
 });
