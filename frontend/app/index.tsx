@@ -4,31 +4,50 @@ import { Redirect } from 'expo-router';
 import { isOnboardingComplete, saveProfile } from '../src/utils/storage';
 import { profileApi } from '../src/utils/api';
 import { COLORS } from '../src/constants/theme';
+import { isAuthenticated, getStoredUser } from '../src/utils/auth';
 
 export default function Index() {
-  const [loading, setLoading] = useState(true);
-  const [onboarded, setOnboarded] = useState(false);
+  const [loading,    setLoading]    = useState(true);
+  const [authed,     setAuthed]     = useState(false);
+  const [onboarded,  setOnboarded]  = useState(false);
 
   useEffect(() => {
     async function check() {
-      // First check local AsyncStorage
+      // 1. Check for a valid JWT token
+      const hasToken = await isAuthenticated();
+      if (!hasToken) {
+        setAuthed(false);
+        setLoading(false);
+        return;
+      }
+      setAuthed(true);
+
+      // 2. Check onboarding — first from stored user, then from local storage, then from API
+      const storedUser = await getStoredUser();
+      if (storedUser?.onboardingComplete) {
+        setOnboarded(true);
+        setLoading(false);
+        return;
+      }
+
       const localResult = await isOnboardingComplete();
       if (localResult) {
         setOnboarded(true);
         setLoading(false);
         return;
       }
-      // Fallback: check backend profile (handles web fresh sessions & cleared storage)
+
+      // Fallback: check backend profile
       try {
         const profile = await profileApi.get();
         if (profile?.onboardingComplete === true) {
-          // Sync to local storage so future checks are faster
           await saveProfile(profile);
           setOnboarded(true);
           setLoading(false);
           return;
         }
       } catch (_) { /* ignore */ }
+
       setOnboarded(false);
       setLoading(false);
     }
@@ -43,6 +62,8 @@ export default function Index() {
     );
   }
 
+  // Route: no token → auth screen, no onboarding → intake, else → tabs
+  if (!authed) return <Redirect href="/auth" />;
   if (!onboarded) return <Redirect href="/onboarding-intake" />;
   return <Redirect href="/(tabs)" />;
 }

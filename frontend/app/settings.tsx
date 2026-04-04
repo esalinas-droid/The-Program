@@ -10,6 +10,7 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi, planApi, InjuryPreviewResult } from '../src/utils/api';
 import { AthleteProfile } from '../src/types';
+import { clearAuth, getAuthToken, getStoredUser } from '../src/utils/auth';
 
 // ── Injury list (mirrors onboarding) ────────────────────────────────────────────
 
@@ -58,6 +59,8 @@ export default function SettingsScreen() {
   const [profile,  setProfile]  = useState<AthleteProfile | null>(null);
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(true);
+  const [authUser, setAuthUser] = useState<{ email?: string; name?: string } | null>(null);
 
   // ── Edit mode state ────────────────────────────────────────────────────────
   const [editMode,         setEditMode]         = useState(false);
@@ -77,6 +80,11 @@ export default function SettingsScreen() {
   // ── Load profile ─────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      const user = await getStoredUser();
+      if (user) {
+        setAuthUser(user);
+        setMarketingOptIn(user.marketingOptIn ?? true);
+      }
       let p = await getProfile();
       try {
         const backendProfile = await profileApi.get();
@@ -489,8 +497,71 @@ export default function SettingsScreen() {
           {/* ── ACCOUNT ── */}
           <SectionHeader title="ACCOUNT" />
           <View style={s.card}>
-            <TouchableOpacity style={s.resetBtn} onPress={confirmReset}>
+            {/* Signed-in user info */}
+            {authUser?.email && (
+              <View style={s.accountRow}>
+                <MaterialCommunityIcons name="account-circle-outline" size={20} color={COLORS.text.muted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.accountName}>{authUser.name || 'Athlete'}</Text>
+                  <Text style={s.accountEmail}>{authUser.email}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Marketing emails toggle */}
+            <View style={s.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.settingLabel}>Marketing Emails</Text>
+                <Text style={s.settingDesc}>Training tips, feature announcements, and updates</Text>
+              </View>
+              <Switch
+                value={marketingOptIn}
+                onValueChange={async (val) => {
+                  setMarketingOptIn(val);
+                  try {
+                    const token = await getAuthToken();
+                    if (token) {
+                      await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL || ''}/api/auth/preferences`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ marketingOptIn: val }),
+                      });
+                    }
+                  } catch {}
+                }}
+                trackColor={{ false: COLORS.border, true: COLORS.accent + '88' }}
+                thumbColor={marketingOptIn ? COLORS.accent : COLORS.text.muted}
+              />
+            </View>
+
+            {/* Reset onboarding */}
+            <TouchableOpacity style={[s.resetBtn, { marginBottom: 8 }]} onPress={confirmReset}>
               <Text style={s.resetBtnText}>Reset Onboarding / Profile Setup</Text>
+            </TouchableOpacity>
+
+            {/* Logout */}
+            <TouchableOpacity
+              style={s.logoutBtn}
+              onPress={() => {
+                Alert.alert(
+                  'Sign Out',
+                  'Are you sure you want to sign out?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Sign Out',
+                      style: 'destructive',
+                      onPress: async () => {
+                        await clearAuth();
+                        router.replace('/auth');
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <MaterialCommunityIcons name="logout" size={16} color="#FF4D4D" />
+              <Text style={s.logoutBtnText}>Sign Out</Text>
             </TouchableOpacity>
           </View>
 
@@ -815,6 +886,11 @@ const s = StyleSheet.create({
   noteText:        { color: COLORS.text.muted, fontSize: FONTS.sizes.xs, marginTop: SPACING.sm, fontStyle: 'italic', lineHeight: 16 },
   resetBtn:        { borderWidth: 1, borderColor: COLORS.status.error, borderRadius: RADIUS.md, height: 44, justifyContent: 'center', alignItems: 'center' },
   resetBtnText:    { color: COLORS.status.error, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
+  accountRow:      { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  accountName:     { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: COLORS.text.primary },
+  accountEmail:    { fontSize: 11, color: COLORS.text.muted, marginTop: 1 },
+  logoutBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1, borderColor: '#FF4D4D55', borderRadius: RADIUS.md, height: 44, backgroundColor: '#FF4D4D18' },
+  logoutBtnText:   { fontSize: FONTS.sizes.sm, fontWeight: '700' as any, color: '#FF4D4D' },
 
   // Floating save bar
   saveBar: {

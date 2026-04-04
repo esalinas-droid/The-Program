@@ -4,7 +4,7 @@ FastAPI endpoints for the AI coaching app.
 Uses in-memory storage (swap to MongoDB with motor for production).
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from typing import Dict, List, Optional
 import uuid
@@ -19,6 +19,7 @@ from models.schemas import (
 )
 from services.plan_generator import generate_plan, get_alternatives
 from database import db
+from middleware import get_current_user, DEFAULT_USER
 
 
 program_router = APIRouter(prefix="/api")
@@ -36,8 +37,6 @@ _store: Dict = {
     "progress": [],       # List[ProgressMetric]
 }
 
-DEFAULT_USER = "user_001"
-
 
 def _id():
     return str(uuid.uuid4())[:12]
@@ -46,9 +45,9 @@ def _id():
 # ─── Profile / Intake ────────────────────────────────────────────────────────
 
 @program_router.post("/profile/intake")
-async def submit_intake(intake: IntakeRequest):
+async def submit_intake(intake: IntakeRequest, userId: str = Depends(get_current_user)):
     """Save onboarding intake and generate 12-month plan."""
-    user_id = DEFAULT_USER
+    user_id = userId
 
     # Create/update profile
     profile = UserProfile(
@@ -77,6 +76,13 @@ async def submit_intake(intake: IntakeRequest):
         await db.saved_plans.replace_one({"userId": user_id}, plan_dict, upsert=True)
     except Exception:
         pass  # Non-critical — plan is in memory
+
+    # Mark onboarding as complete in db.users (if this is an authenticated user)
+    if user_id != DEFAULT_USER:
+        await db.users.update_one(
+            {"userId": user_id},
+            {"$set": {"onboardingComplete": True, "goal": intake.goal, "experience": intake.experience}},
+        )
 
     # Create initial coach memory facts from intake
     facts = []
@@ -116,18 +122,18 @@ async def submit_intake(intake: IntakeRequest):
 # ─── Planning ─────────────────────────────────────────────────────────────────
 
 @program_router.get("/plan/year")
-async def get_year_plan():
+async def get_year_plan(userId: str = Depends(get_current_user)):
     """Get the full annual plan with phases."""
-    plan = _store["plans"].get(DEFAULT_USER)
+    plan = _store["plans"].get(userId)
     if not plan:
         raise HTTPException(status_code=404, detail="No plan found. Complete onboarding first.")
     return plan.model_dump()
 
 
 @program_router.get("/plan/block/current")
-async def get_current_block():
+async def get_current_block(userId: str = Depends(get_current_user)):
     """Get the current active block with weeks and sessions."""
-    plan = _store["plans"].get(DEFAULT_USER)
+    plan = _store["plans"].get(userId)
     if not plan:
         raise HTTPException(status_code=404, detail="No plan found.")
 
@@ -163,9 +169,9 @@ async def get_current_block():
 
 
 @program_router.get("/plan/session/today")
-async def get_today_session():
+async def get_today_session(userId: str = Depends(get_current_user)):
     """Get today's session with exercises, targets, and last performance."""
-    plan = _store["plans"].get(DEFAULT_USER)
+    plan = _store["plans"].get(userId)
     if not plan:
         raise HTTPException(status_code=404, detail="No plan found.")
 
@@ -246,10 +252,10 @@ async def get_today_session():
 # ─── Session Execution ────────────────────────────────────────────────────────
 
 @program_router.post("/session/start")
-async def start_session(data: Dict):
+async def start_session(data: Dict, userId: str = Depends(get_current_user)):
     """Mark a session as in-progress."""
     session_id = data.get("sessionId", "")
-    plan = _store["plans"].get(DEFAULT_USER)
+    plan = _store["plans"].get(userId)
     if plan:
         for phase in plan.phases:
             for block in phase.blocks:
@@ -263,7 +269,7 @@ async def start_session(data: Dict):
 
 
 @program_router.post("/session/log-set")
-async def log_set(data: LogSetRequest):
+async def log_set(data: LogSetRequest, userId: str = Depends(get_current_user)):
     """Log a single set."""
     logged = LoggedSet(
         loggedSetId=_id(),
@@ -281,7 +287,7 @@ async def log_set(data: LogSetRequest):
     # If pain is high, create a pain entry and suggest modification
     if data.painScore >= 3:
         pain = PainEntry(
-            painId=_id(), userId=DEFAULT_USER,
+            painId=_id(), userId=userId,
             exerciseId=data.sessionExerciseId,
             location=data.painLocation or "unknown",
             score=data.painScore,
@@ -297,7 +303,7 @@ async def log_set(data: LogSetRequest):
 
 
 @program_router.post("/session/adjust-exercise")
-async def adjust_exercise(data: AdjustExerciseRequest):
+async def adjust_exercise(data: AdjustExerciseRequest, userId: str = Depends(get_current_user)):
     """Get 3 ranked alternatives for an exercise given a reason."""
     alternatives = get_alternatives(data.exerciseName, data.reason)
 
@@ -311,7 +317,7 @@ async def adjust_exercise(data: AdjustExerciseRequest):
 
     # Log the change
     _store["changes"].append(ProgramChange(
-        changeId=_id(), userId=DEFAULT_USER,
+        changeId=_id(), userId=userId,
         triggerType=ChangeTrigger.USER_REQUEST if data.reason == "preference" else ChangeTrigger.PAIN,
         scope=ChangeScope.DAY,
         oldValue=data.exerciseName,
@@ -327,7 +333,7 @@ async def adjust_exercise(data: AdjustExerciseRequest):
 
 
 @program_router.post("/session/apply-adjustment")
-async def apply_adjustment(data: Dict):
+async def apply_adjustment(data: Dict, userId: str = Depends(get_current_user)):
     """Apply an exercise substitution."""
     old_exercise = data.get("oldExercise", "")
     new_exercise = data.get("newExercise", "")
@@ -335,7 +341,7 @@ async def apply_adjustment(data: Dict):
     reason = data.get("reason", "preference")
 
     _store["changes"].append(ProgramChange(
-        changeId=_id(), userId=DEFAULT_USER,
+        changeId=_id(), userId=userId,
         triggerType=ChangeTrigger.USER_REQUEST,
         scope=ChangeScope.DAY,
         oldValue=old_exercise,
@@ -347,7 +353,7 @@ async def apply_adjustment(data: Dict):
 
 
 @program_router.post("/session/finish")
-async def finish_session(data: FinishSessionRequest):
+async def finish_session(data: FinishSessionRequest, userId: str = Depends(get_current_user)):
     """Finish a session and generate post-workout review."""
     session_id = data.sessionId
 
@@ -370,7 +376,7 @@ async def finish_session(data: FinishSessionRequest):
         flags.append(f"{len(high_pain)} sets had pain ≥ 3 — exercise modification recommended")
 
     # Mark session completed
-    plan = _store["plans"].get(DEFAULT_USER)
+    plan = _store["plans"].get(userId)
     if plan:
         for phase in plan.phases:
             for block in phase.blocks:
@@ -382,7 +388,7 @@ async def finish_session(data: FinishSessionRequest):
 
     # Create workout log
     log = WorkoutLog(
-        logId=_id(), userId=DEFAULT_USER, sessionId=session_id,
+        logId=_id(), userId=userId, sessionId=session_id,
         completedSets=completed, totalSets=completed + 2,
         duration=45, wins=wins, flags=flags,
         coachReviewNote="Solid session. Keep the momentum going into your next training day."
@@ -406,10 +412,10 @@ async def finish_session(data: FinishSessionRequest):
 # ─── Pain ─────────────────────────────────────────────────────────────────────
 
 @program_router.post("/pain")
-async def log_pain(data: Dict):
+async def log_pain(data: Dict, userId: str = Depends(get_current_user)):
     """Log a pain entry."""
     entry = PainEntry(
-        painId=_id(), userId=DEFAULT_USER,
+        painId=_id(), userId=userId,
         exerciseId=data.get("exerciseId"),
         sessionId=data.get("sessionId"),
         location=data.get("location", ""),
@@ -422,9 +428,9 @@ async def log_pain(data: Dict):
 
 
 @program_router.get("/pain/trends")
-async def get_pain_trends():
+async def get_pain_trends(userId: str = Depends(get_current_user)):
     """Get pain trends over time."""
-    entries = [e for e in _store["pain_entries"] if e.userId == DEFAULT_USER]
+    entries = [e for e in _store["pain_entries"] if e.userId == userId]
     # Group by location
     by_location = {}
     for e in entries:
@@ -438,9 +444,9 @@ async def get_pain_trends():
 # ─── Coach ────────────────────────────────────────────────────────────────────
 
 @program_router.get("/coach/change-log")
-async def get_change_log():
+async def get_change_log(userId: str = Depends(get_current_user)):
     """Return a deduped, newest-first list of program changes."""
-    changes = [c for c in _store["changes"] if c.userId == DEFAULT_USER]
+    changes = [c for c in _store["changes"] if c.userId == userId]
     changes.sort(key=lambda c: c.timestamp, reverse=True)
     # Deduplicate: keep only the most recent entry per unique explanation
     seen: set = set()
@@ -454,21 +460,21 @@ async def get_change_log():
 
 
 @program_router.get("/coach/memory")
-async def get_coach_memory():
+async def get_coach_memory(userId: str = Depends(get_current_user)):
     """Get confirmed coach memory facts."""
-    facts = [f for f in _store["memory_facts"] if f.userId == DEFAULT_USER and f.confirmed]
+    facts = [f for f in _store["memory_facts"] if f.userId == userId and f.confirmed]
     return {"facts": [f.model_dump() for f in facts]}
 
 
 # ─── Progress ─────────────────────────────────────────────────────────────────
 
 @program_router.get("/progress/prs")
-async def get_prs():
+async def get_prs(userId: str = Depends(get_current_user)):
     """Get personal records."""
-    prs = [p for p in _store["progress"] if p.userId == DEFAULT_USER and p.metricType == "pr"]
+    prs = [p for p in _store["progress"] if p.userId == userId and p.metricType == "pr"]
     if not prs:
         # Generate mock PRs from intake
-        profile = _store["profiles"].get(DEFAULT_USER)
+        profile = _store["profiles"].get(userId)
         if profile and profile.currentLifts:
             lifts = profile.currentLifts
             mock_prs = []
@@ -514,9 +520,9 @@ async def get_volume_trends():
 
 
 @program_router.get("/progress/compliance")
-async def get_compliance():
+async def get_compliance(userId: str = Depends(get_current_user)):
     """Get session completion rates."""
-    logs = [l for l in _store["workout_logs"] if l.userId == DEFAULT_USER]
+    logs = [l for l in _store["workout_logs"] if l.userId == userId]
     total = len(logs)
     return {
         "overall": 0.92 if total == 0 else total / max(total + 1, 1),
@@ -526,9 +532,9 @@ async def get_compliance():
 
 
 @program_router.get("/progress/bodyweight")
-async def get_bodyweight():
+async def get_bodyweight(userId: str = Depends(get_current_user)):
     """Get bodyweight trend."""
-    profile = _store["profiles"].get(DEFAULT_USER)
+    profile = _store["profiles"].get(userId)
     bw = profile.bodyweight if profile and profile.bodyweight else 200
     return {
         "current": bw,
@@ -543,12 +549,12 @@ async def get_bodyweight():
 # ─── Uploads ──────────────────────────────────────────────────────────────────
 
 @program_router.post("/uploads/confirm")
-async def confirm_facts(data: Dict):
+async def confirm_facts(data: Dict, userId: str = Depends(get_current_user)):
     """Confirm extracted facts as coach memory."""
     facts = data.get("facts", [])
     for f in facts:
         fact = CoachMemoryFact(
-            factId=_id(), userId=DEFAULT_USER,
+            factId=_id(), userId=userId,
             factType=f.get("type", "general"),
             factValue=f.get("value", ""),
             source="upload", confirmed=True,

@@ -3,12 +3,18 @@ import {
   IntakeData, AnnualPlan, TodaySessionResponse, LogSetData,
   PostWorkoutReviewData, ExerciseAlternative, ProgramChangeEntry
 } from '../types';
+import { getAuthToken } from './auth';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 async function api(path: string, options?: RequestInit) {
+  const token = await getAuthToken();
+  const authHeader = token ? { 'Authorization': `Bearer ${token}` } : {};
   const res = await fetch(`${BASE}/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+    },
     ...options,
   });
   if (!res.ok) {

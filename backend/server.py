@@ -1,4 +1,6 @@
-from routers.program import program_router, _store as _prog_store, DEFAULT_USER as _PROG_USER, _id as _prog_id
+from routers.program import program_router, _store as _prog_store, _id as _prog_id
+from routers.auth import auth_router, admin_router
+from middleware import DEFAULT_USER as _PROG_USER, get_current_user
 from models.schemas import (
     IntakeRequest as _IntakeRequest,
     CurrentLifts as _CurrentLifts,
@@ -7,7 +9,7 @@ from models.schemas import (
     ProgramChange as _ProgramChange,
 )
 from services.plan_generator import generate_plan as _generate_plan
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -843,36 +845,38 @@ async def delete_conversation(conversation_id: str):
     return {"deleted": True}
 
 
-async def _save_plan_to_db(plan) -> None:
-    """Persist the current in-memory plan to MongoDB so it survives server restarts."""
+async def _save_plan_to_db(plan, uid: str = None) -> None:
+    """Persist the in-memory plan to MongoDB so it survives server restarts."""
+    user_id = uid or (plan.userId if hasattr(plan, 'userId') else _PROG_USER)
     try:
         from models.schemas import AnnualPlan as _AnnualPlan  # local import to avoid circular
         plan_dict = plan.model_dump(mode='json')
         plan_dict['_saved_at'] = datetime.utcnow().isoformat()
         await db.saved_plans.replace_one(
-            {"userId": plan.userId},
+            {"userId": user_id},
             plan_dict,
             upsert=True,
         )
-        logger.info(f"Plan persisted to MongoDB saved_plans for user: {plan.userId}")
+        logger.info(f"Plan persisted to MongoDB saved_plans for user: {user_id}")
     except Exception as e:
         logger.warning(f"Failed to persist plan to MongoDB: {e}")
 
 
-async def _ensure_plan_loaded() -> bool:
+async def _ensure_plan_loaded(uid: str = None) -> bool:
     """Load plan from MongoDB (saved_plans first, then regenerate) if not in memory."""
-    if _prog_store["plans"].get(_PROG_USER):
+    user_id = uid or _PROG_USER
+    if _prog_store["plans"].get(user_id):
         return True
 
     # ── 1. Try loading the previously saved/modified plan from MongoDB ─────────
     try:
         from models.schemas import AnnualPlan as _AnnualPlan
-        saved = await db.saved_plans.find_one({"userId": _PROG_USER})
+        saved = await db.saved_plans.find_one({"userId": user_id})
         if saved:
             saved.pop("_id", None)
             saved.pop("_saved_at", None)
             plan = _AnnualPlan.model_validate(saved)
-            _prog_store["plans"][_PROG_USER] = plan
+            _prog_store["plans"][user_id] = plan
             logger.info(f"Plan loaded from MongoDB saved_plans: {plan.planName}")
             return True
     except Exception as e:
@@ -905,10 +909,10 @@ async def _ensure_plan_loaded() -> bool:
             bodyweight=profile_doc.get('currentBodyweight') or None,
         )
         plan = _generate_plan(intake)
-        plan.userId = _PROG_USER
-        _prog_store["plans"][_PROG_USER] = plan
+        plan.userId = user_id
+        _prog_store["plans"][user_id] = plan
         # Immediately persist so future restarts don't have to regenerate
-        await _save_plan_to_db(plan)
+        await _save_plan_to_db(plan, user_id)
         logger.info(f"Plan regenerated and saved for user: {plan.planName}")
         return True
     except Exception as e:
@@ -1062,7 +1066,7 @@ def _find_current_block(plan, current_week: int):
 
 
 @api_router.post("/coach/apply-recommendation")
-async def apply_recommendation(body: ApplyRecommendationRequest):
+async def apply_recommendation(body: ApplyRecommendationRequest, userId: str = Depends(get_current_user)):
     try:
         conv_oid = ObjectId(body.conversation_id)
     except Exception:
@@ -1079,7 +1083,7 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
     current_block = None
 
     if plan_available:
-        plan = _prog_store["plans"].get(_PROG_USER)
+        plan = _prog_store["plans"].get(userId)
         if plan:
             current_block = _find_current_block(plan, current_week)
             if current_block:
@@ -1209,7 +1213,7 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
                 "conversationId": body.conversation_id, "blockWeek": ch.get("week"),
             })
         _prog_store["changes"].append(_ProgramChange(
-            changeId=_prog_id(), userId=_PROG_USER,
+            changeId=_prog_id(), userId=userId,
             triggerType=_ChangeTrigger.USER_REQUEST, scope=_ChangeScope.BLOCK,
             oldValue="; ".join(c["from"] for c in all_changes[:5]),
             newValue="; ".join(c["to"] for c in all_changes[:5]),
@@ -1404,6 +1408,8 @@ async def get_compliance_breakdown():
 
 app.include_router(api_router)
 app.include_router(program_router)
+app.include_router(auth_router)
+app.include_router(admin_router)
 
 app.add_middleware(
     CORSMiddleware,
