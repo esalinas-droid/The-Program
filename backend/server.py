@@ -2000,11 +2000,13 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
             {"$set": {"onboardingComplete": True, "goal": intake.goal, "experience": intake.experience}},
         )
 
-    # Update db.profile with intake data
+    # Update/create db.profile with intake data (upsert=True so new users get a profile created)
     injury_flags = [i for i in (intake.injuries or []) if i and i.lower() not in ("none", "")]
     profile_update = {
+        "userId": user_id,
         "goal": intake.goal,
         "trainingGoal": intake.goal,
+        "experience": intake.experience,
         "trainingDaysCount": intake.frequency,
         "onboardingComplete": True,
         "updatedAt": datetime.now(timezone.utc),
@@ -2013,9 +2015,12 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
         profile_update["injuryFlags"] = injury_flags
     if intake.bodyweight:
         profile_update["currentBodyweight"] = intake.bodyweight
-    existing_profile = await db.profile.find_one({"userId": user_id})
-    if existing_profile:
-        await db.profile.update_one({"userId": user_id}, {"$set": profile_update})
+    if intake.primaryWeaknesses:
+        profile_update["primaryWeaknesses"] = intake.primaryWeaknesses
+    if intake.specialtyEquipment:
+        profile_update["specialtyEquipment"] = intake.specialtyEquipment
+    # Always upsert — creates profile for new users, updates existing users
+    await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
 
     # Log initial program change
     _prog_store["changes"].append(ProgramChange(

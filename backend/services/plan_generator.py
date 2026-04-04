@@ -138,19 +138,21 @@ def _build_me_upper(lifts: CurrentLifts, unit: str,
             main_name, main_label = "Axle Press", "Axle strict/push press"
             if "Axle Press" not in EXERCISE_DB:
                 EXERCISE_DB["Axle Press"] = {"pattern": "Push", "muscles": ["Shoulders", "Triceps"], "equipment": "Axle", "cues": ["Clean to rack or from stands", "Full lockout overhead"]}
-        else:
+        elif "Incline Bench" not in blocked_upper:
             main_name, main_label = "Incline Bench", "Incline bench — overhead carry-over"
+        else:
+            main_name, main_label = "Close-Grip Bench", "Tricep/lockout strength"
     elif goal in ("powerlifting", "powerlifting_competition"):
         candidates = ["2-Board Press", "Close-Grip Bench", "Incline Bench", "Floor Press"]
-        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        main_name = next((c for c in candidates if c not in blocked_upper), "Close-Grip Bench")
         main_label = "Competition bench variation"
     elif goal in ("hypertrophy", "bodybuilding"):
-        candidates = ["Incline Bench", "Floor Press", "Incline DB Press"]
-        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        candidates = ["Incline Bench", "Floor Press", "Incline DB Press", "Close-Grip Bench"]
+        main_name = next((c for c in candidates if c not in blocked_upper), "Close-Grip Bench")
         main_label = "Hypertrophy pressing — control the eccentric"
     else:  # strength / general
         candidates = ["Floor Press", "2-Board Press", "Close-Grip Bench", "Incline Bench"]
-        main_name = next((c for c in candidates if c not in blocked_upper), "Incline Bench")
+        main_name = next((c for c in candidates if c not in blocked_upper), "Close-Grip Bench")
         main_label = "Rotate variation weekly"
 
     # ── Rep/load scheme varies by goal ────────────────────────────────────────

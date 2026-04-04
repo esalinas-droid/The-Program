@@ -1,0 +1,33 @@
+{
+  "summary": "Re-test of Bug 8 (Settings Save Flow) and Bug 5 (Strongman shoulder injury fallback). All 7 tests pass 100%.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bug8_settings_save.py",
+    "/app/test_reports/pytest/bug8_retest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "NOTE: apply-injury-update uses key 'newInjuryFlags' but the review request called it with 'injuries'. The endpoint silently accepts empty array — the test worked because previous intake had set injuryFlags already. This inconsistency between caller and receiver key name (injuries vs newInjuryFlags) may cause silent no-ops in production if frontend sends 'injuries' key."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bug8_settings_save.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7)",
+    "frontend": "N/A (not tested)"
+  },
+  "seed_data_creation": "Used existing test_strongman@test.com / TestPass123 (already registered)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug 8 fixed: upsert=True in POST /api/profile/intake creates profile for new users so apply-injury-update no longer returns 404. Bug 5 fallback: strongman + shoulder injury plan generates successfully (Close-Grip Bench fallback logic in place). Token field in login response is 'token' (not 'access_token').",
+  "rca_of_issue": "Bug 8 RCA: POST /api/plan/apply-injury-update did db.profile.find_one({userId}) which returned None for users who had never called intake (profile didn't exist). Fix: intake endpoint now uses upsert=True so calling intake always creates/updates the profile document. Confirmed working: 404 no longer returned after intake is called first."
+}

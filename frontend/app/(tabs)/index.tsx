@@ -185,7 +185,7 @@ export default function Dashboard() {
     return (
       <View style={s.loading}>
         <Text style={s.noData}>No profile found</Text>
-        <TouchableOpacity onPress={() => router.replace('/onboarding')} style={s.primaryBtn}>
+        <TouchableOpacity onPress={() => router.replace('/onboarding-intake')} style={s.primaryBtn}>
           <Text style={s.primaryBtnText}>Set Up Profile</Text>
         </TouchableOpacity>
       </View>
