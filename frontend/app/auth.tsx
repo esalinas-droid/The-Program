@@ -101,6 +101,24 @@ export default function AuthScreen() {
 
   // ── Apple Sign-In ──────────────────────────────────────────────────────────
   async function handleAppleSignIn() {
+    // Check if Apple Sign-In is available on this device / iOS version
+    try {
+      const available = await AppleAuthentication.isAvailableAsync();
+      if (!available) {
+        Alert.alert(
+          'Apple Sign-In',
+          'Apple Sign-In will be available soon. Please use email to sign in for now.',
+          [
+            { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+    } catch {
+      // isAvailableAsync not supported on this platform — silently fall through
+    }
+
     setAppleLoading(true);
     setError(null);
     try {
@@ -114,7 +132,6 @@ export default function AuthScreen() {
       // Build the name — Apple only provides it on FIRST sign-in
       const givenName  = credential.fullName?.givenName  ?? '';
       const familyName = credential.fullName?.familyName ?? '';
-      const fullName   = `${givenName} ${familyName}`.trim();
 
       const result = await authFetch('/social', {
         provider:  'apple',
@@ -126,9 +143,17 @@ export default function AuthScreen() {
       });
       await handleAuthSuccess(result);
     } catch (e: any) {
-      // ERR_REQUEST_CANCELED = user dismissed the sheet — silent
+      // ERR_REQUEST_CANCELED / ERR_CANCELED = user dismissed the native sheet — silent
       if (e?.code === 'ERR_REQUEST_CANCELED' || e?.code === 'ERR_CANCELED') return;
-      setError(e.message || 'Apple Sign-In failed. Please try again.');
+      // Any other error (e.g., no Apple ID configured, network timeout) → friendly alert
+      Alert.alert(
+        'Apple Sign-In',
+        'Apple Sign-In will be available soon. Please use email to sign in for now.',
+        [
+          { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
     } finally {
       setAppleLoading(false);
     }

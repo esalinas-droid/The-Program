@@ -500,24 +500,105 @@ frontend:
         agent: "main"
         comment: "Training days descriptions updated: '3 max effort sessions/week' and 'Classic 4-day ME+DE split' replacing old conjugate references."
 
+  - task: "Apple Sign-In backend - missing jwt import in auth.py"
+    implemented: true
+    working: true
+    file: "backend/routers/auth.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "CRITICAL BUG: auth.py used jwt.get_unverified_header() and jwt.decode() but had NO 'import jwt' statement. NameError would crash Apple Sign-In flow at runtime."
+      - working: true
+        agent: "main"
+        comment: "Fixed: Added 'import jwt' on line 22 of auth.py. PyJWT 2.11.0 is installed. Backend auto-reloaded successfully. All jwt calls in _verify_apple_token() will now work."
+
+  - task: "Auth endpoints - register, login, me, social, logout"
+    implemented: true
+    working: true
+    file: "backend/routers/auth.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/auth/register, POST /api/auth/login, GET /api/auth/me, POST /api/auth/social, POST /api/auth/logout all implemented. Register uses bcrypt. Login verifies bcrypt hash. JWT tokens HS256, 30-day expiry. Social supports google/apple/facebook providers."
+
+  - task: "User data isolation - all endpoints scoped by userId"
+    implemented: true
+    working: true
+    file: "backend/middleware.py, backend/routers/program.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All MongoDB queries use get_current_user dependency to scope by userId. Fallback to DEFAULT_USER (user_001) if no JWT provided. Test users: user_a@theprogram.app (StrongmanA123), user_b@theprogram.app (HypertrophyB123)."
+
+  - task: "Apple Sign-In frontend - graceful fallback"
+    implemented: true
+    working: true
+    file: "frontend/app/auth.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added isAvailableAsync() check before signInAsync(). If Apple Sign-In not available on device, shows Alert with 'Apple Sign-In will be available soon' message and redirect to email. Non-cancel errors also show friendly Alert instead of error box. Apple button (black, white Apple logo) hidden on Android/web via Platform.OS === 'ios' check."
+
 metadata:
   created_by: "main_agent"
-  version: "2.0"
-  test_sequence: 2
+  version: "3.0"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Remove hardcoded Eric profile data from server.py seed endpoint"
-    - "Branding: Replace Conjugate Method with The Program"
-    - "Coach conversation persistence - new MongoDB endpoints"
-    - "Coach chat endpoint: parse PROGRAM_CHANGE block, return has_program_change"
-    - "Apply recommendation endpoint logs to changelog"
+    - "Apple Sign-In backend - missing jwt import in auth.py"
+    - "Auth endpoints - register, login, me, social, logout"
+    - "User data isolation - all endpoints scoped by userId"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+  - agent: "main"
+    message: >
+      NEW SESSION: Apple Sign-In finalization + Full Auth QA.
+      
+      CRITICAL BUG FIXED: auth.py was missing 'import jwt' at the top.
+      The _verify_apple_token function used jwt.get_unverified_header() and jwt.decode()
+      but the jwt module was never imported. This would cause NameError crash on Apple login.
+      Fix: Added 'import jwt' as line 22 in auth.py. Backend auto-reloaded OK.
+      
+      FRONTEND IMPROVEMENT: auth.tsx Apple Sign-In now has isAvailableAsync() check.
+      If Apple auth not available, shows Alert: "Apple Sign-In will be available soon"
+      with option to continue with email. Non-cancel errors also use Alert (not error box).
+      Apple button still hidden on Android/web (Platform.OS === 'ios').
+      
+      TEST CREDENTIALS:
+      - user_a@theprogram.app / StrongmanA123 (no onboarding yet)
+      - user_b@theprogram.app / HypertrophyB123 (no onboarding yet)
+      - testathletexyz@theprogram.app (registered this session, no onboarding)
+      - DEFAULT_USER fallback: user_001 (has completed onboarding from previous sessions)
+      
+      Please test:
+      1. POST /api/auth/register — register new user, get JWT back
+      2. POST /api/auth/login — login with email/password, verify JWT
+      3. GET /api/auth/me — verify user info from JWT 
+      4. POST /api/auth/social with provider=apple — verify it no longer crashes (jwt import fixed)
+      5. POST /api/auth/login with WRONG password — should return 401
+      6. POST /api/auth/register with DUPLICATE email — should return 409
+      7. GET /api/plan/session/today with valid JWT — should return user-scoped session
+      8. GET /api/prs/bests/overview with valid JWT — should return user-scoped PRs
+      9. GET /api/profile with valid JWT — should return user-scoped profile
+      10. Verify user_a and user_b get DIFFERENT profile/plan data (data isolation)
+
   - agent: "main"
     message: >
       Implemented all 8 tasks from user request. Key changes:
