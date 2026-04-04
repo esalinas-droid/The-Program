@@ -3060,6 +3060,7 @@ async def set_competition_date(body: dict, userId: str = Depends(get_current_use
 
     return {
         "success": True,
+        "hasCompetition": True,
         "competitionDate": comp_date_str,
         "eventName": event_name,
         "weeksOut": weeks_out,
@@ -3424,8 +3425,11 @@ async def undo_plan_change(change_id: str, userId: str = Depends(get_current_use
     replacement_exercise = change_doc.get("replacementExercise", "")
     change_week = change_doc.get("week", 1)
 
-    if not original_exercise or not replacement_exercise:
+    if not replacement_exercise:
         raise HTTPException(status_code=400, detail="Cannot undo — snapshot data missing")
+
+    # Detect whether this is a prehab ADDITION (original="(none)") or a true SUBSTITUTION
+    is_prehab_addition = not original_exercise or original_exercise.strip().lower() in ("(none)", "none", "")
 
     # Load plan
     plan_available = await _ensure_plan_loaded(userId)
@@ -3437,19 +3441,37 @@ async def undo_plan_change(change_id: str, userId: str = Depends(get_current_use
         raise HTTPException(status_code=404, detail="Plan not in memory")
 
     reverted = 0
-    for phase in plan.phases:
-        for block in phase.blocks:
-            for week in block.weeks:
-                if week.weekNumber != change_week:
-                    continue
-                for session in week.sessions:
-                    for ex in session.exercises:
-                        rep_lower = replacement_exercise.lower().strip()
-                        if rep_lower and rep_lower in ex.name.lower():
-                            ex.name = original_exercise
-                            ex.adjustedFrom = None
-                            ex.adjustmentReason = None
-                            reverted += 1
+    rep_lower = replacement_exercise.lower().strip()
+
+    if is_prehab_addition:
+        # Undo a prehab ADDITION: remove the exercise from ALL sessions across ALL weeks
+        # (prehab is added to multiple weeks, not just change_week)
+        for phase in plan.phases:
+            for block in phase.blocks:
+                for week in block.weeks:
+                    for session in week.sessions:
+                        before = len(session.exercises)
+                        session.exercises = [
+                            ex for ex in session.exercises
+                            if not (rep_lower and rep_lower in ex.name.lower())
+                        ]
+                        reverted += before - len(session.exercises)
+    else:
+        # Undo a true SUBSTITUTION: restore original name in the specific week
+        if not original_exercise:
+            raise HTTPException(status_code=400, detail="Cannot undo — original exercise name missing")
+        for phase in plan.phases:
+            for block in phase.blocks:
+                for week in block.weeks:
+                    if week.weekNumber != change_week:
+                        continue
+                    for session in week.sessions:
+                        for ex in session.exercises:
+                            if rep_lower and rep_lower in ex.name.lower():
+                                ex.name = original_exercise
+                                ex.adjustedFrom = None
+                                ex.adjustmentReason = None
+                                reverted += 1
 
     if reverted > 0:
         await _save_plan_to_db(plan, userId)
@@ -3458,16 +3480,19 @@ async def undo_plan_change(change_id: str, userId: str = Depends(get_current_use
             {"_id": change_doc["_id"]},
             {"$set": {"undone": True, "undoneAt": now}},
         )
-        logger.info(f"[Undo] User {userId}: reverted '{replacement_exercise}' → '{original_exercise}' in week {change_week}")
+        action = "removed prehab" if is_prehab_addition else f"reverted to '{original_exercise}'"
+        logger.info(f"[Undo] User {userId}: {action} '{replacement_exercise}' (week {change_week})")
 
     return {
         "success": reverted > 0,
         "reverted": reverted,
-        "original": original_exercise,
+        "original": original_exercise if not is_prehab_addition else None,
         "replacement": replacement_exercise,
         "week": change_week,
+        "isPrehab": is_prehab_addition,
         "message": (
-            f"Reverted to {original_exercise} in week {change_week}" if reverted > 0
+            f"Removed prehab exercise '{replacement_exercise}' from all sessions" if (reverted > 0 and is_prehab_addition)
+            else f"Reverted to {original_exercise} in week {change_week}" if reverted > 0
             else "No matching exercise found to undo (may already be different)"
         ),
     }
