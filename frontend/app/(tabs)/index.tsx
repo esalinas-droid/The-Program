@@ -7,6 +7,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
+import { getStoredUser } from '../../src/utils/auth';
 import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
@@ -95,6 +96,7 @@ const TEAL_COLOR = '#4DCEA6';
 export default function Dashboard() {
   const router = useRouter();
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
+  const [authUserName, setAuthUserName] = useState<string>('');
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
   const [programSession, setProgramSession] = useState<TodaySessionResponse | null>(null);
   const [weekStats, setWeekStats] = useState<WeekStats | null>(null);
@@ -114,6 +116,9 @@ export default function Dashboard() {
     const prof = await getProfile();
     if (!prof) { setLoading(false); return; }
     setProfile(prof);
+    // BUG 3C: Load auth user name as fallback for greeting
+    const authUser = await getStoredUser();
+    if (authUser?.name) setAuthUserName(authUser.name);
     const week = prof.currentWeek || 1;
     setTodaySession(getTodaySession(week));
 
@@ -226,7 +231,7 @@ export default function Dashboard() {
         {/* ── HEADER ── */}
         <View style={s.header}>
           <View style={{ flex: 1 }}>
-            <Text style={s.greeting}>{getGreeting()}, {profile.name}</Text>
+            <Text style={s.greeting}>{getGreeting()}, {profile.name || authUserName || 'Athlete'}</Text>
             <Text style={s.date}>{getFormattedDate()}</Text>
           </View>
           <TouchableOpacity testID="settings-btn" onPress={() => router.push('/settings')} style={s.settingsBtn}>

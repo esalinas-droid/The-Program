@@ -10,6 +10,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
 import { programApi, profileApi } from '../src/utils/api';
+import { getStoredUser } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -383,6 +384,9 @@ export default function OnboardingIntake() {
   const handleComplete = async () => {
     setSaving(true);
     try {
+      // BUG 3B: Fetch user's registered name so Home tab greeting is populated
+      const authUser = await getStoredUser();
+
       const currentLifts: Record<string, number> = {};
       if (lifts.squat)    currentLifts['squat']    = parseFloat(lifts.squat)    || 0;
       if (lifts.bench)    currentLifts['bench']    = parseFloat(lifts.bench)    || 0;
@@ -402,6 +406,7 @@ export default function OnboardingIntake() {
 
       // 1. Save locally — keeps offline fallback
       await saveProfile({
+        name:            authUser?.name || 'Athlete',
         goal:            GOAL_MAP[goal] || goal,
         experience,
         basePRs:         currentLifts,

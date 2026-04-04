@@ -833,26 +833,26 @@ agent_communication:
 
   - agent: "main"
     message: >
-      7 CRITICAL BUG FIXES applied in this session. Please run backend tests ONLY for:
+      3 CRITICAL BUGS + 4 ADDITIONAL ISSUES fixed. Run backend tests ONLY:
       
-      BUG 3 (Goal Mapping): POST /api/profile/intake with goal='Strongman' and goal='General Fitness'
-      — verify the generated plan name matches (e.g. 'The Program — Strongman', 'The Program — General Strength').
-      Before: GoalType(intake.goal) would throw ValueError on case mismatch, fallback to STRENGTH.
-      After: Case-insensitive next() lookup.
+      1. POST /api/profile/reset — should return {"success": true, "message": "Profile reset complete"}
       
-      BUG 6 (Changelog): GET /api/coach/change-log — should return empty array (no changes) without error.
-      
-      SETUP: Use credentials user_a@theprogram.app / StrongmanA123 for JWT token.
-      1. POST /api/auth/login to get token
       2. POST /api/profile/intake {"goal":"Strongman","experience":"Intermediate","lifts":{},"frequency":4}
-         → response should contain planName containing 'Strongman'
-      3. POST /api/profile/intake {"goal":"General Fitness","experience":"Beginner","lifts":{},"frequency":3}
-         → response should contain planName containing 'General'
-      4. GET /api/coach/change-log → should return {"changes": []} without 500 error
-      5. POST /api/log {"date":"2025-06-04","week":1,"day":"Wednesday","sessionType":"Max Effort Upper",
-         "exercise":"Squat","sets":1,"weight":100,"reps":5,"rpe":7,"pain":0,"completed":"yes"}
-         → should return 200 OK
-      6. GET /api/log → should list the logged entry
+         — MUST return planName containing "Strongman", NOT "General Strength"
+         — Check backend stdout for: [INTAKE] GOAL FROM FRONTEND: 'Strongman'
+         — Check backend stdout for: [PLANGEN] intake.goal='Strongman' -> GoalType=... -> planName=The Program — Strongman
+         — Check backend stdout for: [INTAKE] Plan saved: 'The Program — Strongman...'
       
-      All other previously-passing endpoints should still work (no regressions).
+      3. POST /api/profile/reset (again)
+         — Then POST /api/profile/intake {"goal":"Hypertrophy","experience":"Intermediate","lifts":{},"frequency":4}
+         — MUST return planName containing "Hypertrophy"
+      
+      4. POST /api/profile/intake {"goal":"General Fitness","experience":"Beginner","lifts":{},"frequency":3}
+         — MUST return planName containing "General Strength"
+      
+      5. GET /api/coach/change-log — should return {"changes": []} with no error
+      
+      CREDENTIALS: user_a@theprogram.app / StrongmanA123
+      Steps: POST /api/auth/login → get token → use for all requests above.
+      CRITICAL: Verify the [INTAKE] and [PLANGEN] print statements appear in backend stdout logs.
 

@@ -1382,7 +1382,7 @@ async def _ensure_plan_loaded(uid: str = None) -> bool:
         logger.warning(f"Could not load saved plan from MongoDB: {e}")
 
     # ── 2. Fall back: regenerate from profile data ─────────────────────────────
-    profile_doc = await db.profile.find_one({})
+    profile_doc = await db.profile.find_one({"userId": user_id})
     if not profile_doc:
         return False
 
@@ -1938,6 +1938,31 @@ async def get_compliance_breakdown():
 # PHASE 2 — BATCH 2  Intelligent Coaching Upgrades
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ─── Profile Reset (BUG 2C — clears stale data on re-onboarding) ──────────────
+@api_router.post("/profile/reset")
+async def reset_profile_data(userId: str = Depends(get_current_user)):
+    """
+    Completely wipes saved plan + profile for this user so they can
+    re-do onboarding and get a fresh plan that matches their new goal.
+    """
+    user_id = userId
+    try:
+        deleted_plans = await db.saved_plans.delete_many({"userId": user_id})
+        deleted_profile = await db.profile.delete_many({"userId": user_id})
+        _prog_store["plans"].pop(user_id, None)
+        _prog_store["profiles"].pop(user_id, None)
+        logger.info(
+            f"[RESET] Cleared data for user: {user_id} | "
+            f"plans deleted: {deleted_plans.deleted_count} | "
+            f"profiles deleted: {deleted_profile.deleted_count}"
+        )
+        print(f"[RESET] User {user_id} — all plan/profile data wiped")
+        return {"success": True, "message": "Profile reset complete"}
+    except Exception as e:
+        logger.error(f"[RESET] Failed to reset profile for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Reset failed")
+
+
 # ─── Task 2: RAG-Enhanced Plan Generation ─────────────────────────────────────
 # This route shadows the one in program_router because api_router is included
 # first, so every POST /api/profile/intake comes here.
@@ -1958,6 +1983,15 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
 
     user_id = userId
     logger.info(f"[INTAKE] Goal received from frontend: '{intake.goal}' | Experience: '{intake.experience}' | UserId: {user_id}")
+    print(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}' | userId: {user_id}")
+
+    # ── Root Cause A Fix: Delete stale saved plans so a fresh generation always wins ──
+    try:
+        deleted = await db.saved_plans.delete_many({"userId": user_id})
+        logger.info(f"[INTAKE] Deleted {deleted.deleted_count} stale saved plan(s) for user: {user_id}")
+        _prog_store["plans"].pop(user_id, None)
+    except Exception as _e:
+        logger.warning(f"[INTAKE] Could not delete stale plans: {_e}")
 
     # Build in-memory profile — use case-insensitive lookup to avoid ValueError crashes
     _goal_str = (intake.goal or "").strip()
@@ -1996,6 +2030,7 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
 
     # Persist plan to MongoDB (CRITICAL — survives restarts)
     await _save_plan_to_db(plan, user_id)
+    print(f"[INTAKE] Plan saved: '{plan.planName}' for userId: {user_id}")
 
     # Mark onboarding complete in db.users
     if user_id != _PROG_USER:

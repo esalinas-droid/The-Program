@@ -226,10 +226,13 @@ export default function SettingsScreen() {
   function confirmReset() {
     Alert.alert(
       'Reset Onboarding?',
-      'This will clear your profile and take you back to the setup flow.',
+      'This will clear your training program and profile. You will be taken back to the setup flow to choose a new goal.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Reset', style: 'destructive', onPress: async () => {
+          // Clear backend saved plan + profile (BUG 2C fix)
+          try { await profileApi.reset(); } catch { /* Non-blocking */ }
+          // Clear local profile so onboarding starts fresh
           await saveProfile({ onboardingComplete: false });
           router.replace('/onboarding-intake');
         }},
@@ -328,7 +331,7 @@ export default function SettingsScreen() {
               </View>
             ) : (
               <>
-                <InfoRow label="Name"          value={profile?.name           || '—'} />
+                <InfoRow label="Name"          value={profile?.name || authUser?.name || '—'} />
                 <InfoRow label="Experience"    value={profile?.experience     || '—'} />
                 <InfoRow label="Body Weight"   value={profile?.currentBodyweight ? `${profile.currentBodyweight} ${profile.units || 'lbs'}` : '—'} />
                 <InfoRow label="Current Week"  value={String(profile?.currentWeek  || 1)} />

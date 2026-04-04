@@ -9,6 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { setAuthToken, storeUser, AuthUser } from '../src/utils/auth';
+import { saveProfile } from '../src/utils/storage';
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const GOLD    = '#C9A84C';
@@ -38,6 +39,10 @@ async function authFetch(path: string, body: object) {
 async function handleAuthSuccess(result: { token: string; user: AuthUser }) {
   await setAuthToken(result.token);
   await storeUser(result.user);
+  // BUG 3A: Sync name to local profile so Home tab greeting shows correctly
+  if (result.user.name) {
+    await saveProfile({ name: result.user.name });
+  }
   if (result.user.onboardingComplete) {
     router.replace('/(tabs)');
   } else {
@@ -47,21 +52,28 @@ async function handleAuthSuccess(result: { token: string; user: AuthUser }) {
 
 // ── Social "Coming soon" button ───────────────────────────────────────────────
 function SocialButton({
-  icon, label, color, onPress,
+  icon, label, color, onPress, showBadge = true, loading = false, disabled = false,
 }: {
   icon: string; label: string; color: string; onPress: () => void;
+  showBadge?: boolean; loading?: boolean; disabled?: boolean;
 }) {
   return (
     <TouchableOpacity
-      style={[s.socialBtn, { borderColor: color + '55' }]}
+      style={[s.socialBtn, { borderColor: color + '55', opacity: (loading || disabled) ? 0.7 : 1 }]}
       onPress={onPress}
       activeOpacity={0.8}
+      disabled={loading || disabled}
     >
-      <MaterialCommunityIcons name={icon as any} size={22} color={color} />
-      <Text style={s.socialBtnText}>{label}</Text>
-      <View style={[s.comingSoonBadge, { borderColor: color + '55', backgroundColor: color + '18' }]}>
-        <Text style={[s.comingSoonText, { color }]}>Soon</Text>
-      </View>
+      {loading
+        ? <ActivityIndicator size="small" color={color} />
+        : <MaterialCommunityIcons name={icon as any} size={22} color={color} />
+      }
+      <Text style={s.socialBtnText}>{loading ? 'Signing in…' : label}</Text>
+      {showBadge && (
+        <View style={[s.comingSoonBadge, { borderColor: color + '55', backgroundColor: color + '18' }]}>
+          <Text style={[s.comingSoonText, { color }]}>Soon</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -202,22 +214,16 @@ export default function AuthScreen() {
         {/* Social buttons */}
         <View style={s.socialSection}>
 
-          {/* ── Apple Sign-In (iOS only, uses same SocialButton style but without "Soon" badge) ── */}
+          {/* ── Apple Sign-In (iOS only) ── */}
           {Platform.OS === 'ios' && (
-            <TouchableOpacity
-              style={[s.socialBtn, { borderColor: '#FFFFFF55', opacity: appleLoading ? 0.7 : 1 }]}
+            <SocialButton
+              icon="apple"
+              label="Sign in with Apple"
+              color="#FFFFFF"
               onPress={handleAppleSignIn}
-              activeOpacity={0.8}
-              disabled={appleLoading}
-            >
-              {appleLoading
-                ? <ActivityIndicator size="small" color="#FFFFFF" />
-                : <MaterialCommunityIcons name="apple" size={22} color="#FFFFFF" />
-              }
-              <Text style={s.socialBtnText}>
-                {appleLoading ? 'Signing in…' : 'Sign in with Apple'}
-              </Text>
-            </TouchableOpacity>
+              showBadge={false}
+              loading={appleLoading}
+            />
           )}
 
           {/* Google — "Coming soon" */}

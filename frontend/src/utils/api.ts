@@ -29,6 +29,7 @@ export const profileApi = {
   get: () => api('/profile'),
   create: (data: Partial<AthleteProfile>) => api('/profile', { method: 'POST', body: JSON.stringify(data) }),
   update: (data: Partial<AthleteProfile>) => api('/profile', { method: 'PUT', body: JSON.stringify(data) }),
+  reset: () => api('/profile/reset', { method: 'POST' }),
 };
 
 // Log

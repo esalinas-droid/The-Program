@@ -701,6 +701,7 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         GoalType.ATHLETIC: "The Program — Athletic Performance",
         GoalType.GENERAL: "The Program — General Strength",
     }
+    print(f"[PLANGEN] intake.goal='{intake.goal}' -> GoalType={goal} -> planName={plan_names.get(goal)}")
 
     phases = []
     running_week = 1
