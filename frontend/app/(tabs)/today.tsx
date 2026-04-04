@@ -8,7 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getBlock } from '../../src/utils/calculations';
 import {
@@ -295,6 +295,364 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// ── ReadinessModal ────────────────────────────────────────────────────────────
+interface ReadinessModalProps {
+  visible: boolean;
+  onSubmit: (data: { sleepQuality: number; soreness: number; moodEnergy: number }) => void;
+  onSkip: () => void;
+}
+function ReadinessModal({ visible, onSubmit, onSkip }: ReadinessModalProps) {
+  const [sleep, setSleep]   = useState(3);
+  const [sore, setSore]     = useState(3);
+  const [mood, setMood]     = useState(3);
+  const slideAnim = useRef(new Animated.Value(800)).current;
+
+  const handleShow = () => {
+    setSleep(3); setSore(3); setMood(3);
+    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
+  };
+  const handleHide = (cb?: () => void) =>
+    Animated.timing(slideAnim, { toValue: 800, duration: 220, useNativeDriver: true }).start(() => cb?.());
+
+  const handleSubmit = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    handleHide(() => onSubmit({ sleepQuality: sleep, soreness: sore, moodEnergy: mood }));
+  };
+  const handleSkip = () => handleHide(onSkip);
+
+  const SCORE_LABELS = ['', 'Poor', 'Below avg', 'Average', 'Good', 'Great'];
+
+  const SliderRow = ({
+    label, emoji, value, setValue, leftLabel, rightLabel,
+  }: { label: string; emoji: string; value: number; setValue: (v: number) => void; leftLabel: string; rightLabel: string }) => (
+    <View style={rm.sliderBlock}>
+      <View style={rm.sliderHeader}>
+        <Text style={rm.sliderEmoji}>{emoji}</Text>
+        <Text style={rm.sliderLabel}>{label}</Text>
+        <View style={[rm.scorePill, { backgroundColor: value >= 4 ? TEAL + '30' : value <= 2 ? '#EF535025' : COLORS.accent + '25' }]}>
+          <Text style={[rm.scoreText, { color: value >= 4 ? TEAL : value <= 2 ? '#EF5350' : COLORS.accent }]}>
+            {SCORE_LABELS[value]}
+          </Text>
+        </View>
+      </View>
+      <View style={rm.dotRow}>
+        {[1, 2, 3, 4, 5].map(v => (
+          <TouchableOpacity
+            key={v}
+            style={[rm.dot, value === v && rm.dotActive, { backgroundColor: value >= v ? (v >= 4 ? TEAL : v <= 2 ? '#EF5350' : COLORS.accent) : COLORS.border }]}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setValue(v); }}
+            activeOpacity={0.7}
+          >
+            <Text style={[rm.dotNum, { color: value >= v ? COLORS.primary : COLORS.text.muted }]}>{v}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={rm.dotLabels}>
+        <Text style={rm.dotLabelText}>{leftLabel}</Text>
+        <Text style={rm.dotLabelText}>{rightLabel}</Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow}>
+      <View style={rm.overlay}>
+        <Animated.View style={[rm.sheet, { transform: [{ translateY: slideAnim }] }]}>
+          <View style={rm.handleWrap}><View style={rm.handle} /></View>
+
+          <View style={rm.header}>
+            <View style={rm.headerIcon}>
+              <MaterialCommunityIcons name="lightning-bolt" size={18} color={COLORS.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={rm.headerTitle}>Pre-Session Check-In</Text>
+              <Text style={rm.headerSub}>How are you feeling today?</Text>
+            </View>
+            <TouchableOpacity onPress={handleSkip} style={rm.skipBtn}>
+              <Text style={rm.skipText}>Skip</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={rm.body} showsVerticalScrollIndicator={false}>
+            <SliderRow
+              label="Sleep Quality"  emoji="😴"
+              value={sleep}  setValue={setSleep}
+              leftLabel="Poor"  rightLabel="Great"
+            />
+            <SliderRow
+              label="Muscle Soreness"  emoji="💪"
+              value={sore}  setValue={setSore}
+              leftLabel="Very sore"  rightLabel="Fully fresh"
+            />
+            <SliderRow
+              label="Mood & Energy"  emoji="⚡"
+              value={mood}  setValue={setMood}
+              leftLabel="Low"  rightLabel="Fired up"
+            />
+            <TouchableOpacity style={rm.submitBtn} onPress={handleSubmit} activeOpacity={0.85}>
+              <MaterialCommunityIcons name="flag-checkered" size={18} color={COLORS.primary} />
+              <Text style={rm.submitText}>READY — START SESSION</Text>
+            </TouchableOpacity>
+            <View style={{ height: 24 }} />
+          </ScrollView>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const rm = StyleSheet.create({
+  overlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
+  sheet:      { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '88%' },
+  handleWrap: { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
+  handle:     { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+  header:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.lg, gap: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  headerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.accent + '20', justifyContent: 'center', alignItems: 'center' },
+  headerTitle:{ fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  headerSub:  { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 2 },
+  skipBtn:    { padding: 8 },
+  skipText:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+  body:       { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
+  sliderBlock:{ marginBottom: SPACING.xl },
+  sliderHeader:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
+  sliderEmoji:{ fontSize: 20 },
+  sliderLabel:{ fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, flex: 1 },
+  scorePill:  { paddingHorizontal: 10, paddingVertical: 3, borderRadius: RADIUS.full },
+  scoreText:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
+  dotRow:     { flexDirection: 'row', gap: SPACING.sm, justifyContent: 'space-between' },
+  dot:        { flex: 1, height: 44, borderRadius: RADIUS.md, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: 'transparent' },
+  dotActive:  { borderWidth: 2 },
+  dotNum:     { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy },
+  dotLabels:  { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  dotLabelText:{ fontSize: 10, color: COLORS.text.muted },
+  submitBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 16, gap: SPACING.sm, marginTop: SPACING.md },
+  submitText: { color: COLORS.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+});
+
+// ── PainReportModal ───────────────────────────────────────────────────────────
+const BODY_REGIONS = [
+  'Lower Back', 'Upper Back', 'Knee', 'Hip / Glute', 'Shoulder',
+  'Elbow', 'Wrist', 'Hamstring', 'Quad', 'Calf / Achilles',
+  'Neck / Traps', 'Pec / Chest', 'SI Joint / Pelvis',
+];
+const PAIN_TYPES = [
+  { label: 'Sharp',   color: '#EF5350', desc: 'Stabbing or acute' },
+  { label: 'Dull',    color: '#FF9800', desc: 'Deep persistent ache' },
+  { label: 'Aching',  color: '#FFC107', desc: 'Broad soreness' },
+  { label: 'Burning', color: '#FF7043', desc: 'Heat / nerve-like' },
+];
+const PAIN_TIMINGS = [
+  { value: 'during', label: 'During', icon: 'timer-outline' },
+  { value: 'after',  label: 'After',  icon: 'clock-outline' },
+  { value: 'both',   label: 'Both',   icon: 'clock-alert-outline' },
+];
+
+interface PainModalProps {
+  visible: boolean;
+  exerciseName: string;
+  sessionType: string;
+  onClose: () => void;
+  onSubmit: (data: { bodyRegion: string; painType: string; intensity: number; timing: string }) => void;
+}
+function PainReportModal({ visible, exerciseName, sessionType, onClose, onSubmit }: PainModalProps) {
+  const [step, setStep]         = useState<1 | 2 | 3>(1);
+  const [region, setRegion]     = useState('');
+  const [painType, setPainType] = useState('');
+  const [intensity, setIntensity] = useState(5);
+  const [timing, setTiming]     = useState('during');
+  const [submitting, setSubmitting] = useState(false);
+  const slideAnim = useRef(new Animated.Value(800)).current;
+
+  const handleShow = () => {
+    setStep(1); setRegion(''); setPainType(''); setIntensity(5); setTiming('during');
+    setSubmitting(false);
+    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
+  };
+  const handleHide = (cb?: () => void) =>
+    Animated.timing(slideAnim, { toValue: 800, duration: 220, useNativeDriver: true }).start(() => cb?.());
+
+  const handleClose = () => handleHide(onClose);
+
+  const handleRegionSelect = (r: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRegion(r); setStep(2);
+  };
+  const handleTypeSelect = (t: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setPainType(t); setStep(3);
+  };
+  const handleSubmit = () => {
+    if (submitting) return;
+    setSubmitting(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    handleHide(() => onSubmit({ bodyRegion: region, painType, intensity, timing }));
+  };
+
+  const INTENSITY_COLOR = intensity >= 7 ? '#EF5350' : intensity >= 4 ? '#FF9800' : TEAL;
+
+  return (
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow}>
+      <Pressable style={pm.overlay} onPress={step === 1 ? handleClose : undefined}>
+        <Animated.View style={[pm.sheet, { transform: [{ translateY: slideAnim }] }]}>
+          <Pressable onPress={e => e.stopPropagation()}>
+            <View style={pm.handleWrap}><View style={pm.handle} /></View>
+            <View style={pm.header}>
+              {step > 1 ? (
+                <TouchableOpacity onPress={() => setStep(s => Math.max(1, s - 1) as 1 | 2 | 3)} style={pm.backBtn}>
+                  <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.secondary} />
+                </TouchableOpacity>
+              ) : <View style={pm.backBtn} />}
+              <View style={pm.headerCenter}>
+                <Text style={pm.headerTitle}>Report Pain</Text>
+                <Text style={pm.headerSub} numberOfLines={1}>{exerciseName}</Text>
+              </View>
+              <TouchableOpacity onPress={handleClose} style={pm.backBtn}>
+                <MaterialCommunityIcons name="close" size={20} color={COLORS.text.muted} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Step indicator */}
+            <View style={pm.stepRow}>
+              {[1, 2, 3].map(s => (
+                <View key={s} style={[pm.stepDot, step >= s && pm.stepDotActive]} />
+              ))}
+            </View>
+
+            <ScrollView style={pm.body} showsVerticalScrollIndicator={false}>
+              {step === 1 && (
+                <View>
+                  <Text style={pm.prompt}>Where does it hurt?</Text>
+                  <View style={pm.chipGrid}>
+                    {BODY_REGIONS.map(r => (
+                      <TouchableOpacity
+                        key={r}
+                        style={[pm.chip, region === r && pm.chipActive]}
+                        onPress={() => handleRegionSelect(r)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[pm.chipText, region === r && pm.chipTextActive]}>{r}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {step === 2 && (
+                <View>
+                  <Text style={pm.prompt}>What kind of pain?</Text>
+                  <View style={pm.typeGrid}>
+                    {PAIN_TYPES.map(t => (
+                      <TouchableOpacity
+                        key={t.label}
+                        style={[pm.typeCard, painType === t.label && { borderColor: t.color, backgroundColor: t.color + '15' }]}
+                        onPress={() => handleTypeSelect(t.label)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[pm.typeLabel, { color: t.color }]}>{t.label}</Text>
+                        <Text style={pm.typeDesc}>{t.desc}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {step === 3 && (
+                <View>
+                  <Text style={pm.prompt}>Intensity & timing</Text>
+
+                  {/* Intensity bubbles */}
+                  <Text style={pm.subLabel}>How bad is it? ({intensity}/10)</Text>
+                  <View style={pm.intensityRow}>
+                    {[1,2,3,4,5,6,7,8,9,10].map(v => (
+                      <TouchableOpacity
+                        key={v}
+                        style={[
+                          pm.intBubble,
+                          intensity === v && { backgroundColor: INTENSITY_COLOR, borderColor: INTENSITY_COLOR },
+                          intensity > v && { backgroundColor: INTENSITY_COLOR + '40', borderColor: INTENSITY_COLOR + '80' },
+                        ]}
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIntensity(v); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[pm.intNum, intensity >= v && { color: intensity === v ? COLORS.primary : INTENSITY_COLOR }]}>{v}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={pm.intensityLabels}>
+                    <Text style={pm.intLabel}>Mild</Text>
+                    <Text style={pm.intLabel}>Severe</Text>
+                  </View>
+
+                  {/* Timing */}
+                  <Text style={pm.subLabel}>When did it occur?</Text>
+                  <View style={pm.timingRow}>
+                    {PAIN_TIMINGS.map(t => (
+                      <TouchableOpacity
+                        key={t.value}
+                        style={[pm.timingChip, timing === t.value && pm.timingChipActive]}
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setTiming(t.value); }}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialCommunityIcons name={t.icon as any} size={15} color={timing === t.value ? COLORS.primary : COLORS.text.secondary} />
+                        <Text style={[pm.timingText, timing === t.value && pm.timingTextActive]}>{t.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <TouchableOpacity style={pm.submitBtn} onPress={handleSubmit} disabled={submitting} activeOpacity={0.85}>
+                    <MaterialCommunityIcons name="alert-circle" size={17} color={COLORS.primary} />
+                    <Text style={pm.submitText}>LOG PAIN REPORT</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const pm = StyleSheet.create({
+  overlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' },
+  sheet:     { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '88%' },
+  handleWrap:{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
+  handle:    { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+  header:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  backBtn:   { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  headerCenter:{ flex: 1, alignItems: 'center' },
+  headerTitle: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  headerSub:   { fontSize: FONTS.sizes.xs, color: '#EF5350', fontWeight: FONTS.weights.semibold, marginTop: 2 },
+  stepRow:   { flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10 },
+  stepDot:   { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.border },
+  stepDotActive:{ backgroundColor: '#EF5350' },
+  body:      { paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm },
+  prompt:    { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: SPACING.md },
+  subLabel:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary, marginBottom: SPACING.sm, marginTop: SPACING.md },
+  chipGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
+  chip:      { paddingHorizontal: 14, paddingVertical: 9, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  chipActive:{ borderColor: '#EF5350', backgroundColor: '#EF535020' },
+  chipText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, fontWeight: FONTS.weights.semibold },
+  chipTextActive:{ color: '#EF5350' },
+  typeGrid:  { gap: SPACING.sm },
+  typeCard:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  typeLabel: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, width: 70 },
+  typeDesc:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+  intensityRow:  { flexDirection: 'row', gap: 4, flexWrap: 'wrap' },
+  intBubble:     { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center' },
+  intNum:        { fontSize: 12, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
+  intensityLabels:{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  intLabel:  { fontSize: 10, color: COLORS.text.muted },
+  timingRow: { flexDirection: 'row', gap: SPACING.sm },
+  timingChip:{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  timingChipActive: { borderColor: '#EF5350', backgroundColor: '#EF535020' },
+  timingText:{ fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
+  timingTextActive: { color: '#EF5350' },
+  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: '#EF5350', borderRadius: RADIUS.lg, paddingVertical: 15, marginTop: SPACING.lg },
+  submitText:{ color: COLORS.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+});
+
 // ── AdjustModal ───────────────────────────────────────────────────────────────
 interface AdjustModalProps {
   visible: boolean;
@@ -513,7 +871,7 @@ const sr = StyleSheet.create({
 });
 
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
-function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLog, onPain, onAdjust, swap }: {
+function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLog, onPain, onAdjust, onReportPain, swap }: {
   exercise: Exercise;
   expanded: boolean;
   loggedSets: Set<string>;
@@ -522,6 +880,7 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
   onLog: (setId: string) => void;
   onPain: (setId: string) => void;
   onAdjust: (id: string, name: string) => void;
+  onReportPain: (exerciseName: string) => void;
   swap?: SwapInfo;
 }) {
   const catStyle   = getCategoryStyle(exercise.category);
@@ -605,10 +964,16 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
           ) : null}
 
           {/* Adjust Exercise button */}
-          <TouchableOpacity style={ec.adjustBtn} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
-            <MaterialCommunityIcons name="swap-horizontal" size={14} color={COLORS.text.muted} />
-            <Text style={ec.adjustBtnText}>Adjust Exercise</Text>
-          </TouchableOpacity>
+          <View style={ec.actionRow}>
+            <TouchableOpacity style={ec.adjustBtn} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
+              <MaterialCommunityIcons name="swap-horizontal" size={14} color={COLORS.text.muted} />
+              <Text style={ec.adjustBtnText}>Adjust Exercise</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={ec.painBtn2} onPress={() => onReportPain(displayName)} activeOpacity={0.75}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={14} color='#EF5350' />
+              <Text style={ec.painBtnText}>Report Pain</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </View>
@@ -635,8 +1000,11 @@ const ec = StyleSheet.create({
   cuesText:      { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 17 },
   divider:       { height: 1, backgroundColor: COLORS.border, marginBottom: SPACING.sm },
   notes:         { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginTop: SPACING.md, lineHeight: 17 },
-  adjustBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
+  adjustBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
   adjustBtnText: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  actionRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
+  painBtn2:      { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  painBtnText:   { fontSize: FONTS.sizes.xs, color: '#EF5350', fontWeight: FONTS.weights.semibold },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -679,6 +1047,16 @@ export default function TodayScreen() {
   const [adjustKey, setAdjustKey]  = useState('');
   const [adjustName, setAdjustName] = useState('');
 
+  // ── Readiness check state ────────────────────────────────────────────────────
+  const [showReadiness, setShowReadiness]       = useState(false);
+  const [readinessAdjustment, setReadinessAdjustment] = useState<string | null>(null);
+  const [readinessScore, setReadinessScore]     = useState<number | null>(null);
+
+  // ── Pain report state ────────────────────────────────────────────────────────
+  const [showPainModal, setShowPainModal]   = useState(false);
+  const [painExerciseName, setPainExerciseName] = useState('');
+  const [painAlert, setPainAlert]           = useState<string | null>(null);
+
   const todayName = getTodayDayName();
 
   // ── Load session ────────────────────────────────────────────────────────────
@@ -707,9 +1085,58 @@ export default function TodayScreen() {
         }
       } catch { /* No AI plan yet — keep local exercises */ }
 
+      // ── Check today's readiness ──────────────────────────────────────────
+      try {
+        const rResult = await readinessApi.getToday();
+        if (!rResult.hasCheckedIn) {
+          // Slight delay so screen renders first
+          setTimeout(() => setShowReadiness(true), 600);
+        } else if (rResult.readiness) {
+          setReadinessScore(rResult.readiness.totalScore);
+          if (rResult.readiness.adjustmentApplied) {
+            setReadinessAdjustment(rResult.readiness.adjustmentNote);
+          }
+        }
+      } catch { /* Readiness check not critical */ }
+
       setLoading(false);
     })();
   }, []));
+
+  // ── Readiness submit handler ─────────────────────────────────────────────────
+  const handleReadinessSubmit = async (data: { sleepQuality: number; soreness: number; moodEnergy: number }) => {
+    setShowReadiness(false);
+    try {
+      const result = await readinessApi.submit(data);
+      setReadinessScore(result.readinessScore);
+      if (result.adjustmentApplied) {
+        setReadinessAdjustment(result.adjustmentNote);
+      }
+    } catch (e) { console.warn('Readiness submit failed:', e); }
+  };
+
+  // ── Pain report submit handler ───────────────────────────────────────────────
+  const handlePainSubmit = async (data: { bodyRegion: string; painType: string; intensity: number; timing: string }) => {
+    setShowPainModal(false);
+    try {
+      const result = await painReportApi.create({
+        exerciseName: painExerciseName,
+        bodyRegion: data.bodyRegion,
+        painType: data.painType,
+        intensity: data.intensity,
+        timing: data.timing,
+        sessionType,
+      });
+      if (result.flagged && result.alertMessage) {
+        setPainAlert(result.alertMessage);
+      }
+    } catch (e) { console.warn('Pain report failed:', e); }
+  };
+
+  const openPainModal = (exerciseName: string) => {
+    setPainExerciseName(exerciseName);
+    setShowPainModal(true);
+  };
 
   // ── Rest timer effect ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -838,6 +1265,28 @@ export default function TodayScreen() {
           </View>
         ))}
 
+        {/* ── READINESS ADJUSTMENT BANNER ── */}
+        {readinessAdjustment && (
+          <View style={s.readinessBanner}>
+            <MaterialCommunityIcons name="lightning-bolt" size={15} color={COLORS.accent} />
+            <Text style={s.readinessBannerText}>{readinessAdjustment}</Text>
+            <TouchableOpacity onPress={() => setReadinessAdjustment(null)} style={{ padding: 4 }}>
+              <MaterialCommunityIcons name="close" size={14} color={COLORS.text.muted} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── PAIN ALERT BANNER ── */}
+        {painAlert && (
+          <View style={s.painAlertBanner}>
+            <MaterialCommunityIcons name="alert-circle" size={15} color="#FFF" />
+            <Text style={s.painAlertText}>{painAlert}</Text>
+            <TouchableOpacity onPress={() => setPainAlert(null)} style={{ padding: 4 }}>
+              <MaterialCommunityIcons name="close" size={14} color="#FFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── COACH NOTE CARD ── */}
         <View style={s.coachCard}>
           <View style={s.coachHeader}>
@@ -916,6 +1365,7 @@ export default function TodayScreen() {
             onLog={handleLog}
             onPain={handlePain}
             onAdjust={openAdjust}
+            onReportPain={openPainModal}
             swap={swaps[ex.id]}
           />
         ))}
@@ -956,6 +1406,22 @@ export default function TodayScreen() {
         onClose={() => setModal(false)}
         onConfirm={handleConfirmSwap}
       />
+
+      {/* ── READINESS CHECK MODAL ── */}
+      <ReadinessModal
+        visible={showReadiness}
+        onSubmit={handleReadinessSubmit}
+        onSkip={() => setShowReadiness(false)}
+      />
+
+      {/* ── PAIN REPORT MODAL ── */}
+      <PainReportModal
+        visible={showPainModal}
+        exerciseName={painExerciseName}
+        sessionType={sessionType}
+        onClose={() => setShowPainModal(false)}
+        onSubmit={handlePainSubmit}
+      />
     </SafeAreaView>
   );
 }
@@ -980,6 +1446,12 @@ const s = StyleSheet.create({
   // Injury banners
   injuryBanner:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#8B2222', borderRadius: RADIUS.md, padding: SPACING.md, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.sm },
   injuryBannerText: { color: '#FFF', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 18 },
+
+  // Readiness & pain banners
+  readinessBanner:    { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.accent + '18', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: COLORS.accent },
+  readinessBannerText:{ flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold, lineHeight: 18 },
+  painAlertBanner:    { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#EF535022', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: '#EF5350' },
+  painAlertText:      { flex: 1, fontSize: FONTS.sizes.sm, color: '#EF5350', fontWeight: FONTS.weights.semibold, lineHeight: 18 },
 
   // Coach note card — gold left border
   coachCard:    { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderLeftWidth: 3, borderLeftColor: COLORS.accent, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg },

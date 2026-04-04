@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Animated, Platform,
@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../src/constants/theme';
+import { sessionRatingApi } from '../src/utils/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDuration(secs: number): string {
@@ -65,12 +66,41 @@ export default function ReviewScreen() {
   const coachNote     = buildCoachNote(completionPct, sessionType);
   const sessionColors = getSessionStyle(sessionType);
 
+  // ── RPE / insight state ──────────────────────────────────────────────────────
+  const [rpe, setRpe]           = useState(7);
+  const [rpeSubmitted, setRpeSubmitted] = useState(false);
+  const [rpeLoading, setRpeLoading]   = useState(false);
+  const [aiInsight, setAiInsight]     = useState('');
+  const rpeAnim = useRef(new Animated.Value(0)).current;
+
   // ── Completion ring color ─────────────────────────────────────────────────
   const ringColor = completionPct >= 80
     ? COLORS.status.success
     : completionPct >= 50
       ? COLORS.accent
       : COLORS.status.error;
+
+  // ── RPE submit ───────────────────────────────────────────────────────────────
+  const handleRpeSubmit = async () => {
+    if (rpeSubmitted || rpeLoading) return;
+    setRpeLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const result = await sessionRatingApi.submit({
+        sessionType, week, rpe,
+        setsLogged, totalSets,
+      });
+      setAiInsight(result.aiInsight || '');
+      setRpeSubmitted(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Animated.timing(rpeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+    } catch (e) {
+      console.warn('RPE submit failed:', e);
+      setRpeSubmitted(true); // show fallback anyway
+    } finally {
+      setRpeLoading(false);
+    }
+  };
 
   // ── Animations ──────────────────────────────────────────────────────────────
   const scalePulse = useRef(new Animated.Value(0.7)).current;
@@ -162,6 +192,75 @@ export default function ReviewScreen() {
           ))}
         </Animated.View>
 
+        {/* ── RPE Rating Card ── */}
+        <Animated.View style={[s.rpeCard, fadeUp(statsAnim)]}>
+          <View style={s.cardHeader}>
+            <View style={[s.cardIconBadge, { backgroundColor: COLORS.accent + '25' }]}>
+              <MaterialCommunityIcons name="gauge" size={14} color={COLORS.accent} />
+            </View>
+            <View>
+              <Text style={s.cardTitle}>RATE YOUR SESSION</Text>
+              <Text style={s.cardSub}>How hard did it feel?</Text>
+            </View>
+          </View>
+
+          {!rpeSubmitted ? (
+            <>
+              {/* RPE bubbles */}
+              <View style={s.rpeRow}>
+                {[1,2,3,4,5,6,7,8,9,10].map(v => {
+                  const col = v >= 8 ? '#EF5350' : v >= 5 ? COLORS.accent : TEAL;
+                  return (
+                    <TouchableOpacity
+                      key={v}
+                      style={[s.rpeBubble, rpe === v && { backgroundColor: col, borderColor: col }]}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setRpe(v); }}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[s.rpeNum, rpe === v && { color: COLORS.primary }]}>{v}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={s.rpeLabelRow}>
+                <Text style={s.rpeLabelText}>Easy</Text>
+                <Text style={[s.rpeLabelText, { color: COLORS.accent }]}>RPE {rpe}</Text>
+                <Text style={s.rpeLabelText}>Max</Text>
+              </View>
+              <TouchableOpacity
+                style={[s.rpeSubmitBtn, rpeLoading && { opacity: 0.6 }]}
+                onPress={handleRpeSubmit}
+                disabled={rpeLoading}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name={rpeLoading ? 'loading' : 'check'} size={16} color={COLORS.primary} />
+                <Text style={s.rpeSubmitText}>{rpeLoading ? 'ANALYSING...' : 'LOG RPE'}</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={s.rpeSubmittedRow}>
+              <MaterialCommunityIcons name="check-circle" size={18} color={TEAL} />
+              <Text style={s.rpeSubmittedText}>RPE {rpe}/10 logged</Text>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* ── AI Insight Card (shown after RPE submit) ── */}
+        {rpeSubmitted && aiInsight ? (
+          <Animated.View style={[s.insightCard, { opacity: rpeAnim, transform: [{ translateY: rpeAnim.interpolate({ inputRange: [0,1], outputRange: [20, 0] }) }] }]}>
+            <View style={s.cardHeader}>
+              <View style={[s.cardIconBadge, { backgroundColor: '#7C3AED25' }]}>
+                <MaterialCommunityIcons name="creation" size={14} color='#7C3AED' />
+              </View>
+              <View>
+                <Text style={[s.cardTitle, { color: '#7C3AED' }]}>COACH INSIGHT</Text>
+                <Text style={s.cardSub}>AI-generated from your data</Text>
+              </View>
+            </View>
+            <Text style={s.insightText}>{aiInsight}</Text>
+          </Animated.View>
+        ) : null}
+
         {/* ── Wins card ── */}
         <Animated.View style={[s.card, fadeUp(winsAnim)]}>
           <View style={s.cardHeader}>
@@ -231,20 +330,32 @@ export default function ReviewScreen() {
           <Text style={s.primaryBtnText}>BACK TO DASHBOARD</Text>
           <MaterialCommunityIcons name="home-outline" size={17} color={COLORS.primary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={s.secondaryBtn}
-          onPress={() => router.push('/(tabs)/log')}
-          activeOpacity={0.8}
-        >
-          <MaterialCommunityIcons name="pencil-plus-outline" size={15} color={COLORS.text.muted} />
-          <Text style={s.secondaryBtnText}>Log More</Text>
-        </TouchableOpacity>
+        <View style={s.secondaryBtnRow}>
+          <TouchableOpacity
+            style={s.secondaryBtn}
+            onPress={() => router.push('/(tabs)/log')}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons name="pencil-plus-outline" size={15} color={COLORS.text.muted} />
+            <Text style={s.secondaryBtnText}>Log More</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.secondaryBtn, { borderLeftWidth: 1, borderLeftColor: COLORS.border, paddingLeft: SPACING.md }]}
+            onPress={() => router.push({ pathname: '/(tabs)/today' } as any)}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons name="alert-circle-outline" size={15} color='#EF5350' />
+            <Text style={[s.secondaryBtnText, { color: '#EF5350' }]}>Report Pain</Text>
+          </TouchableOpacity>
+        </View>
       </Animated.View>
     </SafeAreaView>
   );
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
+const TEAL = '#4DCEA6';
+
 const s = StyleSheet.create({
   safe:          { flex: 1, backgroundColor: COLORS.background },
   scroll:        { flex: 1 },
@@ -444,16 +555,83 @@ const s = StyleSheet.create({
     fontWeight: FONTS.weights.heavy,
     letterSpacing: 1.2,
   },
+  secondaryBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: SPACING.sm,
     paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
   },
   secondaryBtnText: {
     fontSize: FONTS.sizes.sm,
     color: COLORS.text.muted,
     fontWeight: FONTS.weights.semibold,
+  },
+
+  // RPE Card
+  rpeCard: {
+    marginHorizontal: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  rpeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 3,
+    marginBottom: SPACING.sm,
+  },
+  rpeBubble: {
+    width: 30, height: 30, borderRadius: 15,
+    borderWidth: 1.5, borderColor: COLORS.border,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  rpeNum: {
+    fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted,
+  },
+  rpeLabelRow: {
+    flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.md,
+  },
+  rpeLabelText: {
+    fontSize: 10, color: COLORS.text.muted,
+  },
+  rpeSubmitBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: SPACING.sm, backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 12,
+  },
+  rpeSubmitText: {
+    color: COLORS.primary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, letterSpacing: 1,
+  },
+  rpeSubmittedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, justifyContent: 'center', paddingVertical: SPACING.sm,
+  },
+  rpeSubmittedText: {
+    fontSize: FONTS.sizes.base, color: TEAL, fontWeight: FONTS.weights.semibold,
+  },
+
+  // AI Insight Card
+  insightCard: {
+    marginHorizontal: SPACING.lg,
+    backgroundColor: '#7C3AED10',
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: '#7C3AED40',
+  },
+  insightText: {
+    fontSize: FONTS.sizes.sm,
+    color: COLORS.text.secondary,
+    lineHeight: 22,
+    fontStyle: 'italic',
   },
 });

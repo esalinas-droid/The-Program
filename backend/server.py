@@ -705,6 +705,297 @@ async def get_substitutions(week: Optional[int] = None):
     docs = await db.substitutions.find(query).sort("timestamp", -1).to_list(200)
     return [SubstitutionLog.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
 
+# ── Pain Report Models & Endpoints ───────────────────────────────────────────
+
+class PainReportCreate(BaseModel):
+    exerciseName: str = ""
+    bodyRegion: str = ""
+    painType: str = ""   # sharp | dull | ache | burning
+    intensity: int = 0   # 1–10
+    timing: str = "during"  # during | after | both
+    sessionType: str = ""
+    notes: str = ""
+
+
+@api_router.post("/pain-report")
+async def create_pain_report(body: PainReportCreate, userId: str = Depends(get_current_user)):
+    """Log a pain report tied to a specific exercise, scoped to user."""
+    profile = await db.profile.find_one({"userId": userId})
+    week = profile.get("currentWeek", 1) if profile else 1
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+
+    # Pattern detection: same region 3+ times in last 7 days → flag
+    from datetime import timedelta
+    seven_days_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    same_region_count = await db.pain_reports.count_documents({
+        "userId": userId,
+        "bodyRegion": body.bodyRegion,
+        "date": {"$gte": seven_days_ago},
+    })
+    flagged = same_region_count >= 2  # third occurrence triggers flag
+
+    doc = {
+        "userId": userId,
+        "exerciseName": body.exerciseName,
+        "bodyRegion": body.bodyRegion,
+        "painType": body.painType,
+        "intensity": body.intensity,
+        "timing": body.timing,
+        "sessionType": body.sessionType,
+        "notes": body.notes,
+        "date": date_str,
+        "week": week,
+        "flagged": flagged,
+        "createdAt": now,
+    }
+    result = await db.pain_reports.insert_one(doc)
+    logger.info(f"[PainReport] User {userId}: {body.bodyRegion} {body.intensity}/10 during {body.exerciseName}")
+
+    alert_message = None
+    if flagged:
+        alert_message = f"Pattern Alert: {body.bodyRegion} pain reported {same_region_count + 1}x in 7 days. Your coach has been flagged."
+
+    return {
+        "success": True,
+        "id": str(result.inserted_id),
+        "flagged": flagged,
+        "alertMessage": alert_message,
+    }
+
+
+@api_router.get("/pain-report")
+async def get_pain_reports(days: int = 30, userId: str = Depends(get_current_user)):
+    """Get recent pain reports for the user with pattern flags."""
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    docs = await db.pain_reports.find({
+        "userId": userId,
+        "date": {"$gte": since},
+    }).sort("createdAt", -1).limit(50).to_list(50)
+
+    # Detect regions with 3+ reports in last 7 days
+    seven_days_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    recent_docs = [d for d in docs if d.get("date", "") >= seven_days_ago]
+    region_counts: dict = {}
+    for d in recent_docs:
+        r = d.get("bodyRegion", "")
+        if r:
+            region_counts[r] = region_counts.get(r, 0) + 1
+    flagged_regions = [r for r, c in region_counts.items() if c >= 3]
+
+    reports = [{
+        "id": str(d["_id"]),
+        "exerciseName": d.get("exerciseName", ""),
+        "bodyRegion": d.get("bodyRegion", ""),
+        "painType": d.get("painType", ""),
+        "intensity": d.get("intensity", 0),
+        "timing": d.get("timing", ""),
+        "date": d.get("date", ""),
+        "week": d.get("week", 1),
+        "flagged": d.get("flagged", False),
+    } for d in docs]
+
+    return {
+        "reports": reports,
+        "flaggedRegions": flagged_regions,
+        "hasPainAlerts": len(flagged_regions) > 0,
+    }
+
+
+# ── Readiness Check Models & Endpoints ───────────────────────────────────────
+
+class ReadinessCreate(BaseModel):
+    sleepQuality: int   # 1–5 (1=poor, 5=great)
+    soreness: int       # 1–5 (1=very sore, 5=fresh)
+    moodEnergy: int     # 1–5 (1=low, 5=high)
+
+
+@api_router.post("/readiness")
+async def create_readiness(body: ReadinessCreate, userId: str = Depends(get_current_user)):
+    """Save pre-session readiness check and return auto-adjustment recommendation."""
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+
+    # Score: average of three 1-5 metrics (higher = better readiness)
+    total_score = (body.sleepQuality + body.soreness + body.moodEnergy) / 3.0
+
+    # Determine adjustment
+    adjustment_applied = False
+    adjustment_note = ""
+    recommendation = "normal"
+    if total_score < 2.5:
+        adjustment_applied = True
+        adjustment_note = (
+            f"Low readiness ({total_score:.1f}/5) — Reduce work set loads by 15% today. "
+            "Focus on movement quality. Consider dropping one accessory block."
+        )
+        recommendation = "easy"
+    elif total_score < 3.5:
+        adjustment_applied = True
+        adjustment_note = (
+            f"Moderate readiness ({total_score:.1f}/5) — Reduce work set loads by 10% today. "
+            "Extend warm-up by 5 minutes. Full session is on the menu."
+        )
+        recommendation = "moderate"
+    else:
+        adjustment_note = f"Good readiness ({total_score:.1f}/5) — Full training intensity. Go get it."
+
+    doc = {
+        "userId": userId,
+        "date": date_str,
+        "sleepQuality": body.sleepQuality,
+        "soreness": body.soreness,
+        "moodEnergy": body.moodEnergy,
+        "totalScore": round(total_score, 2),
+        "adjustmentApplied": adjustment_applied,
+        "adjustmentNote": adjustment_note,
+        "createdAt": now,
+    }
+    result = await db.readiness_checks.insert_one(doc)
+    logger.info(f"[Readiness] User {userId}: score {total_score:.1f}/5 → {recommendation}")
+
+    return {
+        "id": str(result.inserted_id),
+        "readinessScore": round(total_score, 2),
+        "adjustmentApplied": adjustment_applied,
+        "adjustmentNote": adjustment_note,
+        "recommendation": recommendation,
+    }
+
+
+@api_router.get("/readiness/today")
+async def get_today_readiness(userId: str = Depends(get_current_user)):
+    """Check if user has done a readiness check today."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    doc = await db.readiness_checks.find_one({"userId": userId, "date": today})
+    if not doc:
+        return {"hasCheckedIn": False, "readiness": None}
+    return {
+        "hasCheckedIn": True,
+        "readiness": {
+            "sleepQuality": doc.get("sleepQuality"),
+            "soreness": doc.get("soreness"),
+            "moodEnergy": doc.get("moodEnergy"),
+            "totalScore": doc.get("totalScore"),
+            "adjustmentApplied": doc.get("adjustmentApplied"),
+            "adjustmentNote": doc.get("adjustmentNote"),
+        },
+    }
+
+
+# ── Session Rating Models & Endpoints ────────────────────────────────────────
+
+class SessionRatingCreate(BaseModel):
+    sessionType: str = ""
+    week: int = 1
+    rpe: float
+    notes: str = ""
+    setsLogged: int = 0
+    totalSets: int = 0
+
+
+def _get_fallback_insight(rpe: float, completion_pct: float, session_type: str) -> str:
+    """Fallback insight if AI call fails."""
+    if rpe >= 9:
+        return f"RPE {rpe}/10 — near-maximal effort today. Prioritize recovery tonight: protein within 30 min, 8+ hours sleep. This push deposits in the next block."
+    elif rpe >= 7:
+        return f"RPE {rpe}/10 with {completion_pct:.0f}% completion — solid stimulus delivered. Recovery starts now. Protein, water, sleep."
+    else:
+        return f"RPE {rpe}/10 — energy in reserve. If this was a deload, perfect execution. Otherwise push 0.5-1 RPE harder next {session_type} session."
+
+
+@api_router.post("/session-rating")
+async def create_session_rating(body: SessionRatingCreate, userId: str = Depends(get_current_user)):
+    """Save post-session RPE and generate a brief AI insight."""
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    completion_pct = round(body.setsLogged / body.totalSets * 100) if body.totalSets > 0 else 0
+
+    # Pull last 3 same-type sessions for trend context
+    prev_ratings = await db.session_ratings.find({
+        "userId": userId, "sessionType": body.sessionType,
+    }).sort("createdAt", -1).limit(3).to_list(3)
+    avg_recent_rpe = sum(r.get("rpe", 7) for r in prev_ratings) / len(prev_ratings) if prev_ratings else body.rpe
+
+    ai_insight = ""
+    if _openai_client:
+        try:
+            rpe_trend = "up" if body.rpe > avg_recent_rpe + 0.5 else "down" if body.rpe < avg_recent_rpe - 0.5 else "stable"
+            ctx = (
+                f"Session: {body.sessionType}, Week {body.week}. "
+                f"RPE: {body.rpe}/10 (trend: {rpe_trend} vs avg {avg_recent_rpe:.1f}). "
+                f"Completion: {completion_pct}%. Sets: {body.setsLogged}/{body.totalSets}."
+            )
+            if body.notes:
+                ctx += f" Athlete note: {body.notes}"
+
+            emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+            import uuid as _uuid_mod
+            chat_id = str(_uuid_mod.uuid4())
+            from emergentintegrations.llm.chat import LlmChat as _LC, UserMessage as _UM
+            insight_chat = _LC(
+                api_key=emergent_key,
+                session_id=chat_id,
+                system_message=(
+                    "You are a strength coach. Give 1-2 sentences of post-session insight based on the data. "
+                    "Be specific and actionable. Focus on recovery, readiness, or a performance signal. "
+                    "No filler phrases. Max 60 words."
+                )
+            ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+            raw_insight = await insight_chat.send_message(_UM(text=ctx))
+            ai_insight = raw_insight.strip()[:400]
+        except Exception as e:
+            logger.warning(f"[SessionRating] AI insight failed: {e}")
+            ai_insight = _get_fallback_insight(body.rpe, completion_pct, body.sessionType)
+    else:
+        ai_insight = _get_fallback_insight(body.rpe, completion_pct, body.sessionType)
+
+    doc = {
+        "userId": userId,
+        "sessionType": body.sessionType,
+        "week": body.week,
+        "date": date_str,
+        "rpe": body.rpe,
+        "notes": body.notes,
+        "aiInsight": ai_insight,
+        "setsLogged": body.setsLogged,
+        "totalSets": body.totalSets,
+        "completionPct": completion_pct,
+        "createdAt": now,
+    }
+    result = await db.session_ratings.insert_one(doc)
+    logger.info(f"[SessionRating] User {userId}: RPE {body.rpe} — {session_type if (session_type := body.sessionType) else 'session'}")
+
+    return {
+        "id": str(result.inserted_id),
+        "aiInsight": ai_insight,
+        "rpe": body.rpe,
+        "completionPct": completion_pct,
+    }
+
+
+@api_router.get("/session-rating/latest")
+async def get_latest_session_rating(userId: str = Depends(get_current_user)):
+    """Get the most recent session rating for the user."""
+    doc = await db.session_ratings.find_one({"userId": userId}, sort=[("createdAt", -1)])
+    if not doc:
+        return {"hasRating": False, "rating": None}
+    return {
+        "hasRating": True,
+        "rating": {
+            "id": str(doc["_id"]),
+            "sessionType": doc.get("sessionType"),
+            "week": doc.get("week"),
+            "date": doc.get("date"),
+            "rpe": doc.get("rpe"),
+            "aiInsight": doc.get("aiInsight"),
+            "completionPct": doc.get("completionPct"),
+        },
+    }
+
+
 @api_router.post("/seed")
 async def seed_database():
     existing = await db.profile.find_one({})
@@ -776,44 +1067,95 @@ class CoachConversation(BaseDocument):
 
 # ── POST /api/coach/chat ──────────────────────────────────────────────────────
 @api_router.post("/coach/chat")
-async def coach_chat(request: CoachRequest):
+async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_user)):
     if not _openai_client or not _supabase_client:
         raise HTTPException(status_code=503, detail="Coach service not ready yet")
 
-    profile_doc = await db.profile.find_one({})
+    # ── 1. Athlete profile (userId-scoped) ────────────────────────────────────
+    profile_doc = await db.profile.find_one({"userId": userId})
     profile_text = "Athlete profile not yet set up."
     if profile_doc:
         name = profile_doc.get('name', '') or 'Athlete'
-        exp = profile_doc.get('experience', '') or 'Unknown'
-        bw = profile_doc.get('currentBodyweight', 0)
+        exp  = profile_doc.get('experience', '') or 'Unknown'
+        bw   = profile_doc.get('currentBodyweight', 0)
         bw_str = f"{bw} lbs" if bw and bw > 0 else "Not provided"
-        bw_goal = profile_doc.get('bw12WeekGoal', 0)
-        bw_goal_str = f"{bw_goal} lbs" if bw_goal and bw_goal > 0 else "Not set"
-        injuries = profile_doc.get('injuryFlags', [])
+        injuries  = profile_doc.get('injuryFlags', [])
         weaknesses = profile_doc.get('weaknesses', []) or profile_doc.get('primaryWeaknesses', [])
         avoid = profile_doc.get('avoidMovements', [])
+        goal  = profile_doc.get('goal', 'strength')
+        sleep_hrs = profile_doc.get('sleepHours', 7.0)
         profile_text = (
-            f"Name: {name}\n"
-            f"Experience: {exp}\n"
-            f"Bodyweight: {bw_str}\n"
-            f"Current Week: {profile_doc.get('currentWeek', 1)}\n"
-            f"Injury Flags: {', '.join(injuries) if injuries else 'None'}\n"
+            f"Name: {name} | Experience: {exp} | BW: {bw_str} | Goal: {goal}\n"
+            f"Week: {profile_doc.get('currentWeek', 1)} | Sleep: {sleep_hrs}h avg\n"
+            f"Injuries: {', '.join(injuries) if injuries else 'None'}\n"
             f"Weaknesses: {', '.join(weaknesses) if weaknesses else 'None'}\n"
-            f"Avoid: {', '.join(avoid) if avoid else 'None'}\n"
-            f"12-Week BW Goal: {bw_goal_str}"
+            f"Avoid: {', '.join(avoid) if avoid else 'None'}"
         )
 
-    log_docs = await db.log.find({}).sort("date", -1).limit(5).to_list(5)
+    # ── 2. Recent training log (userId-scoped) ────────────────────────────────
+    log_docs = await db.log.find({"userId": userId}).sort("date", -1).limit(5).to_list(5)
+    if not log_docs:
+        log_docs = await db.log.find({}).sort("date", -1).limit(5).to_list(5)
     recent_log = "No recent sessions logged."
     if log_docs:
-        lines = [f"- {d.get('date')} {d.get('exercise')} {d.get('sets')}x{d.get('reps')} @{d.get('weight')}lbs RPE{d.get('rpe')}" for d in log_docs]
+        lines = [
+            f"- {d.get('date')} | {d.get('sessionType','?')} | {d.get('exercise')} {d.get('sets')}×{d.get('reps')} @{d.get('weight')}lbs RPE{d.get('rpe')}"
+            for d in log_docs
+        ]
         recent_log = "\n".join(lines)
 
+    # ── 3. Training week / block / phase ──────────────────────────────────────
     week = profile_doc.get('currentWeek', 1) if profile_doc else 1
     block = 1 if week <= 4 else 2 if week <= 8 else 3 if week <= 12 else 4 if week <= 20 else 5 if week <= 32 else 6 if week <= 44 else 7
     deload_weeks = [4,8,12,20,24,28,32,36,40,44,48,52]
-    phase = "Deload" if week in deload_weeks else (["Intro","Build","Peak"][(week - max([0]+[d for d in deload_weeks if d < week]) - 1) % 3])
+    phase = "Deload" if week in deload_weeks else (["Intro","Build","Peak"][(week - max([0]+[dw for dw in deload_weeks if dw < week]) - 1) % 3])
 
+    # ── 4. Today's readiness check (if done) ─────────────────────────────────
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    readiness_doc = await db.readiness_checks.find_one({"userId": userId, "date": today_str})
+    readiness_context = ""
+    if readiness_doc:
+        rs = readiness_doc
+        readiness_context = (
+            f"Today's readiness — Sleep: {rs.get('sleepQuality')}/5, "
+            f"Soreness: {rs.get('soreness')}/5, Energy: {rs.get('moodEnergy')}/5 "
+            f"→ Score: {rs.get('totalScore', 0):.1f}/5"
+        )
+        if rs.get('adjustmentApplied'):
+            readiness_context += f"\nAdjustment: {rs.get('adjustmentNote', '')}"
+
+    # ── 5. Recent pain reports (last 14 days, max 5) ──────────────────────────
+    from datetime import timedelta
+    fourteen_days_ago = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+    pain_docs = await db.pain_reports.find({
+        "userId": userId,
+        "date": {"$gte": fourteen_days_ago},
+    }).sort("createdAt", -1).limit(5).to_list(5)
+
+    pain_context = ""
+    if pain_docs:
+        pain_lines = [
+            f"- {d.get('date')}: {d.get('bodyRegion')} ({d.get('painType')}, {d.get('intensity')}/10) during {d.get('exerciseName')}"
+            for d in pain_docs
+        ]
+        pain_context = "Recent pain log:\n" + "\n".join(pain_lines)
+        # Check for flagged patterns
+        region_counts: dict = {}
+        for d in pain_docs:
+            r = d.get("bodyRegion", "")
+            region_counts[r] = region_counts.get(r, 0) + 1
+        flagged = [r for r, c in region_counts.items() if c >= 3]
+        if flagged:
+            pain_context += f"\n⚠ PATTERN: {', '.join(flagged)} reported 3+ times — prioritise rehab/coach review."
+
+    # ── 6. Last 3 session RPE ratings ─────────────────────────────────────────
+    rating_docs = await db.session_ratings.find({"userId": userId}).sort("createdAt", -1).limit(3).to_list(3)
+    rating_context = ""
+    if rating_docs:
+        r_lines = [f"- {d.get('date')}: {d.get('sessionType')} RPE {d.get('rpe')}/10, {d.get('completionPct', 0):.0f}% completion" for d in rating_docs]
+        rating_context = "Recent session ratings:\n" + "\n".join(r_lines)
+
+    # ── 7. RAG: retrieve relevant passages ────────────────────────────────────
     embedding_response = await _openai_client.embeddings.create(
         model='text-embedding-3-small',
         input=request.message,
@@ -824,72 +1166,74 @@ async def coach_chat(request: CoachRequest):
     retrieved_passages = ""
     sources = []
     try:
-        result = _supabase_client.rpc(
+        rag_result = _supabase_client.rpc(
             'match_documents',
-            {
-                'query_embedding': embedding,
-                'match_threshold': 0.3,
-                'match_count': 5
-            }
+            {'query_embedding': embedding, 'match_threshold': 0.3, 'match_count': 4}
         ).execute()
-        if result.data:
+        if rag_result.data:
             passage_lines = []
-            for i, chunk in enumerate(result.data):
-                source = chunk.get('metadata', {}).get('source', 'Unknown Source')
-                content = chunk.get('content', '')
-                passage_lines.append(f"[{i+1}] {source}\n{content}")
+            for i, chunk in enumerate(rag_result.data):
+                source  = chunk.get('metadata', {}).get('source', 'Coaching Library')
+                content = chunk.get('content', '')[:300]  # cap each passage to save tokens
+                passage_lines.append(f"[{i+1}] {content}")
                 sources.append({"title": source, "page": "", "preview": content[:120]})
             retrieved_passages = "\n\n".join(passage_lines)
     except Exception as e:
         logger.warning(f"Supabase query failed: {e}")
-        retrieved_passages = "No reference passages available."
+        retrieved_passages = ""
 
-    system_prompt = f"""You are an expert strength and conditioning coach specializing in powerlifting, strongman, sports nutrition, injury management, and recovery. You are coaching a specific athlete whose full profile is below. Always consider their injuries, weaknesses, and current training phase. Draw from the provided reference passages when relevant. Be specific, practical, and direct — this athlete is advanced. Never recommend anything that conflicts with their injury flags.
+    # ── 8. Build enhanced system prompt (target < 3500 tokens) ───────────────
+    coaching_intelligence = ""
+    if readiness_context:
+        coaching_intelligence += f"\n\nREADINESS:\n{readiness_context}"
+    if pain_context:
+        coaching_intelligence += f"\n\nPAIN HISTORY:\n{pain_context}"
+    if rating_context:
+        coaching_intelligence += f"\n\nSESSION RATINGS:\n{rating_context}"
 
-IMPORTANT RESPONSE FORMATTING RULES:
-- Do NOT include academic-style citations like "[1]", "[2]", or footnote references.
-- Do NOT list sources at the end of your response.
-- If you draw from reference material, weave the information naturally into your response without citing it.
-- Use clean headers (##, ###), bullet points, and bold text for readability.
-- Keep responses focused and actionable.
+    rag_section = f"\n\nCOACHING LIBRARY EXCERPTS:\n{retrieved_passages}" if retrieved_passages else ""
 
-PROGRAM CHANGE DETECTION:
-If your recommendation includes a concrete change to the athlete's training program (e.g., swapping an exercise, changing volume/intensity, modifying a lift), append EXACTLY this block at the very end of your response (after all other content):
-<PROGRAM_CHANGE>{{"type": "exercise_swap", "exercises": [{{"original": "exact current exercise name", "replacement": "exact replacement exercise name", "reason": "short reason"}}], "summary": "one-sentence summary of the change", "details": "full explanation of what and why"}}</PROGRAM_CHANGE>
+    system_prompt = (
+        "You are an expert strength coach specialising in powerlifting, strongman, injury management, and recovery. "
+        "You coach a specific athlete. Always respect their injuries — never recommend anything that conflicts with flagged areas. "
+        "Conflict priority: injury safety > deload > readiness > general coaching.\n\n"
+        "RESPONSE RULES:\n"
+        "- No citation numbers ([1], [2]) or source lists.\n"
+        "- Use clean headers (##), bullets, and bold for readability.\n"
+        "- Be specific, practical, and direct. This is an advanced athlete.\n"
+        "- Keep responses concise — 150–300 words unless a full programme is requested.\n\n"
+        "PROGRAM CHANGE DETECTION:\n"
+        "If recommending a concrete exercise swap or load change, append this EXACTLY at end:\n"
+        "<PROGRAM_CHANGE>"
+        '{"type":"exercise_swap","exercises":[{"original":"exact name","replacement":"exact name","reason":"short"}],'
+        '"summary":"one sentence","details":"explanation"}'
+        "</PROGRAM_CHANGE>\n"
+        "Only include for exercise swaps/load changes. NOT for sleep, nutrition, or general advice.\n\n"
+        f"ATHLETE PROFILE:\n{profile_text}\n\n"
+        f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
+        f"\n\nRECENT SESSIONS:\n{recent_log}"
+        f"{coaching_intelligence}"
+        f"{rag_section}"
+    )
 
-Rules for <PROGRAM_CHANGE>:
-- "original" must be the exact exercise name as it appears in the program (e.g., "Overhead Press", "Floor Press", "Box Squat")
-- "replacement" must be a specific exercise name, not generic advice
-- If recommending multiple exercise swaps, include all of them in the "exercises" array
-- Only include <PROGRAM_CHANGE> for concrete exercise changes or load modifications — NOT for general advice
-- Do NOT include <PROGRAM_CHANGE> for stretching, sleep, or nutrition advice alone
-
-ATHLETE PROFILE:
-{profile_text}
-
-CURRENT TRAINING CONTEXT:
-Week: {week} | Block: {block} | Phase: {phase}
-Recent sessions:
-{recent_log}
-
-REFERENCE PASSAGES FROM COACHING LIBRARY:
-{retrieved_passages}"""
-
+    # ── 9. Build chat with last 5 messages only (token budget) ───────────────
     emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
-    session_id = str(uuid.uuid4())
+    session_id   = str(uuid.uuid4())
     chat = LlmChat(
         api_key=emergent_key,
         session_id=session_id,
         system_message=system_prompt
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
-    for msg in request.conversation_history:
+    # Only send last 5 history messages to save tokens
+    limited_history = request.conversation_history[-5:] if len(request.conversation_history) > 5 else request.conversation_history
+    for msg in limited_history:
         if msg.role == "user":
             await chat.send_message(UserMessage(text=msg.content))
 
     response_text = await chat.send_message(UserMessage(text=request.message))
 
-    # ── Parse <PROGRAM_CHANGE> block ─────────────────────────────────────────
+    # ── 10. Parse <PROGRAM_CHANGE> block ──────────────────────────────────────
     import re as _re, json as _json
     program_change = None
     has_program_change = False
@@ -904,29 +1248,35 @@ REFERENCE PASSAGES FROM COACHING LIBRARY:
             program_change = {"type": "recommendation", "summary": pc_match.group(1).strip(), "details": ""}
         clean_response = response_text[:pc_match.start()].rstrip()
 
-    # ── Persist conversation to MongoDB ──────────────────────────────────────
+    # ── 11. Persist conversation to MongoDB (userId-scoped) ───────────────────
     now = datetime.now(timezone.utc)
     conversation_id = request.conversation_id
     user_msg_doc = {"role": "user", "content": request.message, "timestamp": now.isoformat()}
-    assistant_msg_doc = {"role": "assistant", "content": clean_response, "timestamp": now.isoformat(),
-                         "hasProgramChange": has_program_change, "programChange": program_change}
+    assistant_msg_doc = {
+        "role": "assistant", "content": clean_response, "timestamp": now.isoformat(),
+        "hasProgramChange": has_program_change, "programChange": program_change,
+    }
 
     if conversation_id:
         try:
             conv_oid = ObjectId(conversation_id)
             await db.conversations.update_one(
-                {"_id": conv_oid},
+                {"_id": conv_oid, "userId": userId},
                 {"$push": {"messages": {"$each": [user_msg_doc, assistant_msg_doc]}},
                  "$set": {"updatedAt": now, "hasProgramChange": has_program_change}}
             )
         except Exception:
-            # Invalid ObjectId — create new conversation instead
             conversation_id = None
 
     if not conversation_id:
         title = request.message[:60] + ("..." if len(request.message) > 60 else "")
-        conv_doc = {"userId": "default", "title": title, "messages": [user_msg_doc, assistant_msg_doc],
-                    "hasProgramChange": has_program_change, "createdAt": now, "updatedAt": now}
+        conv_doc = {
+            "userId": userId,
+            "title": title,
+            "messages": [user_msg_doc, assistant_msg_doc],
+            "hasProgramChange": has_program_change,
+            "createdAt": now, "updatedAt": now,
+        }
         ins = await db.conversations.insert_one(conv_doc)
         conversation_id = str(ins.inserted_id)
 
@@ -942,9 +1292,9 @@ REFERENCE PASSAGES FROM COACHING LIBRARY:
 # ── Conversation Endpoints ────────────────────────────────────────────────────
 
 @api_router.get("/coach/conversations")
-async def get_conversations():
-    """Get all conversations for the default user, newest first."""
-    docs = await db.conversations.find({"userId": "default"}).sort("updatedAt", -1).limit(50).to_list(50)
+async def get_conversations(userId: str = Depends(get_current_user)):
+    """Get all conversations for the current user, newest first."""
+    docs = await db.conversations.find({"userId": userId}).sort("updatedAt", -1).limit(50).to_list(50)
     result = []
     for d in docs:
         cu = d.get("createdAt", "")

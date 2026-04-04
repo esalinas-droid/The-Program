@@ -169,3 +169,44 @@ export const planApi = {
   applyInjuryUpdate: (newInjuryFlags: string[]): Promise<{ success: boolean; message: string; added: string[]; removed: string[] }> =>
     api('/plan/apply-injury-update', { method: 'POST', body: JSON.stringify({ newInjuryFlags }) }),
 };
+
+// Pain Reports
+export const painReportApi = {
+  create: (data: {
+    exerciseName: string;
+    bodyRegion: string;
+    painType: string;
+    intensity: number;
+    timing: string;
+    sessionType?: string;
+    notes?: string;
+  }) => api('/pain-report', { method: 'POST', body: JSON.stringify(data) }),
+  getRecent: (days?: number) => api(`/pain-report${days ? `?days=${days}` : ''}`),
+};
+
+// Readiness Checks
+export const readinessApi = {
+  submit: (data: { sleepQuality: number; soreness: number; moodEnergy: number }) =>
+    api('/readiness', { method: 'POST', body: JSON.stringify(data) }),
+  getToday: (): Promise<{
+    hasCheckedIn: boolean;
+    readiness: {
+      sleepQuality: number; soreness: number; moodEnergy: number;
+      totalScore: number; adjustmentApplied: boolean; adjustmentNote: string;
+    } | null;
+  }> => api('/readiness/today'),
+};
+
+// Session Ratings
+export const sessionRatingApi = {
+  submit: (data: {
+    sessionType: string;
+    week: number;
+    rpe: number;
+    notes?: string;
+    setsLogged?: number;
+    totalSets?: number;
+  }): Promise<{ id: string; aiInsight: string; rpe: number; completionPct: number }> =>
+    api('/session-rating', { method: 'POST', body: JSON.stringify(data) }),
+  getLatest: () => api('/session-rating/latest'),
+};

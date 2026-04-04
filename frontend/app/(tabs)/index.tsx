@@ -7,7 +7,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { logApi, prApi, programApi } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -101,6 +101,10 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // ── Priority card state ──────────────────────────────────────────────────────
+  const [flaggedRegions, setFlaggedRegions] = useState<string[]>([]);
+  const [hasReadinessToday, setHasReadinessToday] = useState<boolean | null>(null);
+
   const loadData = useCallback(async () => {
     const prof = await getProfile();
     if (!prof) { setLoading(false); return; }
@@ -122,6 +126,17 @@ export default function Dashboard() {
       setWeekStats(stats);
       setBests(bestsData);
     } catch {}
+
+    // ── Fetch priority card data ─────────────────────────────────────────────
+    try {
+      const [painData, readinessData] = await Promise.all([
+        painReportApi.getRecent(7),
+        readinessApi.getToday(),
+      ]);
+      setFlaggedRegions((painData as any)?.flaggedRegions || []);
+      setHasReadinessToday((readinessData as any)?.hasCheckedIn ?? false);
+    } catch { /* Priority data not critical */ }
+
     setLoading(false);
   }, []);
 
@@ -190,6 +205,61 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
+        {/* ── PRIORITY CARD STACK ── */}
+
+        {/* P1: Pain Alert (shown when flagged regions detected) */}
+        {flaggedRegions.length > 0 && (
+          <View style={s.priorityCard} testID="pain-alert-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: '#EF535025' }]}>
+                <MaterialCommunityIcons name="alert-circle" size={14} color='#EF5350' />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: '#EF5350' }]}>PAIN PATTERN DETECTED</Text>
+                <Text style={s.priorityCardSub}>Flagged area: {flaggedRegions.join(', ')}</Text>
+              </View>
+            </View>
+            <Text style={s.priorityCardBody}>
+              {flaggedRegions[0]} has been reported 3+ times in the last 7 days.
+              This needs coach attention before your next heavy session.
+            </Text>
+            <TouchableOpacity
+              style={[s.priorityBtn, { backgroundColor: '#EF535015', borderColor: '#EF535040', borderWidth: 1 }]}
+              onPress={() => router.push('/(tabs)/today')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="arrow-right" size={13} color='#EF5350' />
+              <Text style={[s.priorityBtnText, { color: '#EF5350' }]}>Go to Today's Session</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* P2: Readiness Check nudge (if not done today & not rest day) */}
+        {!hasReadinessToday && hasReadinessToday !== null && !isRestDay && (
+          <View style={s.priorityCard} testID="readiness-nudge-card">
+            <View style={s.priorityCardHeader}>
+              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accent + '25' }]}>
+                <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.priorityCardTitle, { color: COLORS.accent }]}>PRE-SESSION CHECK-IN</Text>
+                <Text style={s.priorityCardSub}>How are you feeling today?</Text>
+              </View>
+            </View>
+            <Text style={s.priorityCardBody}>
+              Your daily readiness check helps your coach adjust today's loads. Takes 20 seconds.
+            </Text>
+            <TouchableOpacity
+              style={[s.priorityBtn, { backgroundColor: COLORS.accent + '15', borderColor: COLORS.accent + '40', borderWidth: 1 }]}
+              onPress={() => router.push('/(tabs)/today')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="flag-checkered" size={13} color={COLORS.accent} />
+              <Text style={[s.priorityBtnText, { color: COLORS.accent }]}>Start Today's Session</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── COACH'S DIRECTIVE (gold border card) ── */}
         <View style={s.coachCard}>
           <View style={s.coachCardHeader}>
@@ -212,7 +282,7 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* ── TODAY'S SESSION CTA ── */}
+        {/* P3: TODAY'S SESSION CTA ── */}
         {!isRestDay && displaySession ? (
           <View style={s.sessionCtaCard}>
             <View style={s.sessionCtaTop}>
@@ -262,6 +332,25 @@ export default function Dashboard() {
             <Text style={s.coachNoteText}>{programSession.session.coachNote}</Text>
           </View>
         )}
+
+        {/* P4: Weekly Review Placeholder Card */}
+        <View style={s.weeklyReviewCard} testID="weekly-review-card">
+          <View style={s.priorityCardHeader}>
+            <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
+              <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEKLY REVIEW</Text>
+              <Text style={s.priorityCardSub}>AI-powered weekly analysis</Text>
+            </View>
+            <View style={s.comingSoonPill}>
+              <Text style={s.comingSoonText}>COMING SOON</Text>
+            </View>
+          </View>
+          <Text style={s.priorityCardBody}>
+            Your weekly training summary — volume load trends, fatigue signals, and coach recommendations — is being built.
+          </Text>
+        </View>
 
         {/* Week Stats */}
         <Text style={s.sectionTitle}>THIS WEEK</Text>
@@ -543,4 +632,19 @@ const s = StyleSheet.create({
   quickActionAccent:     { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
   quickActionLabel:      { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary, textAlign: 'center' },
   quickActionLabelAccent:{ color: COLORS.primary },
+
+  // Priority cards
+  priorityCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  priorityCardHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  priorityIconBadge:  { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  priorityCardTitle:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1.5 },
+  priorityCardSub:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+  priorityCardBody:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20, marginBottom: SPACING.md },
+  priorityBtn:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: 9, paddingHorizontal: SPACING.md, borderRadius: RADIUS.md, alignSelf: 'flex-start' },
+  priorityBtnText:    { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy },
+
+  // Weekly Review Placeholder
+  weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, opacity: 0.85 },
+  comingSoonPill:     { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  comingSoonText:     { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
 });

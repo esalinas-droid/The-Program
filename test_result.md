@@ -640,3 +640,38 @@ agent_communication:
         - Updated POST /api/coach/chat (persists, returns conversation_id + program_change)
       
       Please test all backend endpoints especially the new coach conversation endpoints.
+
+
+  - agent: "main"
+    message: >
+      Phase 2 Batch 1 fully implemented. All new backend endpoints added to server.py.
+      
+      NEW BACKEND ENDPOINTS:
+      - POST /api/pain-report (create pain report, pattern detection after 3rd same-region in 7 days)
+      - GET /api/pain-report (get recent reports, flaggedRegions list)
+      - POST /api/readiness (sleepQuality/soreness/moodEnergy 1-5, returns adjustmentNote)
+      - GET /api/readiness/today (check if user has checked in today)
+      - POST /api/session-rating (rpe, sessionType, week, setsLogged, totalSets → AI insight)
+      - GET /api/session-rating/latest (most recent rating)
+      
+      FIXED: coach_chat now scoped by userId (was using find_one({}) without filter).
+      FIXED: conversations now save with actual userId (not hardcoded 'default').
+      FIXED: conversation fetch in GET /api/coach/conversations now filters by actual userId.
+      
+      ENHANCED: Coach system prompt now includes:
+      - Today's readiness context (score + adjustment note if applied)
+      - Recent pain log (last 14 days, last 5 entries, with pattern flags)
+      - Last 3 session RPE ratings
+      - History limited to last 5 messages (token budget)
+      
+      NEW FRONTEND FEATURES:
+      - ReadinessModal: auto-shows on Today tab first focus of the day, 3×5-dot pickers
+      - PainReportModal: 3-step flow (body region → pain type → intensity/timing) triggered from ExerciseCard "Report Pain" button
+      - RPE Rating Card on review.tsx: bubble selectors (1-10), submits to session-rating API, shows AI insight with fade animation
+      - "Report Pain" link on review.tsx CTA bar
+      - Home Tab: P1 Pain Alert card (red), P2 Readiness Nudge card (gold), P4 Weekly Review placeholder (blue COMING SOON)
+      
+      Please test all backend endpoints using credentials in /app/memory/test_credentials.md.
+      Test sequence: pain-report → readiness → session-rating → coach/chat.
+      DO NOT test frontend yet.
+
