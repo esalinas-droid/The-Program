@@ -1,0 +1,34 @@
+{
+  "summary": "Final comprehensive test of all 14 bug fixes from codebase audit. 16/16 tests pass (100%). BUG 2 (auth onboarding / DEFAULT_USER), BUG 5+6+14 (goal-specific exercise filtering), BUG 8 (settings save / apply-injury-update), and all regression endpoints confirmed working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_final_audit_14bugs.py",
+    "/app/test_reports/pytest/final_audit_14bugs_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "NOTE: IntakeRequest schema uses 'goal', 'experience', 'injuries', 'gym' (not 'trainingGoal', 'experienceLevel', 'injuryFlags', 'equipment'). Frontend must ensure it sends the correct field names or 422 errors will silently block profile creation.",
+    "NOTE: GET /api/profile response does NOT include a 'userId' field — user isolation is enforced via JWT at the DB query level (correct), but if any endpoint ever needs to return userId it must be explicitly added to the response schema."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_final_audit_14bugs.py"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16)",
+    "frontend": "N/A (not tested)"
+  },
+  "seed_data_creation": "Registered fresh_user_c@test.com / TestC123 as new user. Called POST /api/profile/intake to create their profile. Called POST /api/plan/apply-injury-update to set Lower Back injury.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 14 bug fixes confirmed working. Key schema: IntakeRequest fields are goal/experience/injuries/gym (not trainingGoal/experienceLevel/injuryFlags/equipment). apply-injury-update key is 'newInjuryFlags'. BUG 2 fix (upsert=True) confirmed: new user profile.userId is NOT 'user_001'. BUG 5+6+14: knee injury does not produce Box Squat; shoulder injury does not produce Floor Press. BUG 8: apply-injury-update returns 200 after intake. All regression endpoints (weekly-review, deload/check, rehab/status, competition/status, rotation/check, warmup/today, coach/change-log, plan/session/today) return 200.",
+  "rca_of_issue": "N/A — all bugs confirmed fixed. Test failures were test script issues (wrong field names in request payload: used trainingGoal/injuryFlags/experienceLevel/equipment instead of goal/injuries/experience/gym per IntakeRequest schema)."
+}
