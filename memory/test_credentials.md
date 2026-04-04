@@ -3,8 +3,11 @@
 ## Auth Users (db.users — email/password auth)
 | User | Email | Password | Notes |
 |------|-------|----------|-------|
-| User A (test) | user_a@theprogram.app | StrongmanA123 | Registered, onboarding NOT complete |
-| User B (test) | user_b@theprogram.app | HypertrophyB123 | Registered, onboarding NOT complete |
+| User A (test) | user_a@theprogram.app | StrongmanA123 | Strongman advanced, SI Joint injury |
+| User B (test) | user_b@theprogram.app | HypertrophyB123 | Hypertrophy intermediate |
+| Strongman test | test_strongman@test.com | TestPass123 | Shoulder injury, has log/axle/yoke |
+| Hypertrophy test | test_hypertrophy@test.com | TestPass123 | Beginner, knee injury, commercial gym |
+| Fresh user C | fresh_user_c@test.com | TestC123 | Fresh user for isolation testing |
 
 ## Default Backwards-Compatible User
 - userId: user_001 (DEFAULT_USER)
