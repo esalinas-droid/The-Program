@@ -1957,11 +1957,13 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
     )
 
     user_id = userId
+    logger.info(f"[INTAKE] Goal received from frontend: '{intake.goal}' | Experience: '{intake.experience}' | UserId: {user_id}")
 
     # Build in-memory profile
     try:
         goal_enum = GoalType(intake.goal)
     except ValueError:
+        logger.warning(f"[INTAKE] GoalType('{intake.goal}') failed — falling back to STRENGTH")
         goal_enum = GoalType.STRENGTH
     try:
         exp_enum = ExperienceLevel(intake.experience)
