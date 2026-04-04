@@ -399,7 +399,7 @@ const s = StyleSheet.create({
   appleCustomBtn: {
     width: '100%', height: 50,
     backgroundColor: '#000000',
-    borderRadius: RADIUS.md,
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
