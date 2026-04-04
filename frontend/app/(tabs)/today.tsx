@@ -209,6 +209,7 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
       category: (ex.category === 'main'
         ? (isDynamic ? 'dynamiceffort' : 'maxeffort')
         : ex.category === 'supplemental' ? 'supplemental'
+        : ex.category === 'prehab' ? 'prehab'
         : 'accessory') as ExCategory,
       prescription: ex.prescription || '',
       lastSession: ex.lastPerformance || ex.recentBest || '—',
@@ -847,45 +848,6 @@ export default function TodayScreen() {
           </View>
           <Text style={s.coachText}>{coachNote}</Text>
         </View>
-
-        {/* ── AI PROGRAM — EXERCISE TARGETS (appears once annual plan exists) ── */}
-        {apiSession && (
-          <View style={s.aiPanel}>
-            <View style={s.aiPanelHeader}>
-              <MaterialCommunityIcons name="brain" size={13} color={COLORS.accentBlue} />
-              <Text style={s.aiPanelTitle}>AI PROGRAM — EXERCISE TARGETS</Text>
-              <View style={s.aiPanelBadge}>
-                <Text style={s.aiPanelBadgeText}>{apiSession.session.sessionType}</Text>
-              </View>
-            </View>
-            {apiSession.session.coachNote ? (
-              <Text style={s.aiCoachNote}>{apiSession.session.coachNote}</Text>
-            ) : null}
-            {apiSession.session.exercises.map((ex, i) => (
-              <View key={i} style={[s.aiExRow, i < apiSession.session.exercises.length - 1 && s.aiExRowBorder]}>
-                <View style={s.aiExTop}>
-                  <Text style={s.aiExName}>{ex.name}</Text>
-                  <Text style={s.aiExPrescription}>{ex.prescription}</Text>
-                </View>
-                <Text style={s.aiExCategory}>{ex.category.toUpperCase()}</Text>
-                {ex.targetSets.length > 0 && (
-                  <View style={s.aiSetBadges}>
-                    {ex.targetSets.slice(0, 6).map((set, j) => (
-                      <View key={j} style={[s.aiSetBadge, (set as any).setType === 'work' && s.aiSetBadgeWork]}>
-                        <Text style={[s.aiSetBadgeText, (set as any).setType === 'work' && s.aiSetBadgeWorkText]}>
-                          {(set as any).targetLoad || '—'} × {(set as any).targetReps ?? (set as any).reps ?? '—'}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-                {ex.cues.length > 0 && (
-                  <Text style={s.aiExCues}>{ex.cues.slice(0, 2).join(' · ')}</Text>
-                )}
-              </View>
-            ))}
-          </View>
-        )}
 
         {/* ── WARM-UP SECTION ── */}
         <TouchableOpacity

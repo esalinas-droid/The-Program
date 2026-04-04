@@ -18,6 +18,7 @@ from models.schemas import (
     ChangeScope, ChangeTrigger, SessionStatus, PhaseStatus
 )
 from services.plan_generator import generate_plan, get_alternatives
+from database import db
 
 
 program_router = APIRouter(prefix="/api")
@@ -68,6 +69,14 @@ async def submit_intake(intake: IntakeRequest):
     plan = generate_plan(intake)
     plan.userId = user_id
     _store["plans"][user_id] = plan
+
+    # Persist plan to MongoDB so it survives server restarts
+    try:
+        plan_dict = plan.model_dump(mode='json')
+        plan_dict['_saved_at'] = datetime.utcnow().isoformat()
+        await db.saved_plans.replace_one({"userId": user_id}, plan_dict, upsert=True)
+    except Exception:
+        pass  # Non-critical — plan is in memory
 
     # Create initial coach memory facts from intake
     facts = []

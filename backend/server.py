@@ -601,6 +601,9 @@ async def load_models():
         os.environ.get('SUPABASE_KEY', '')
     )
     logger.info("Supabase client initialized.")
+    # Pre-load plan from MongoDB into memory so all plan endpoints work immediately
+    await _ensure_plan_loaded()
+    logger.info("Startup complete — plan preloaded.")
 
 # ── Coach Models ──────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
@@ -840,11 +843,42 @@ async def delete_conversation(conversation_id: str):
     return {"deleted": True}
 
 
+async def _save_plan_to_db(plan) -> None:
+    """Persist the current in-memory plan to MongoDB so it survives server restarts."""
+    try:
+        from models.schemas import AnnualPlan as _AnnualPlan  # local import to avoid circular
+        plan_dict = plan.model_dump(mode='json')
+        plan_dict['_saved_at'] = datetime.utcnow().isoformat()
+        await db.saved_plans.replace_one(
+            {"userId": plan.userId},
+            plan_dict,
+            upsert=True,
+        )
+        logger.info(f"Plan persisted to MongoDB saved_plans for user: {plan.userId}")
+    except Exception as e:
+        logger.warning(f"Failed to persist plan to MongoDB: {e}")
+
+
 async def _ensure_plan_loaded() -> bool:
-    """Reload plan into _prog_store from MongoDB profile if not present after a server restart."""
+    """Load plan from MongoDB (saved_plans first, then regenerate) if not in memory."""
     if _prog_store["plans"].get(_PROG_USER):
         return True
 
+    # ── 1. Try loading the previously saved/modified plan from MongoDB ─────────
+    try:
+        from models.schemas import AnnualPlan as _AnnualPlan
+        saved = await db.saved_plans.find_one({"userId": _PROG_USER})
+        if saved:
+            saved.pop("_id", None)
+            saved.pop("_saved_at", None)
+            plan = _AnnualPlan.model_validate(saved)
+            _prog_store["plans"][_PROG_USER] = plan
+            logger.info(f"Plan loaded from MongoDB saved_plans: {plan.planName}")
+            return True
+    except Exception as e:
+        logger.warning(f"Could not load saved plan from MongoDB: {e}")
+
+    # ── 2. Fall back: regenerate from profile data ─────────────────────────────
     profile_doc = await db.profile.find_one({})
     if not profile_doc:
         return False
@@ -873,7 +907,9 @@ async def _ensure_plan_loaded() -> bool:
         plan = _generate_plan(intake)
         plan.userId = _PROG_USER
         _prog_store["plans"][_PROG_USER] = plan
-        logger.info(f"Plan reloaded into memory from MongoDB profile: {plan.planName}")
+        # Immediately persist so future restarts don't have to regenerate
+        await _save_plan_to_db(plan)
+        logger.info(f"Plan regenerated and saved for user: {plan.planName}")
         return True
     except Exception as e:
         logger.warning(f"Plan regeneration failed: {e}")
@@ -1214,6 +1250,10 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
 
     msg = f"Applied to {scope}: {', '.join(parts)} updated." if parts else "Logged to your program changelog."
 
+    # ── Persist the updated plan so changes survive server restarts ───────────
+    if plan and total_swapped > 0:
+        await _save_plan_to_db(plan)
+
     return {
         "success": True, "message": msg,
         "exercises_swapped": total_swapped,
@@ -1221,8 +1261,8 @@ async def apply_recommendation(body: ApplyRecommendationRequest):
         "changes": all_changes,
     }
 
-# ── Analytics Endpoints ───────────────────────────────────────────────────────
 
+# ── Analytics Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/analytics/overview")
 async def get_analytics_overview():
     all_logs = await db.log.find({}).to_list(5000)
