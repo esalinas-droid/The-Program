@@ -742,9 +742,10 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)
                 sessions = []
                 for stype, cal_day in day_map:
+                    # ⚑ CRITICAL FIX: pass lowercase goal so all if/elif comparisons match
                     session = _build_session(
                         stype, intake.lifts, intake.liftUnit, current_week, cal_day, block_id,
-                        goal=intake.goal,
+                        goal=goal.value.lower(),          # "strongman", "hypertrophy", "powerlifting", etc.
                         injuries=intake.injuries,
                         equipment=(intake.specialtyEquipment or []) + (intake.gym or []),
                     )
