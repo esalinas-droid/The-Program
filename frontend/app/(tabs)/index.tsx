@@ -355,8 +355,17 @@ export default function Dashboard() {
               })()}
               <Text style={s.sessionCtaDayLabel}>{todayName}</Text>
             </View>
-            <Text style={s.sessionCtaLift}>{displaySession.mainLift}</Text>
-            <Text style={s.sessionCtaScheme}>{displaySession.topSetScheme}</Text>
+            {/* Main lift from API session (exercises[0]) or local fallback */}
+            <Text style={s.sessionCtaLift}>
+              {programSession?.session?.exercises?.[0]?.name
+                ?? displaySession.mainLift
+                ?? 'Today\'s Session'}
+            </Text>
+            <Text style={s.sessionCtaScheme}>
+              {programSession?.session?.exercises?.[0]?.prescription
+                ?? displaySession.topSetScheme
+                ?? ''}
+            </Text>
             <TouchableOpacity
               testID="today-session-card"
               style={s.startBtn}

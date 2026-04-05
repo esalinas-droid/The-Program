@@ -7,7 +7,7 @@ import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { prApi, bwApi, analyticsApi, profileApi } from '../../src/utils/api';
+import { prApi, bwApi, analyticsApi, profileApi, programApi } from '../../src/utils/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TEAL  = '#4DCEA6';
@@ -22,7 +22,7 @@ const PRIMARY_LIFTS = [
 ];
 
 const DELOAD_WEEKS = [4, 8, 12, 20, 24, 28, 32, 36, 40, 44, 48, 52];
-const SECTION_COUNT = 9;
+const SECTION_COUNT = 10; // Added 52-week program section
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(date: string): string {
@@ -294,6 +294,7 @@ export default function TrackScreen() {
   const [painData,    setPainData]    = useState<any>(null);
   const [compliance,  setCompliance]  = useState<any[]>([]);
   const [profile,     setProfile]     = useState<any>(null);
+  const [yearPlan,    setYearPlan]    = useState<any>(null);
   const [loading,     setLoading]     = useState(true);
 
   // Stagger animations
@@ -337,6 +338,9 @@ export default function TrackScreen() {
       setVolumeData(vol);
       setPainData(pain);
       setCompliance(comp);
+
+      // Year plan — silently ignored if not yet generated
+      programApi.getYearPlan().then(p => setYearPlan(p)).catch(() => {});
     } catch (e) {
       console.warn('[TrackScreen] loadAll error:', e);
     } finally {
@@ -672,6 +676,75 @@ export default function TrackScreen() {
           </View>
         </Animated.View>
 
+        {/* ── SECTION 10: 52-WEEK PROGRAM OVERVIEW ── */}
+        {yearPlan?.phases && yearPlan.phases.length > 0 && (
+          <Animated.View style={[s.section, s.lastSection, fade(9)]}>
+            <View style={s.sectionHeaderRow}>
+              <MaterialCommunityIcons name="map-marker-path" size={17} color={COLORS.accent} />
+              <Text style={s.sectionTitle}>52-WEEK PROGRAM</Text>
+              <View style={s.planNameBadge}>
+                <Text style={s.planNameBadgeTxt} numberOfLines={1}>
+                  {yearPlan.planName || 'Your Plan'}
+                </Text>
+              </View>
+            </View>
+
+            {yearPlan.phases.map((phase: any, idx: number) => {
+              const hasDeload = (phase.blocks || []).some((b: any) =>
+                (b.weeks || []).some((w: any) => w.isDeload)
+              );
+              const hasTesting = (phase.blocks || []).some((b: any) =>
+                (b.weeks || []).some((w: any) => w.isTest)
+              );
+              const keyEx: string[] = [];
+              for (const b of (phase.blocks || [])) {
+                for (const ex of (b.keyExercises || [])) {
+                  if (!keyEx.includes(ex) && keyEx.length < 3) keyEx.push(ex);
+                }
+              }
+              return (
+                <View key={phase.phaseId || idx} style={[s.yearPhaseRow, idx > 0 && s.yearPhaseRowBorder]}>
+                  <View style={s.yearPhaseLeft}>
+                    <View style={s.yearPhaseNumCircle}>
+                      <Text style={s.yearPhaseNum}>{phase.phaseNumber || idx + 1}</Text>
+                    </View>
+                  </View>
+                  <View style={s.yearPhaseBody}>
+                    <View style={s.yearPhaseTopRow}>
+                      <Text style={s.yearPhaseName}>{phase.phaseName}</Text>
+                      <Text style={s.yearPhaseWeeks}>W{phase.startWeek}–{phase.endWeek}</Text>
+                    </View>
+                    {phase.goal ? (
+                      <Text style={s.yearPhaseGoal} numberOfLines={2}>{phase.goal}</Text>
+                    ) : null}
+                    {keyEx.length > 0 && (
+                      <View style={s.yearPhaseTagsRow}>
+                        {keyEx.map((ex: string) => (
+                          <View key={ex} style={s.yearPhaseTag}>
+                            <Text style={s.yearPhaseTagTxt}>{ex}</Text>
+                          </View>
+                        ))}
+                        {hasDeload && (
+                          <View style={[s.yearPhaseTag, s.yearPhaseTagDeload]}>
+                            <MaterialCommunityIcons name="weather-night" size={10} color="#6AACFF" />
+                            <Text style={[s.yearPhaseTagTxt, { color: '#6AACFF' }]}>Deload</Text>
+                          </View>
+                        )}
+                        {hasTesting && (
+                          <View style={[s.yearPhaseTag, s.yearPhaseTagTest]}>
+                            <MaterialCommunityIcons name="target" size={10} color="#E8C96A" />
+                            <Text style={[s.yearPhaseTagTxt, { color: '#E8C96A' }]}>Test</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </Animated.View>
+        )}
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -764,4 +837,27 @@ const s = StyleSheet.create({
   blkBarLabel: { fontSize: 10, color: COLORS.text.muted },
   milestone:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, backgroundColor: COLORS.accent + '14', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.accent + '40', marginTop: SPACING.md },
   milestoneTxt:{ fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+
+  // Section header
+  sectionHeaderRow:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
+  sectionTitle:    { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, flex: 1 },
+  planNameBadge:   { backgroundColor: COLORS.accent + '18', borderWidth: 1, borderColor: COLORS.accent + '30', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3, maxWidth: 160 },
+  planNameBadgeTxt:{ fontSize: 10, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+
+  // Year phase rows
+  yearPhaseRow:       { flexDirection: 'row', gap: SPACING.md, paddingVertical: SPACING.md },
+  yearPhaseRowBorder: { borderTopWidth: 1, borderTopColor: COLORS.border },
+  yearPhaseLeft:      { alignItems: 'center', width: 26 },
+  yearPhaseNumCircle: { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.surfaceHighlight, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  yearPhaseNum:       { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary },
+  yearPhaseBody:      { flex: 1, gap: 4 },
+  yearPhaseTopRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  yearPhaseName:      { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary, flex: 1, paddingRight: SPACING.sm },
+  yearPhaseWeeks:     { fontSize: 11, color: COLORS.text.muted, fontWeight: FONTS.weights.bold },
+  yearPhaseGoal:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 17 },
+  yearPhaseTagsRow:   { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 4 },
+  yearPhaseTag:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm, paddingHorizontal: 7, paddingVertical: 3 },
+  yearPhaseTagDeload: { borderColor: '#6AACFF30', backgroundColor: '#6AACFF10' },
+  yearPhaseTagTest:   { borderColor: '#E8C96A30', backgroundColor: '#E8C96A10' },
+  yearPhaseTagTxt:    { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.medium },
 });

@@ -833,26 +833,27 @@ agent_communication:
 
   - agent: "main"
     message: >
-      3 CRITICAL BUGS + 4 ADDITIONAL ISSUES fixed. Run backend tests ONLY:
+      IMPLEMENTED: Dynamic Plan Data for Roadmap, Track, and Home screens.
       
-      1. POST /api/profile/reset — should return {"success": true, "message": "Profile reset complete"}
+      Backend changes:
+      1. Added GET /api/plan/year to api_router in server.py — MongoDB-backed with _ensure_plan_loaded
+      2. Added GET /api/plan/block/current to api_router — MongoDB-backed
+      3. Added GET /api/plan/session/today to api_router — MongoDB-backed with full session lookup
       
-      2. POST /api/profile/intake {"goal":"Strongman","experience":"Intermediate","lifts":{},"frequency":4}
-         — MUST return planName containing "Strongman", NOT "General Strength"
-         — Check backend stdout for: [INTAKE] GOAL FROM FRONTEND: 'Strongman'
-         — Check backend stdout for: [PLANGEN] intake.goal='Strongman' -> GoalType=... -> planName=The Program — Strongman
-         — Check backend stdout for: [INTAKE] Plan saved: 'The Program — Strongman...'
+      Frontend changes:
+      1. roadmap.tsx — Removed hardcoded PHASE_BLOCKS (7-phase "Eric's plan"), now fetches GET /api/plan/year
+         and maps Phase objects → PhaseBlock via mapApiPhaseToBlock(). Shows no-plan empty state if missing.
+      2. index.tsx — Updated sessionCtaLift/sessionCtaScheme to show programSession.session.exercises[0].name/prescription
+         (from the new MongoDB-backed session endpoint), falling back to local programData.ts only when API fails.
+      3. track.tsx — Added yearPlan state + programApi.getYearPlan() fetch in loadAll(); 
+         Added Section 10 "52-WEEK PROGRAM" at bottom showing all phases with name, week range, goal, key exercises.
+         SECTION_COUNT increased from 9 to 10.
       
-      3. POST /api/profile/reset (again)
-         — Then POST /api/profile/intake {"goal":"Hypertrophy","experience":"Intermediate","lifts":{},"frequency":4}
-         — MUST return planName containing "Hypertrophy"
+      Please test:
+      1. GET /api/plan/year — should return planName, totalWeeks, phases array (not 404 after restart)
+      2. GET /api/plan/session/today — should return exercises array with name/category/prescription
+      3. GET /api/plan/block/current — should return phase+block data
       
-      4. POST /api/profile/intake {"goal":"General Fitness","experience":"Beginner","lifts":{},"frequency":3}
-         — MUST return planName containing "General Strength"
-      
-      5. GET /api/coach/change-log — should return {"changes": []} with no error
-      
-      CREDENTIALS: user_a@theprogram.app / StrongmanA123
-      Steps: POST /api/auth/login → get token → use for all requests above.
-      CRITICAL: Verify the [INTAKE] and [PLANGEN] print statements appear in backend stdout logs.
+      Credentials: user_a@theprogram.app / StrongmanA123
+
 

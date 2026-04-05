@@ -295,6 +295,91 @@ _EXERCISE_CONTRAINDICATIONS = [
     {"name": "Keg Toss",                   "contra": ["shoulder_severe", "low_back_severe"],                "cat": "Strongman"},
 ]
 
+@api_router.get("/plan/year")
+async def get_year_plan_mongo(userId: str = Depends(get_current_user)):
+    """Get full annual plan — auto-loads from MongoDB if not in memory after restart."""
+    await _ensure_plan_loaded(userId)
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found. Complete onboarding first.")
+    return plan.model_dump()
+
+
+@api_router.get("/plan/block/current")
+async def get_current_block_mongo(userId: str = Depends(get_current_user)):
+    """Get current active block — auto-loads from MongoDB if not in memory."""
+    from models.schemas import PhaseStatus as _PhaseStatus
+    await _ensure_plan_loaded(userId)
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found.")
+    for phase in plan.phases:
+        if phase.status == _PhaseStatus.CURRENT:
+            for block in phase.blocks:
+                if block.status == _PhaseStatus.CURRENT:
+                    return {
+                        "phase": {"name": phase.phaseName, "number": phase.phaseNumber,
+                                  "goal": phase.goal, "adaptation": phase.expectedAdaptation},
+                        "block": block.model_dump(),
+                    }
+    if plan.phases and plan.phases[0].blocks:
+        phase = plan.phases[0]
+        block = phase.blocks[0]
+        return {
+            "phase": {"name": phase.phaseName, "number": phase.phaseNumber,
+                      "goal": phase.goal, "adaptation": phase.expectedAdaptation},
+            "block": block.model_dump(),
+        }
+    raise HTTPException(status_code=404, detail="No active block found.")
+
+
+@api_router.get("/plan/session/today")
+async def get_today_session_mongo(userId: str = Depends(get_current_user)):
+    """Get today's session — auto-loads plan from MongoDB if not in memory."""
+    from models.schemas import PhaseStatus as _PhaseStatus, SessionStatus as _SessionStatus
+    await _ensure_plan_loaded(userId)
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found.")
+
+    today_day = datetime.now().weekday() + 1  # 1=Mon … 7=Sun
+    TRAINING_CALENDAR = {
+        1: "Max Effort Lower", 2: "Max Effort Upper",
+        4: "Dynamic Effort Lower", 5: "Dynamic Effort Upper",
+    }
+    for phase in plan.phases:
+        if phase.status == _PhaseStatus.CURRENT:
+            for block in phase.blocks:
+                if block.status == _PhaseStatus.CURRENT:
+                    for week in block.weeks:
+                        for session in week.sessions:
+                            if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                return {"phase": phase.phaseName, "block": block.blockName,
+                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                        expected_type = TRAINING_CALENDAR.get(today_day)
+                        if expected_type:
+                            for session in week.sessions:
+                                if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                    return {"phase": phase.phaseName, "block": block.blockName,
+                                            "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                        for session in week.sessions:
+                            if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                return {"phase": phase.phaseName, "block": block.blockName,
+                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                        for session in week.sessions:
+                            if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                return {"phase": phase.phaseName, "block": block.blockName,
+                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+    if plan.phases and plan.phases[0].blocks and plan.phases[0].blocks[0].weeks:
+        phase = plan.phases[0]
+        block = phase.blocks[0]
+        week = block.weeks[0]
+        if week.sessions:
+            return {"phase": phase.phaseName, "block": block.blockName,
+                    "week": f"Week {week.weekNumber}", "session": week.sessions[0].model_dump()}
+    raise HTTPException(status_code=404, detail="No session found for today.")
+
+
 @api_router.post("/plan/injury-preview")
 async def injury_preview(body: dict, userId: str = Depends(get_current_user)):
     """Preview how changing injury flags would affect the training program."""

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, ActivityIndicator, Animated,
@@ -7,6 +7,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile } from '../src/utils/storage';
+import { programApi } from '../src/utils/api';
 
 // ── Extra palette ─────────────────────────────────────────────────────────────
 const TEAL    = '#4DCEA6';
@@ -37,106 +38,56 @@ interface PhaseBlock {
   milestones: Milestone[];
 }
 
-// ── Mock Phase Data ───────────────────────────────────────────────────────────
-const PHASE_BLOCKS: PhaseBlock[] = [
-  {
-    id: 'intro',
-    name: 'Intro Phase',
-    blockNum: 1,
-    weekStart: 1,
-    weekEnd: 4,
-    focus: 'Foundation',
-    description: 'Reset movement quality, establish baseline numbers, and re-groove every pattern. Stay under RPE 8 across all sessions.',
-    keyLifts: ['Floor Press', 'Box Squat', 'Trap Bar Deadlift'],
-    adaptation: 'Movement quality, joint health, motor pattern refinement',
-    milestones: [
-      { type: 'deload', week: 4, label: 'Deload Week' },
-    ],
-  },
-  {
-    id: 'base-strength',
-    name: 'Base Strength',
-    blockNum: 2,
-    weekStart: 5,
-    weekEnd: 12,
-    focus: 'Volume',
-    description: 'Build foundational strength with The Program\'s periodization methodology. Max Effort days push toward 90%+. Dynamic Effort builds speed and volume.',
-    keyLifts: ['Squat', 'Bench Press', 'Deadlift', 'Log Press'],
-    adaptation: 'Strength endurance, CNS efficiency, GPP base',
-    milestones: [
-      { type: 'deload',  week: 8,  label: 'Deload Week' },
-      { type: 'testing', week: 12, label: 'E1RM Testing Week' },
-    ],
-  },
-  {
-    id: 'accumulation',
-    name: 'Accumulation',
-    blockNum: 3,
-    weekStart: 13,
-    weekEnd: 20,
-    focus: 'Volume-Intensity',
-    description: 'Increase loading and volume simultaneously. Both ME and DE sessions climb in intensity. Accessory volume peaks here.',
-    keyLifts: ['Yoke', 'Atlas Stone', 'Axle Press', 'Deadlift Variations'],
-    adaptation: 'Work capacity, hypertrophy, strength carry-over',
-    milestones: [
-      { type: 'deload', week: 20, label: 'Deload Week' },
-    ],
-  },
-  {
-    id: 'intensification',
-    name: 'Intensification',
-    blockNum: 4,
-    weekStart: 21,
-    weekEnd: 28,
-    focus: 'Intensity',
-    description: 'Volume drops, intensity climbs. Main lifts approach true maximal loads. Every ME session is a statement of intent.',
-    keyLifts: ['Competition Squat', 'Floor Press', 'Sumo Deadlift'],
-    adaptation: 'Maximal strength expression, peak force output',
-    milestones: [
-      { type: 'testing', week: 28, label: 'Strength Testing Week' },
-    ],
-  },
-  {
-    id: 'peaking',
-    name: 'Peaking',
-    blockNum: 5,
-    weekStart: 29,
-    weekEnd: 34,
-    focus: 'Peak Strength',
-    description: 'Lift at or near competition specificity. Reduce fatigue while maintaining intensity. Everything narrows to the big movements.',
-    keyLifts: ['Competition Events', 'Axle', 'Yoke', 'Stones'],
-    adaptation: 'Sharpness, competition-specific motor patterns',
-    milestones: [
-      { type: 'deload', week: 32, label: 'Deload Week' },
-    ],
-  },
-  {
-    id: 'comp-prep',
-    name: 'Competition Prep',
-    blockNum: 6,
-    weekStart: 35,
-    weekEnd: 38,
-    focus: 'Sharpening',
-    description: 'Final taper into competition. Loads drop to 60–70%, speed and sharpness take priority. Trust the work you have put in.',
-    keyLifts: ['All Competition Events'],
-    adaptation: 'Recovery, sharpness, peak competition readiness',
-    milestones: [
-      { type: 'competition', week: 38, label: 'Strongman Competition' },
-    ],
-  },
-  {
-    id: 'off-season',
-    name: 'Off-Season',
-    blockNum: 7,
-    weekStart: 39,
-    weekEnd: 52,
-    focus: 'Recovery & Reset',
-    description: 'Active recovery and movement variety. Address weaknesses identified during the season. Rebuild the base for the next training cycle.',
-    keyLifts: ['Varies by weakness', 'GPP Work', 'Bodybuilding Assistance'],
-    adaptation: 'Structural balance, injury prevention, mental reset',
-    milestones: [],
-  },
-];
+// ── Dynamic phase-to-block mapping helpers ─────────────────────────────────────
+const MAX_PHASES = 15; // Pool size — enough for any AI-generated plan
+
+function getFocusTag(goal: string): string {
+  const g = (goal || '').toLowerCase();
+  if (g.includes('foundation') || g.includes('intro') || g.includes('base movement')) return 'Foundation';
+  if (g.includes('peak') || g.includes('peaking')) return 'Peak Strength';
+  if (g.includes('deload') || g.includes('recovery') || g.includes('off-season')) return 'Recovery & Reset';
+  if (g.includes('competition') || g.includes('comp prep') || g.includes('taper')) return 'Sharpening';
+  if ((g.includes('volume') && g.includes('intensity')) || g.includes('accumulation')) return 'Volume-Intensity';
+  if (g.includes('intensity') || g.includes('intensif')) return 'Intensity';
+  if (g.includes('volume') || g.includes('hypertrophy')) return 'Volume';
+  return goal ? goal.split(/[—\-,]/)[0].trim().slice(0, 18) : 'Training';
+}
+
+function mapApiPhaseToBlock(phase: any, idx: number): PhaseBlock {
+  // Gather key exercises from all blocks in this phase
+  const keyLifts: string[] = [];
+  const milestones: Milestone[] = [];
+
+  for (const block of (phase.blocks || [])) {
+    // Collect key exercises
+    for (const ex of (block.keyExercises || [])) {
+      if (!keyLifts.includes(ex) && keyLifts.length < 4) keyLifts.push(ex);
+    }
+    // Collect deload / testing weeks
+    for (const week of (block.weeks || [])) {
+      if (week.isDeload) {
+        milestones.push({ type: 'deload', week: week.weekNumber, label: 'Deload Week' });
+      } else if (week.isTest) {
+        milestones.push({ type: 'testing', week: week.weekNumber, label: 'Testing Week' });
+      }
+    }
+  }
+
+  const focus = getFocusTag(phase.goal || phase.phaseName || '');
+
+  return {
+    id:          phase.phaseId || `phase-${idx}`,
+    name:        phase.phaseName || `Phase ${idx + 1}`,
+    blockNum:    phase.phaseNumber || idx + 1,
+    weekStart:   phase.startWeek || 1,
+    weekEnd:     phase.endWeek   || 4,
+    focus,
+    description: phase.expectedAdaptation || phase.goal || '',
+    keyLifts:    keyLifts.length > 0 ? keyLifts : ['Main Lifts'],
+    adaptation:  phase.expectedAdaptation || '',
+    milestones,
+  };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const FOCUS_COLORS: Record<string, string> = {
@@ -198,10 +149,10 @@ const ml = StyleSheet.create({
 });
 
 // ── TimelineCard ──────────────────────────────────────────────────────────────
-function TimelineCard({ block, status, dateRange, currentWeek }: {
-  block: PhaseBlock; status: PhaseStatus; dateRange: string; currentWeek: number;
+function TimelineCard({ block, status, dateRange, currentWeek, totalBlocks }: {
+  block: PhaseBlock; status: PhaseStatus; dateRange: string; currentWeek: number; totalBlocks: number;
 }) {
-  const focusColor  = FOCUS_COLORS[block.focus] ?? COLORS.text.secondary;
+  const focusColor  = FOCUS_COLORS[block.focus] ?? BLUE;
   const borderColor = status === 'completed' ? SUCCESS : status === 'current' ? COLORS.accent : COLORS.border;
   const nodeColor   = status === 'completed' ? SUCCESS : status === 'current' ? COLORS.accent : COLORS.surfaceHighlight;
   const weekInBlock = Math.max(currentWeek - block.weekStart + 1, 0);
@@ -235,7 +186,7 @@ function TimelineCard({ block, status, dateRange, currentWeek }: {
         )}
 
         {/* Block label */}
-        <Text style={tc.blockLabel}>BLOCK {block.blockNum} OF 7</Text>
+        <Text style={tc.blockLabel}>PHASE {block.blockNum} OF {totalBlocks}</Text>
 
         {/* Phase name */}
         <Text style={[tc.phaseName, status === 'upcoming' && tc.phaseNameMuted]}>
@@ -324,17 +275,22 @@ const gs = StyleSheet.create({
 // ── Main RoadmapScreen ────────────────────────────────────────────────────────
 export default function RoadmapScreen() {
   const router = useRouter();
-  const [currentWeek, setCurrentWeek]   = useState(1);
-  const [programStart, setProgramStart] = useState<Date>(new Date('2025-01-01'));
-  const [loading, setLoading]           = useState(true);
+  const [currentWeek,   setCurrentWeek]   = useState(1);
+  const [programStart,  setProgramStart]  = useState<Date>(new Date());
+  const [loading,       setLoading]       = useState(true);
+  const [dynamicBlocks, setDynamicBlocks] = useState<PhaseBlock[]>([]);
+  const [planName,      setPlanName]      = useState('Your 52-Week Plan');
+  const [noPlan,        setNoPlan]        = useState(false);
 
-  // Animated values
+  // Fixed pool of animation values — enough for any AI-generated plan
   const headerAnim      = useRef({ opacity: new Animated.Value(0), y: new Animated.Value(-12) }).current;
   const currentCardAnim = useRef({ opacity: new Animated.Value(0), scale: new Animated.Value(0.96) }).current;
-  const cardAnims       = useRef(PHASE_BLOCKS.map(() => ({
-    opacity:    new Animated.Value(0),
-    translateY: new Animated.Value(20),
-  }))).current;
+  const cardAnims       = useRef(
+    Array.from({ length: MAX_PHASES }, () => ({
+      opacity:    new Animated.Value(0),
+      translateY: new Animated.Value(20),
+    }))
+  ).current;
 
   useFocusEffect(useCallback(() => {
     // Reset animations on every focus
@@ -348,6 +304,23 @@ export default function RoadmapScreen() {
       const prof = await getProfile();
       setCurrentWeek(prof?.currentWeek || 1);
       if (prof?.programStartDate) setProgramStart(new Date(prof.programStartDate));
+
+      // ── Fetch real AI-generated plan from backend ───────────────────────
+      try {
+        const yearPlan = await programApi.getYearPlan();
+        if (yearPlan?.phases && yearPlan.phases.length > 0) {
+          const mapped = yearPlan.phases.map(mapApiPhaseToBlock);
+          setDynamicBlocks(mapped);
+          setPlanName(yearPlan.planName || 'Your 52-Week Plan');
+          setNoPlan(false);
+        } else {
+          setNoPlan(true);
+        }
+      } catch {
+        // No plan generated yet — show empty state
+        setNoPlan(true);
+      }
+
       setLoading(false);
 
       // Sequence: header → current card → staggered timeline
@@ -377,20 +350,61 @@ export default function RoadmapScreen() {
     return <View style={s.loading}><ActivityIndicator color={COLORS.accent} size="large" /></View>;
   }
 
+  // ── No plan state ──────────────────────────────────────────────────────────
+  if (noPlan) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color={COLORS.text.secondary} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>Your Roadmap</Text>
+            <Text style={s.subtitle}>12-month strategic plan</Text>
+          </View>
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: SPACING.xl }}>
+          <MaterialCommunityIcons name="map-marker-path" size={52} color={COLORS.text.muted} />
+          <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, marginTop: SPACING.lg, textAlign: 'center' }}>
+            No Program Yet
+          </Text>
+          <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm, marginTop: SPACING.sm, textAlign: 'center', lineHeight: 22 }}>
+            Complete onboarding to generate your personalized 52-week training roadmap.
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: SPACING.xl, backgroundColor: COLORS.accent, paddingVertical: 13, paddingHorizontal: SPACING.xxl, borderRadius: RADIUS.lg }}
+            onPress={() => router.push('/onboarding-intake')}
+          >
+            <Text style={{ color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base }}>
+              Start Onboarding
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // ── Computed ─────────────────────────────────────────────────────────────────
-  const currentBlock = PHASE_BLOCKS.find(
+  const currentBlock = dynamicBlocks.find(
     b => currentWeek >= b.weekStart && currentWeek <= b.weekEnd
-  ) ?? PHASE_BLOCKS[0];
+  ) ?? dynamicBlocks[0];
+
+  if (!currentBlock) {
+    return <View style={s.loading}><ActivityIndicator color={COLORS.accent} size="large" /></View>;
+  }
 
   const weekInBlock       = Math.max(currentWeek - currentBlock.weekStart + 1, 1);
   const totalBlockWeeks   = currentBlock.weekEnd - currentBlock.weekStart + 1;
   const blockProgressPct  = Math.round((weekInBlock / totalBlockWeeks) * 100);
-  const phasesRemaining   = PHASE_BLOCKS.filter(b => currentWeek < b.weekStart).length;
-  const allMilestones     = PHASE_BLOCKS.flatMap(b => b.milestones);
+  const phasesRemaining   = dynamicBlocks.filter(b => currentWeek < b.weekStart).length;
+  const allMilestones     = dynamicBlocks.flatMap(b => b.milestones);
   const deloadCount       = allMilestones.filter(m => m.type === 'deload').length;
-  const endDate           = new Date(programStart.getTime() + 52 * 7 * 86400000);
+  const totalWeeks        = dynamicBlocks.length > 0
+    ? dynamicBlocks[dynamicBlocks.length - 1].weekEnd
+    : 52;
+  const endDate           = new Date(programStart.getTime() + totalWeeks * 7 * 86400000);
   const endMonthYear      = endDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  const focusColor        = FOCUS_COLORS[currentBlock.focus] ?? COLORS.text.secondary;
+  const focusColor        = FOCUS_COLORS[currentBlock.focus] ?? BLUE;
 
   return (
     <SafeAreaView style={s.safe}>
@@ -410,7 +424,7 @@ export default function RoadmapScreen() {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Your Roadmap</Text>
-            <Text style={s.subtitle}>12-month strategic plan built around your goals</Text>
+            <Text style={s.subtitle} numberOfLines={1}>{planName}</Text>
           </View>
           <View style={s.dateBadge}>
             <Text style={s.dateBadgeText}>
@@ -432,7 +446,7 @@ export default function RoadmapScreen() {
             <View style={s.currentCardTop}>
               <View style={{ flex: 1 }}>
                 <Text style={s.currentBlockLabel}>
-                  BLOCK {currentBlock.blockNum} OF 7  ·  WEEKS {currentBlock.weekStart}–{currentBlock.weekEnd}
+                  PHASE {currentBlock.blockNum} OF {dynamicBlocks.length}  ·  WEEKS {currentBlock.weekStart}–{currentBlock.weekEnd}
                 </Text>
                 <Text style={s.currentPhaseName}>{currentBlock.name}</Text>
               </View>
@@ -467,10 +481,12 @@ export default function RoadmapScreen() {
             </View>
 
             {/* Expected adaptation */}
-            <View style={s.adaptRow}>
-              <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color={TEAL} />
-              <Text style={s.adaptText}>{currentBlock.adaptation}</Text>
-            </View>
+            {currentBlock.adaptation ? (
+              <View style={s.adaptRow}>
+                <MaterialCommunityIcons name="arrow-up-circle-outline" size={14} color={TEAL} />
+                <Text style={s.adaptText}>{currentBlock.adaptation}</Text>
+              </View>
+            ) : null}
 
             {/* CTA */}
             <TouchableOpacity
@@ -487,7 +503,7 @@ export default function RoadmapScreen() {
         {/* ── YEAR OVERVIEW LABEL ── */}
         <View style={s.sectionRow}>
           <Text style={s.sectionLabel}>YEAR OVERVIEW</Text>
-          <Text style={s.sectionSub}>52 weeks · 7 phases</Text>
+          <Text style={s.sectionSub}>{totalWeeks} weeks · {dynamicBlocks.length} phases</Text>
         </View>
 
         {/* ── VERTICAL TIMELINE ── */}
@@ -495,7 +511,7 @@ export default function RoadmapScreen() {
           {/* Vertical rail line */}
           <View style={s.timelineRail} />
 
-          {PHASE_BLOCKS.map((block, i) => {
+          {dynamicBlocks.map((block, i) => {
             const status    = getStatus(block, currentWeek);
             const dateRange = weekToDateRange(block.weekStart, block.weekEnd, programStart);
 
@@ -512,6 +528,7 @@ export default function RoadmapScreen() {
                   status={status}
                   dateRange={dateRange}
                   currentWeek={currentWeek}
+                  totalBlocks={dynamicBlocks.length}
                 />
                 {block.milestones.map((m, mi) => (
                   <MilestoneRow key={mi} milestone={m} />
@@ -525,10 +542,10 @@ export default function RoadmapScreen() {
         <View style={s.glanceSection}>
           <Text style={s.sectionLabel}>YOUR YEAR AT A GLANCE</Text>
           <View style={s.glanceGrid}>
-            <GlanceStat icon="calendar-range"    value="52"            label="TOTAL WEEKS"   />
-            <GlanceStat icon="weather-night"     value={String(deloadCount)} label="DELOADS"  color={BLUE}    />
+            <GlanceStat icon="calendar-range"    value={String(totalWeeks)}    label="TOTAL WEEKS"   />
+            <GlanceStat icon="weather-night"     value={String(deloadCount)}   label="DELOADS"       color={BLUE}    />
             <GlanceStat icon="map-marker-path"   value={String(phasesRemaining)} label="PHASES LEFT" />
-            <GlanceStat icon="flag-checkered"    value={endMonthYear}  label="EST. END"      color={TEAL}    />
+            <GlanceStat icon="flag-checkered"    value={endMonthYear}          label="EST. END"      color={TEAL}    />
           </View>
         </View>
 
