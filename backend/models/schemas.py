@@ -249,6 +249,7 @@ class AnnualPlan(BaseModel):
     planName: str = ""
     startDate: str = ""
     totalWeeks: int = 52
+    trainingDays: int = 4     # days/week — set from intake.frequency
     phases: List[Phase] = []
     milestones: List[Milestone] = []
     deloadWeeks: List[int] = []
@@ -367,6 +368,7 @@ class IntakeRequest(BaseModel):
     sleepHours: Optional[float] = None
     stressLevel: Optional[str] = None
     occupationType: Optional[str] = None
+    hasCompetition: bool = False
     competitionDate: Optional[str] = None
     competitionType: Optional[str] = None
     name: Optional[str] = None

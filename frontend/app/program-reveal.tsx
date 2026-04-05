@@ -208,8 +208,8 @@ export default function ProgramRevealScreen() {
   const phase2Opacity = useRef(new Animated.Value(0)).current;
   const phase2Slide   = useRef(new Animated.Value(40)).current;
   const headerAnim    = useRef(new Animated.Value(0)).current;
-  // 7 phases + 1 milestones card = 8 slots
-  const cardAnims     = useRef(Array.from({ length: 8 }, () => new Animated.Value(0))).current;
+  // 15-slot pool — handles any AI-generated plan up to 14 phases + milestones card
+  const cardAnims     = useRef(Array.from({ length: 15 }, () => new Animated.Value(0))).current;
 
   // Spinning ring
   useEffect(() => {
@@ -345,7 +345,7 @@ export default function ProgramRevealScreen() {
               </View>
               <View style={s.metaChip}>
                 <MaterialCommunityIcons name="calendar-week" size={10} color={GOLD} style={{ marginRight: 3 }} />
-                <Text style={s.metaChipText}>4 Days / Wk</Text>
+                <Text style={s.metaChipText}>{plan?.trainingDays ?? 4} Days / Wk</Text>
               </View>
               <View style={s.metaChip}>
                 <MaterialCommunityIcons name="flag-checkered" size={10} color={GOLD} style={{ marginRight: 3 }} />
@@ -427,7 +427,7 @@ export default function ProgramRevealScreen() {
           {/* ── Training split summary ── */}
           <View style={s.sectionWrap}>
             <Text style={s.sectionTitle}>Weekly Training Split</Text>
-            <Text style={s.sectionSub}>The Program — 4 sessions / week</Text>
+            <Text style={s.sectionSub}>The Program — {plan?.trainingDays ?? 4} sessions / week</Text>
           </View>
           <View style={s.splitGrid}>
             {SPLIT_DAYS.map((d, i) => (
@@ -475,7 +475,14 @@ export default function ProgramRevealScreen() {
             <Text style={s.startBtnText}>Start Training</Text>
             <MaterialCommunityIcons name="arrow-right" size={20} color={BG} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.back()} style={s.adjustLink}>
+          <TouchableOpacity
+            onPress={() => {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+              // Replace current screen with onboarding so user can redo their preferences
+              router.replace('/onboarding-intake' as any);
+            }}
+            style={s.adjustLink}
+          >
             <Text style={s.adjustText}>Adjust preferences</Text>
           </TouchableOpacity>
         </View>

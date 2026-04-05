@@ -673,9 +673,32 @@ PHASE_TEMPLATES = {
     ],
 }
 
+# Phase templates for non-competitive athletes — no competition prep phase
+PHASE_TEMPLATES_NO_COMP = {
+    GoalType.STRENGTH: [
+        {"name": "Intro Phase", "goal": "Build work capacity and movement quality", "adaptation": "Motor pattern refinement, connective tissue prep", "weeks": 4},
+        {"name": "Base Strength", "goal": "Establish baseline loading on all primary movements", "adaptation": "Strength endurance, volume tolerance", "weeks": 8},
+        {"name": "Accumulation", "goal": "Progressive overload with increasing intensity", "adaptation": "Muscle hypertrophy, strength gains", "weeks": 8},
+        {"name": "Intensification", "goal": "Push intensity while managing fatigue", "adaptation": "Peak strength expression, neural drive", "weeks": 8},
+        {"name": "Peaking", "goal": "Maximize strength expression on primary lifts", "adaptation": "Peak 1RM performance, strength consolidation", "weeks": 6},
+        {"name": "Strength Consolidation", "goal": "Consolidate strength gains and reset for the next training cycle", "adaptation": "Active recovery, GPP, mobility and movement quality work", "weeks": 4},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses, build the base for the next cycle", "adaptation": "Recovery, hypertrophy, GPP work", "weeks": 14},
+    ],
+    GoalType.STRONGMAN: [
+        {"name": "Intro Phase", "goal": "Build work capacity with event exposure", "adaptation": "Movement skill, conditioning base", "weeks": 4},
+        {"name": "Base Strength", "goal": "Build absolute strength foundation", "adaptation": "Strength endurance, event technique", "weeks": 8},
+        {"name": "Event Specialization", "goal": "Focus on competition events and technique", "adaptation": "Event-specific strength and skill development", "weeks": 8},
+        {"name": "Intensification", "goal": "Push event weights and absolute strength", "adaptation": "Peak strength, event confidence", "weeks": 8},
+        {"name": "Peaking", "goal": "Maximize event performance and strength expression", "adaptation": "Competition readiness, peak output", "weeks": 6},
+        {"name": "Strength Consolidation", "goal": "Consolidate event strength and reset for next cycle", "adaptation": "Active recovery, GPP, technique refinement", "weeks": 4},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses and rebuild", "adaptation": "GPP, hypertrophy, rehab work", "weeks": 14},
+    ],
+}
+
 # Default to strength template for other goals
 for goal in [GoalType.POWERLIFTING, GoalType.HYPERTROPHY, GoalType.ATHLETIC, GoalType.GENERAL]:
     PHASE_TEMPLATES[goal] = PHASE_TEMPLATES[GoalType.STRENGTH]
+    PHASE_TEMPLATES_NO_COMP[goal] = PHASE_TEMPLATES_NO_COMP[GoalType.STRENGTH]
 
 
 # ─── Main Generator ──────────────────────────────────────────────────────────
@@ -693,7 +716,15 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
     start_date = datetime.now()
     frequency = intake.frequency or 4
     split = SPLIT_TEMPLATES.get(frequency, SPLIT_TEMPLATES[4])
-    phase_templates = PHASE_TEMPLATES.get(goal, PHASE_TEMPLATES[GoalType.STRENGTH])
+
+    # Choose phase template based on whether the user competes
+    has_competition = getattr(intake, 'hasCompetition', False) or bool(getattr(intake, 'competitionDate', None))
+    if has_competition:
+        phase_templates = PHASE_TEMPLATES.get(goal, PHASE_TEMPLATES[GoalType.STRENGTH])
+        print(f"[PLANGEN] User competes — using competition phase template")
+    else:
+        phase_templates = PHASE_TEMPLATES_NO_COMP.get(goal, PHASE_TEMPLATES_NO_COMP[GoalType.STRENGTH])
+        print(f"[PLANGEN] User does NOT compete — using non-competition phase template")
 
     # Build goal-specific plan name
     plan_names = {
@@ -809,6 +840,7 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         planName=plan_names.get(goal, "Strength Program"),
         startDate=start_date.strftime("%Y-%m-%d"),
         totalWeeks=52,
+        trainingDays=frequency,
         phases=phases,
         milestones=milestones,
         deloadWeeks=deload_weeks,

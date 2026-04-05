@@ -1,0 +1,30 @@
+{
+  "summary": "Backend tests for 3 bug fixes on program-reveal page. All 8 tests passed: (1) trainingDays correctly reflects user's selected frequency (3/4/5 verified), (2) Competition Prep phase absent when hasCompetition=false, replaced by 'Strength Consolidation' as Phase 6, (3) Competition Prep phase present when hasCompetition=true or competitionDate is set, (4) GET /api/plan/year returns correct trainingDays after intake.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_competition_training_days.py",
+    "/app/test_reports/pytest/competition_training_days_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_competition_training_days.py"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 tests passed)",
+    "frontend": "not tested (backend-only scope)"
+  },
+  "seed_data_creation": "No seed data created; used existing user_a@theprogram.app with profile reset before each test",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fixes verified: trainingDays from frequency, Competition Prep phase gated by hasCompetition/competitionDate. plan_generator.py uses PHASE_TEMPLATES_NO_COMP correctly. Test file: /app/backend/tests/test_competition_training_days.py"
+}

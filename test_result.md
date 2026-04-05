@@ -833,27 +833,35 @@ agent_communication:
 
   - agent: "main"
     message: >
-      IMPLEMENTED: Dynamic Plan Data for Roadmap, Track, and Home screens.
+      SECOND ROUND FIXES — program-reveal.tsx issues + competition phase logic:
       
-      Backend changes:
-      1. Added GET /api/plan/year to api_router in server.py — MongoDB-backed with _ensure_plan_loaded
-      2. Added GET /api/plan/block/current to api_router — MongoDB-backed
-      3. Added GET /api/plan/session/today to api_router — MongoDB-backed with full session lookup
+      Backend changes (schemas.py + plan_generator.py):
+      1. Added `hasCompetition: bool = False` to IntakeRequest schema (was missing — frontend was sending it but it was ignored)
+      2. Added `trainingDays: int = 4` to AnnualPlan schema (was only on UserProfile before)
+      3. Added `PHASE_TEMPLATES_NO_COMP` — non-competition versions of all phase templates where Phase 6 = "Strength Consolidation" instead of "Competition Prep"
+      4. `generate_plan()` now checks `intake.hasCompetition` (or `intake.competitionDate`) to select correct template
+      5. `generate_plan()` now sets `trainingDays=frequency` in AnnualPlan constructor
       
-      Frontend changes:
-      1. roadmap.tsx — Removed hardcoded PHASE_BLOCKS (7-phase "Eric's plan"), now fetches GET /api/plan/year
-         and maps Phase objects → PhaseBlock via mapApiPhaseToBlock(). Shows no-plan empty state if missing.
-      2. index.tsx — Updated sessionCtaLift/sessionCtaScheme to show programSession.session.exercises[0].name/prescription
-         (from the new MongoDB-backed session endpoint), falling back to local programData.ts only when API fails.
-      3. track.tsx — Added yearPlan state + programApi.getYearPlan() fetch in loadAll(); 
-         Added Section 10 "52-WEEK PROGRAM" at bottom showing all phases with name, week range, goal, key exercises.
-         SECTION_COUNT increased from 9 to 10.
+      Frontend (program-reveal.tsx):
+      1. "4 Days / Wk" badge now shows `plan?.trainingDays ?? 4` (dynamic from API)
+      2. "4 sessions / week" split section now shows `plan?.trainingDays ?? 4` (dynamic)
+      3. "Adjust preferences" button fixed: now uses `router.replace('/onboarding-intake')` instead of `router.back()` (which was going to wrong screen since program-reveal was opened with replace())
+      4. cardAnims pool expanded from 8 to 15 slots (handles AI-generated plans with variable phase counts)
+      
+      VERIFIED by manual API tests:
+      - intake with hasCompetition=false, frequency=3 → trainingDays=3, Phase 6="Strength Consolidation" ✅
+      - intake with hasCompetition=true, frequency=5 → trainingDays=5, Phase 6="Competition Prep" ✅
+      - GET /api/plan/year returns trainingDays correctly ✅
       
       Please test:
-      1. GET /api/plan/year — should return planName, totalWeeks, phases array (not 404 after restart)
-      2. GET /api/plan/session/today — should return exercises array with name/category/prescription
-      3. GET /api/plan/block/current — should return phase+block data
+      1. POST /api/profile/reset, then POST /api/profile/intake {goal:"Strength", frequency:3, hasCompetition:false}
+         — plan.trainingDays should be 3, phases should NOT include "Competition Prep" (Phase 6 = "Strength Consolidation")
+      2. POST /api/profile/reset, then POST /api/profile/intake {goal:"Strongman", frequency:5, hasCompetition:true, competitionDate:"2026-08-15"}
+         — plan.trainingDays should be 5, phases SHOULD include "Competition Prep" as Phase 6
+      3. POST /api/profile/reset, then POST /api/profile/intake {goal:"Powerlifting", frequency:4, hasCompetition:false}
+         — plan.trainingDays should be 4, no competition phase
       
       Credentials: user_a@theprogram.app / StrongmanA123
+
 
 
