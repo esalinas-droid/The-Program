@@ -253,6 +253,7 @@ export default function OnboardingIntake() {
 
   // Step 5 — Training frequency
   const [trainingDays, setDays] = useState(0);
+  const [selectedDays, setSelectedDays] = useState<string[]>([]);
 
   // Step 6 — Primary weaknesses
   const [primaryWeaknesses, setPrimaryWeaknesses] = useState<string[]>([]);
@@ -327,7 +328,7 @@ export default function OnboardingIntake() {
       case 2:  return !!experience;
       case 3:  return Object.values(lifts).some(v => v.trim() !== '');
       case 4:  return bodyweight.trim() !== '' && parseFloat(bodyweight) > 0;
-      case 5:  return trainingDays > 0;
+      case 5:  return trainingDays > 0 && selectedDays.length === trainingDays;
       case 6:  return true; // optional, can skip
       case 7:  return true; // optional, can skip
       case 8:  return injuries.length > 0;
@@ -454,6 +455,8 @@ export default function OnboardingIntake() {
         occupationType:     occupationType || undefined,
         competitionDate:    hasCompetition ? competitionDate : undefined,
         competitionType:    hasCompetition ? competitionType : undefined,
+        preferredDays:      selectedDays,
+        hasCompetition:     !!hasCompetition,
       };
       // CHECK 3: Verify auth token exists before calling backend
       const _token = await getAuthToken();
@@ -682,29 +685,106 @@ export default function OnboardingIntake() {
     </View>
   );
 
-  // Step 5 — Training frequency
+  // Step 5 — Training frequency + day picker
+  const DAYS_OF_WEEK = [
+    { key: 'monday',    abbr: 'Mon' }, { key: 'tuesday',   abbr: 'Tue' },
+    { key: 'wednesday', abbr: 'Wed' }, { key: 'thursday',  abbr: 'Thu' },
+    { key: 'friday',    abbr: 'Fri' }, { key: 'saturday',  abbr: 'Sat' },
+    { key: 'sunday',    abbr: 'Sun' },
+  ];
+
+  const handleSetDays = (n: number) => {
+    haptic();
+    setDays(n);
+    // Apply smart defaults
+    const defaults: Record<number, string[]> = {
+      3: ['monday', 'wednesday', 'friday'],
+      4: ['monday', 'tuesday', 'thursday', 'friday'],
+      5: ['monday', 'tuesday', 'thursday', 'friday', 'saturday'],
+      6: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+    };
+    setSelectedDays(defaults[n] || []);
+  };
+
+  const toggleDay = (key: string) => {
+    haptic();
+    setSelectedDays(prev => {
+      if (prev.includes(key)) return prev.filter(d => d !== key);
+      if (prev.length >= trainingDays) return [...prev.slice(1), key]; // replace oldest
+      return [...prev, key];
+    });
+  };
+
   const renderStep5 = () => (
-    <View style={s.dayGrid}>
-      {TRAINING_DAYS.map(({ days, desc }) => {
-        const active = trainingDays === days;
-        return (
-          <TouchableOpacity
-            key={days}
-            style={[s.dayCard, active && s.dayCardActive]}
-            onPress={() => { haptic(); setDays(days); }}
-            activeOpacity={0.8}
-          >
-            {active && (
-              <View style={s.dayCheck}>
-                <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} />
-              </View>
-            )}
-            <Text style={[s.dayNum, active && s.dayNumActive]}>{days}</Text>
-            <Text style={[s.dayWord, active && s.dayWordActive]}>days/week</Text>
-            <Text style={[s.dayDesc, active && s.dayDescActive]}>{desc}</Text>
-          </TouchableOpacity>
-        );
-      })}
+    <View>
+      <View style={s.dayGrid}>
+        {TRAINING_DAYS.map(({ days, desc }) => {
+          const active = trainingDays === days;
+          return (
+            <TouchableOpacity
+              key={days}
+              style={[s.dayCard, active && s.dayCardActive]}
+              onPress={() => handleSetDays(days)}
+              activeOpacity={0.8}
+            >
+              {active && (
+                <View style={s.dayCheck}>
+                  <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} />
+                </View>
+              )}
+              <Text style={[s.dayNum, active && s.dayNumActive]}>{days}</Text>
+              <Text style={[s.dayWord, active && s.dayWordActive]}>days/week</Text>
+              <Text style={[s.dayDesc, active && s.dayDescActive]}>{desc}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* ── Day Picker ── appears once frequency is chosen */}
+      {trainingDays > 0 && (
+        <View style={s.dayPickerSection}>
+          <View style={s.dayPickerHeader}>
+            <MaterialCommunityIcons name="calendar-week" size={15} color={COLORS.accent} />
+            <Text style={s.dayPickerTitle}>Which days?</Text>
+            <View style={s.dayPickerBadge}>
+              <Text style={s.dayPickerBadgeTxt}>
+                {selectedDays.length}/{trainingDays} selected
+              </Text>
+            </View>
+          </View>
+          <Text style={s.dayPickerSub}>
+            Choose your {trainingDays} training day{trainingDays !== 1 ? 's' : ''} — defaults set for you, tap to change
+          </Text>
+          <View style={s.dayPickerRow}>
+            {DAYS_OF_WEEK.map(({ key, abbr }) => {
+              const selected = selectedDays.includes(key);
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[s.dayPill, selected && s.dayPillActive]}
+                  onPress={() => toggleDay(key)}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[s.dayPillText, selected && s.dayPillTextActive]}>{abbr}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {selectedDays.length < trainingDays && (
+            <Text style={s.dayPickerHint}>
+              Select {trainingDays - selectedDays.length} more day{trainingDays - selectedDays.length !== 1 ? 's' : ''}
+            </Text>
+          )}
+          {selectedDays.length === trainingDays && (
+            <View style={s.dayPickerConfirmed}>
+              <MaterialCommunityIcons name="check-circle" size={13} color="#4CAF50" />
+              <Text style={s.dayPickerConfirmedTxt}>
+                Schedule: {selectedDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(' · ')}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 
@@ -1196,6 +1276,22 @@ const s = StyleSheet.create({
   dayWordActive: { color: 'rgba(13,13,13,0.65)' },
   dayDesc:       { fontSize: 10, color: COLORS.text.muted, textAlign: 'center', marginTop: 5 },
   dayDescActive: { color: 'rgba(13,13,13,0.55)' },
+
+  // Day picker — which specific days of the week
+  dayPickerSection:    { marginTop: SPACING.lg, backgroundColor: '#161618', borderWidth: 1.5, borderColor: '#2A2A2E', borderRadius: 18, padding: SPACING.md },
+  dayPickerHeader:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginBottom: 4 },
+  dayPickerTitle:      { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, flex: 1 },
+  dayPickerBadge:      { backgroundColor: COLORS.accent + '22', borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 },
+  dayPickerBadgeTxt:   { fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.bold },
+  dayPickerSub:        { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginBottom: SPACING.md, lineHeight: 18 },
+  dayPickerRow:        { flexDirection: 'row', justifyContent: 'space-between', gap: 5 },
+  dayPill:             { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, backgroundColor: '#0D0D0D', borderWidth: 1.5, borderColor: '#2A2A2E' },
+  dayPillActive:       { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  dayPillText:         { fontSize: 11, fontWeight: FONTS.weights.semibold, color: COLORS.text.muted },
+  dayPillTextActive:   { color: COLORS.primary },
+  dayPickerHint:       { marginTop: SPACING.sm, fontSize: FONTS.sizes.xs, color: COLORS.text.muted, textAlign: 'center' },
+  dayPickerConfirmed:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.sm },
+  dayPickerConfirmedTxt: { fontSize: FONTS.sizes.xs, color: '#4CAF50', fontWeight: FONTS.weights.medium, flex: 1 },
 
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
   chip: {

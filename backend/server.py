@@ -382,6 +382,157 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
 
 @api_router.post("/plan/injury-preview")
 async def injury_preview(body: dict, userId: str = Depends(get_current_user)):
+    pass  # placeholder — actual implementation in program_router below
+
+
+# ── Calendar Endpoints ─────────────────────────────────────────────────────────
+
+_DAY_TO_OFFSET = {
+    'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+    'friday': 4, 'saturday': 5, 'sunday': 6,
+}
+
+def _generate_calendar_events(plan, preferred_days: list, overrides: list) -> list:
+    """Map plan sessions to real calendar dates using the user's preferred days."""
+    from datetime import datetime as _dt, timedelta as _td
+
+    if not preferred_days:
+        preferred_days = ['monday', 'tuesday', 'thursday', 'friday']
+
+    sorted_pref = sorted(
+        [d.lower() for d in preferred_days if d.lower() in _DAY_TO_OFFSET],
+        key=lambda d: _DAY_TO_OFFSET[d],
+    )
+
+    override_map: dict = {}
+    for ov in overrides:
+        override_map[ov.get('originalDate', '')] = ov.get('newDate', '')
+
+    try:
+        plan_start = _dt.strptime(plan.startDate[:10], "%Y-%m-%d")
+    except Exception:
+        plan_start = _dt.now()
+
+    events = []
+    for phase in (plan.phases or []):
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                wk_num = week.weekNumber or 1
+                # Monday of this week number
+                week_monday = plan_start + _td(weeks=wk_num - 1)
+                week_monday = week_monday - _td(days=week_monday.weekday())
+
+                sorted_sessions = sorted(week.sessions or [], key=lambda s: s.dayNumber or 1)
+                for idx, session in enumerate(sorted_sessions):
+                    if idx >= len(sorted_pref):
+                        break
+                    day_name = sorted_pref[idx]
+                    actual_date = week_monday + _td(days=_DAY_TO_OFFSET[day_name])
+                    date_str = actual_date.strftime("%Y-%m-%d")
+                    display_date = override_map.get(date_str, date_str)
+                    events.append({
+                        "date":          display_date,
+                        "originalDate":  date_str if display_date != date_str else None,
+                        "sessionType":   session.sessionType,
+                        "sessionId":     session.sessionId,
+                        "weekNumber":    wk_num,
+                        "phaseNumber":   phase.phaseNumber,
+                        "phaseName":     phase.phaseName,
+                        "blockName":     block.blockName,
+                        "exercises":     [e.model_dump() for e in (session.exercises or [])[:5]],
+                        "isCompleted":   session.status == "completed",
+                        "isOverridden":  display_date != date_str,
+                        "isDeloadWeek":  week.isDeload,
+                        "coachNote":     session.coachNote or "",
+                    })
+    return events
+
+
+@api_router.get("/calendar/events")
+async def get_calendar_events(
+    start_date: str = "",
+    end_date: str = "",
+    userId: str = Depends(get_current_user),
+):
+    """Return calendar events for the user's program mapped to their preferred training days."""
+    await _ensure_plan_loaded(userId)
+    plan = _prog_store["plans"].get(userId)
+    if not plan:
+        return {"events": [], "preferredDays": [], "notificationHour": 7, "notificationMinute": 0}
+
+    profile = await db.profile.find_one({"userId": userId}) or {}
+    preferred_days = profile.get("preferredDays", [])
+    notif_hour   = profile.get("notificationHour", 7)
+    notif_minute = profile.get("notificationMinute", 0)
+
+    overrides = await db.calendar_overrides.find({"userId": userId}).to_list(2000)
+
+    all_events = _generate_calendar_events(plan, preferred_days, overrides)
+
+    if start_date and end_date:
+        all_events = [e for e in all_events if start_date <= e["date"] <= end_date]
+
+    return {
+        "events":           all_events,
+        "preferredDays":    preferred_days,
+        "notificationHour": notif_hour,
+        "notificationMinute": notif_minute,
+        "planName":         plan.planName,
+        "planStartDate":    plan.startDate,
+    }
+
+
+@api_router.post("/calendar/reschedule")
+async def reschedule_session(body: dict, userId: str = Depends(get_current_user)):
+    """Move a session from originalDate to newDate (any future date)."""
+    original_date = body.get("originalDate", "")
+    new_date       = body.get("newDate", "")
+    reason         = body.get("reason", "")
+    session_type   = body.get("sessionType", "")
+
+    if not original_date or not new_date:
+        raise HTTPException(status_code=400, detail="originalDate and newDate are required.")
+
+    await db.calendar_overrides.replace_one(
+        {"userId": userId, "originalDate": original_date},
+        {
+            "userId":        userId,
+            "originalDate":  original_date,
+            "newDate":       new_date,
+            "sessionType":   session_type,
+            "reason":        reason,
+            "createdAt":     datetime.utcnow().isoformat(),
+        },
+        upsert=True,
+    )
+    return {"success": True, "originalDate": original_date, "newDate": new_date}
+
+
+@api_router.delete("/calendar/reschedule/{original_date}")
+async def undo_reschedule(original_date: str, userId: str = Depends(get_current_user)):
+    """Undo a reschedule — restore session to its original date."""
+    await db.calendar_overrides.delete_one({"userId": userId, "originalDate": original_date})
+    return {"success": True}
+
+
+@api_router.put("/profile/preferred-days")
+async def update_preferred_days(body: dict, userId: str = Depends(get_current_user)):
+    """Update the user's preferred training days and notification time."""
+    preferred_days   = body.get("preferredDays", [])
+    notif_hour       = body.get("notificationHour", 7)
+    notif_minute     = body.get("notificationMinute", 0)
+
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {
+            "preferredDays":     preferred_days,
+            "notificationHour":  notif_hour,
+            "notificationMinute": notif_minute,
+        }},
+        upsert=True,
+    )
+    return {"success": True, "preferredDays": preferred_days}
+
     """Preview how changing injury flags would affect the training program."""
     new_injuries = body.get("newInjuryFlags", [])
     # Scope to current user only — never fall back to default user's injuries
@@ -2144,6 +2295,8 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
         profile_update["primaryWeaknesses"] = intake.primaryWeaknesses
     if intake.specialtyEquipment:
         profile_update["specialtyEquipment"] = intake.specialtyEquipment
+    if intake.preferredDays:
+        profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
     # Always upsert — creates profile for new users, updates existing users
     await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
 

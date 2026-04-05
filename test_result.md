@@ -833,7 +833,44 @@ agent_communication:
 
   - agent: "main"
     message: >
-      SECOND ROUND FIXES — program-reveal.tsx issues + competition phase logic:
+      NEW FEATURE: Training Day Picker (Onboarding) + Calendar Tool + Notifications
+      
+      Backend changes (server.py + schemas.py):
+      1. Added `preferredDays: List[str] = []` to IntakeRequest schema
+      2. POST /api/profile/intake now saves preferredDays to profile
+      3. NEW: GET /api/calendar/events?start_date=&end_date= — generates calendar events from plan+preferredDays
+         Returns: {events:[{date,sessionType,weekNumber,phaseName,exercises,isOverridden}], preferredDays, notificationHour, planName}
+      4. NEW: POST /api/calendar/reschedule — {originalDate,newDate,sessionType,reason} stores override in db.calendar_overrides
+      5. NEW: DELETE /api/calendar/reschedule/{original_date} — undo reschedule
+      6. NEW: PUT /api/profile/preferred-days — {preferredDays,notificationHour,notificationMinute}
+      
+      Frontend (onboarding-intake.tsx):
+      1. Step 5 now has TWO parts: frequency picker + day picker
+      2. Day picker shows Mon-Sun toggles; smart defaults set when frequency is chosen
+      3. canContinue case 5 now requires selectedDays.length === trainingDays
+      4. preferredDays sent with intake payload
+      
+      New file: /app/frontend/app/tools/calendar.tsx
+      - Monthly calendar (react-native-calendars) with colored session dots
+      - Tap any day → see session details (exercises, sets/reps, coach note)
+      - "Move Session" button → pick any future date + reason
+      - "Restore" button on rescheduled sessions
+      - Bell icon → notification settings modal (hour/minute picker)
+      - Schedules local notifications for next 8 weeks of training days
+      - training schedule banner at bottom showing preferred days
+      
+      tools.tsx: Added "Workout Calendar" as first item in tools list
+      tools/_layout.tsx: Added calendar screen
+      
+      Please test:
+      1. GET /api/calendar/events — call PUT /api/profile/preferred-days first with [monday,wednesday,friday], then verify events are on correct weekdays
+      2. POST /api/calendar/reschedule {originalDate, newDate} — verify override stored
+      3. GET /api/calendar/events again — verify event appears on newDate not originalDate
+      4. DELETE /api/calendar/reschedule/{original_date} — verify undo works
+      5. PUT /api/profile/preferred-days {preferredDays:["monday","thursday","saturday"],notificationHour:9}
+      
+      Credentials: user_a@theprogram.app / StrongmanA123
+
       
       Backend changes (schemas.py + plan_generator.py):
       1. Added `hasCompetition: bool = False` to IntakeRequest schema (was missing — frontend was sending it but it was ignored)

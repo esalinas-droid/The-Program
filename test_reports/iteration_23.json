@@ -1,0 +1,54 @@
+{
+  "summary": "Backend testing of new calendar features: PUT /api/profile/preferred-days, GET /api/calendar/events, POST/DELETE /api/calendar/reschedule, and POST /api/profile/intake with preferredDays. 6/10 tests passed, 4 failures found.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/calendar/events",
+        "issue": "Calendar events are NOT placed on the user's preferred days. After setting preferredDays=[monday,wednesday,friday], events still appear on old days (e.g. 2026-03-31 Tuesday). The calendar generation does not re-map sessions to the new preferred days when preferredDays are updated via PUT /api/profile/preferred-days. Likely the plan/calendar is cached or generated using stale day preferences.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/calendar/events (fresh user after intake)",
+        "issue": "Same day-mapping bug: fresh user with preferredDays=[monday,thursday,saturday] sees events on Tuesday/Friday pattern — not Mon/Thu/Sat. Events seem to follow a hardcoded or stale 2-day schedule regardless of preferred days set during intake.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "PUT /api/profile/preferred-days",
+        "issue": "No input validation: invalid day name 'funday' accepted with 200 OK instead of 400/422. Should validate that provided days are in [monday,tuesday,wednesday,thursday,friday,saturday,sunday]."
+      },
+      {
+        "endpoint": "POST /api/profile/intake",
+        "issue": "Intake schema requires field 'experience' (not 'experienceLevel'). This is a naming inconsistency — review request referenced 'experienceLevel' but Pydantic model expects 'experience'. Minor schema mismatch."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_calendar_features.py",
+    "/app/test_reports/pytest/calendar_features_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix calendar event generation to use the user's current preferredDays when mapping plan sessions to actual dates. After PUT /api/profile/preferred-days, subsequent GET /api/calendar/events calls must reflect the new days. The day-mapping logic may be using a cached plan or the plan start date without re-mapping to preferred days.",
+    "CRITICAL: Same fix needed for intake-time preferredDays — when plan is first generated, sessions must land on the chosen preferred days from day 1.",
+    "Minor: Add validation in PUT /api/profile/preferred-days to reject invalid day names (return 400/422).",
+    "Minor: Clarify intake schema field name — 'experience' vs 'experienceLevel' — and make it consistent across frontend/backend/docs."
+  ],
+  "critical_code_review_comments": [
+    "The calendar event date-mapping does not respect dynamically set preferredDays — this is the core bug. The plan_generator/calendar router likely maps sessions using a fixed schedule instead of the user's preferred days stored in the profile.",
+    "No validation on preferredDays enum values in PUT endpoint."
+  ],
+  "updated_files": ["/app/backend/tests/test_calendar_features.py"],
+  "success_rate": {"backend": "60%", "frontend": "N/A"},
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Calendar event day-mapping is the primary bug. After setting preferredDays, the GET /api/calendar/events still returns events on wrong days. Reschedule CRUD (POST/GET/DELETE) works correctly. The intake schema uses 'experience' not 'experienceLevel'.",
+  "rca_of_issue": "Root cause: PUT /api/profile/preferred-days saves the preference but the calendar event generation (GET /api/calendar/events) appears to use a pre-generated or cached schedule that does not re-derive event dates from the stored preferredDays. The fix requires the calendar router to read the user's current preferredDays from the profile and use them to map plan week sessions to actual calendar dates at query time (or regenerate on preferredDays change)."
+}

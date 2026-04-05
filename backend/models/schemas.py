@@ -371,6 +371,7 @@ class IntakeRequest(BaseModel):
     hasCompetition: bool = False
     competitionDate: Optional[str] = None
     competitionType: Optional[str] = None
+    preferredDays: List[str] = []   # e.g. ["monday", "wednesday", "friday"]
     name: Optional[str] = None
 
 class LogSetRequest(BaseModel):

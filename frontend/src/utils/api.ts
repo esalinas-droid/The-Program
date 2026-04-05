@@ -356,6 +356,18 @@ export const competitionApi = {
 };
 
 // Task 10: Exercise Rotation Detection
+export const calendarApi = {
+  getEvents:   (start?: string, end?: string) =>
+    api(`/calendar/events${start && end ? `?start_date=${start}&end_date=${end}` : ''}`),
+  reschedule:  (body: { originalDate: string; newDate: string; sessionType?: string; reason?: string }) =>
+    api('/calendar/reschedule', { method: 'POST', body: JSON.stringify(body) }),
+  undoReschedule: (originalDate: string) =>
+    api(`/calendar/reschedule/${originalDate}`, { method: 'DELETE' }),
+  updatePreferredDays: (body: { preferredDays: string[]; notificationHour?: number; notificationMinute?: number }) =>
+    api('/profile/preferred-days', { method: 'PUT', body: JSON.stringify(body) }),
+};
+
+// Task 10: Exercise Rotation Detection
 export const rotationApi = {
   check: (): Promise<{
     flagged: Array<{
