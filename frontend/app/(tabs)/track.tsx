@@ -411,7 +411,7 @@ export default function TrackScreen() {
 
   const summaryCards = [
     { icon: 'trophy',        label: 'PRs This Block',  value: overview?.prsThisBlock ?? '—' },
-    { icon: 'speedometer',   label: 'Avg RPE',          value: overview?.avgRPE ?? '—' },
+    { icon: 'speedometer',   label: 'Avg Effort',       value: overview?.avgRPE ?? '—' },
     { icon: 'check-circle',  label: 'Compliance',       value: overview ? `${overview.compliance}%` : '—' },
     { icon: 'calendar-check',label: 'Training Days',    value: overview?.trainingDays ?? '—' },
   ];
@@ -482,7 +482,7 @@ export default function TrackScreen() {
                   <View style={s.newBadge}><Text style={s.newBadgeTxt}>NEW PR</Text></View>
                 )}
                 <Text style={s.prVal}>{pr.bestWeight > 0 ? `${pr.bestWeight} × ${pr.bestReps}` : '—'}</Text>
-                {pr.bestE1rm > 0 && <Text style={s.prE1rm}>e1RM: {pr.bestE1rm}</Text>}
+                {pr.bestE1rm > 0 && <Text style={s.prE1rm}>Est. Max: {pr.bestE1rm}</Text>}
               </View>
             </View>
           ))}
@@ -490,12 +490,12 @@ export default function TrackScreen() {
 
         {/* ─── Strength Trends ──────────────────────────────────────────── */}
         <Animated.View style={[s.section, fade(3)]}>
-          <SectionHeader icon="chart-line" title="Strength Trends" subtitle="ESTIMATED 1RM OVER TIME" />
+          <SectionHeader icon="chart-line" title="Strength Trends" subtitle="ESTIMATED MAX OVER TIME" />
 
           {/* Current e1RM callout */}
           {currentE1RM !== null && (
             <View style={s.e1rmBox}>
-              <Text style={s.e1rmBoxLabel}>Current e1RM</Text>
+              <Text style={s.e1rmBoxLabel}>Est. Max</Text>
               <Text style={s.e1rmBoxVal}>
                 {currentE1RM} <Text style={s.e1rmBoxUnit}>{profile?.units || 'lbs'}</Text>
               </Text>
@@ -665,13 +665,13 @@ export default function TrackScreen() {
             <Text style={[s.blkBarLabel, { color: COLORS.accent, fontWeight: FONTS.weights.bold }]}>
               {Math.round(blockInfo.progress * 100)}% complete
             </Text>
-            <Text style={s.blkBarLabel}>Deload Wk {blockInfo.blockEnd}</Text>
+            <Text style={s.blkBarLabel}>Recovery Wk {blockInfo.blockEnd}</Text>
           </View>
 
           <View style={s.milestone}>
             <MaterialCommunityIcons name="flag" size={15} color={COLORS.accent} />
             <Text style={s.milestoneTxt}>
-              {blockInfo.blockLen - blockInfo.weekInBlk} week{blockInfo.blockLen - blockInfo.weekInBlk !== 1 ? 's' : ''} until next deload
+              {blockInfo.blockLen - blockInfo.weekInBlk} week{blockInfo.blockLen - blockInfo.weekInBlk !== 1 ? 's' : ''} until recovery week
             </Text>
           </View>
         </Animated.View>
@@ -727,7 +727,7 @@ export default function TrackScreen() {
                         {hasDeload && (
                           <View style={[s.yearPhaseTag, s.yearPhaseTagDeload]}>
                             <MaterialCommunityIcons name="weather-night" size={10} color="#6AACFF" />
-                            <Text style={[s.yearPhaseTagTxt, { color: '#6AACFF' }]}>Deload</Text>
+                            <Text style={[s.yearPhaseTagTxt, { color: '#6AACFF' }]}>Recovery</Text>
                           </View>
                         )}
                         {hasTesting && (

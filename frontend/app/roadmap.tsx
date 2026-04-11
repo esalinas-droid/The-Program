@@ -47,8 +47,8 @@ function getFocusTag(goal: string): string {
   if (g.includes('peak') || g.includes('peaking')) return 'Peak Strength';
   if (g.includes('deload') || g.includes('recovery') || g.includes('off-season')) return 'Recovery & Reset';
   if (g.includes('competition') || g.includes('comp prep') || g.includes('taper')) return 'Sharpening';
-  if ((g.includes('volume') && g.includes('intensity')) || g.includes('accumulation')) return 'Volume-Intensity';
-  if (g.includes('intensity') || g.includes('intensif')) return 'Intensity';
+  if ((g.includes('volume') && g.includes('intensity')) || g.includes('accumulation') || g.includes('building phase')) return 'Volume-Intensity';
+  if (g.includes('intensity') || g.includes('intensif') || g.includes('strength phase')) return 'Intensity';
   if (g.includes('volume') || g.includes('hypertrophy')) return 'Volume';
   return goal ? goal.split(/[—\-,]/)[0].trim().slice(0, 18) : 'Training';
 }
@@ -66,7 +66,7 @@ function mapApiPhaseToBlock(phase: any, idx: number): PhaseBlock {
     // Collect deload / testing weeks
     for (const week of (block.weeks || [])) {
       if (week.isDeload) {
-        milestones.push({ type: 'deload', week: week.weekNumber, label: 'Deload Week' });
+        milestones.push({ type: 'deload', week: week.weekNumber, label: 'Recovery Week' });
       } else if (week.isTest) {
         milestones.push({ type: 'testing', week: week.weekNumber, label: 'Testing Week' });
       }
@@ -543,7 +543,7 @@ export default function RoadmapScreen() {
           <Text style={s.sectionLabel}>YOUR YEAR AT A GLANCE</Text>
           <View style={s.glanceGrid}>
             <GlanceStat icon="calendar-range"    value={String(totalWeeks)}    label="TOTAL WEEKS"   />
-            <GlanceStat icon="weather-night"     value={String(deloadCount)}   label="DELOADS"       color={BLUE}    />
+            <GlanceStat icon="weather-night"     value={String(deloadCount)}   label="RECOVERY WKS"  color={BLUE}    />
             <GlanceStat icon="map-marker-path"   value={String(phasesRemaining)} label="PHASES LEFT" />
             <GlanceStat icon="flag-checkered"    value={endMonthYear}          label="EST. END"      color={TEAL}    />
           </View>

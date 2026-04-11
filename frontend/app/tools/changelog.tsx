@@ -11,7 +11,7 @@ const CHANGE_TYPE_CONFIG: Record<string, { icon: string; color: string; label: s
   substitution:  { icon: 'swap-horizontal', color: COLORS.accent,             label: 'Substitution' },
   rotation:      { icon: 'rotate-3d-variant', color: COLORS.accentBlue,      label: 'Rotation' },
   'auto-adjust': { icon: 'tune-vertical',   color: COLORS.sessions.de_lower.text, label: 'Load Adj.' },
-  deload:        { icon: 'sleep',            color: '#FF9800',                label: 'Deload' },
+  deload:        { icon: 'sleep',            color: '#FF9800',                label: 'Recovery' },
   rag:           { icon: 'dna',              color: COLORS.status.success,   label: 'Research' },
   default:       { icon: 'history',          color: COLORS.text.muted,       label: 'Change' },
 };

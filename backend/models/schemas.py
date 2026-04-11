@@ -3,10 +3,20 @@ The Program — Core Data Models
 Pydantic schemas for MongoDB collections
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
+
+# ─── Legacy → New session type migration map ─────────────────────────────────
+_SESSION_TYPE_MIGRATION: Dict[str, str] = {
+    "Max Effort Upper":    "Heavy Upper",
+    "Max Effort Lower":    "Heavy Lower",
+    "Dynamic Effort Upper":"Speed Upper",
+    "Dynamic Effort Lower":"Speed Lower",
+    "GPP / Recovery":      "Recovery / Conditioning",
+    "GPP":                 "Recovery / Conditioning",
+}
 
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
@@ -26,13 +36,13 @@ class ExperienceLevel(str, Enum):
     ELITE = "Elite"
 
 class SessionType(str, Enum):
-    ME_UPPER = "Max Effort Upper"
-    ME_LOWER = "Max Effort Lower"
-    DE_UPPER = "Dynamic Effort Upper"
-    DE_LOWER = "Dynamic Effort Lower"
+    ME_UPPER = "Heavy Upper"
+    ME_LOWER = "Heavy Lower"
+    DE_UPPER = "Speed Upper"
+    DE_LOWER = "Speed Lower"
     RE_UPPER = "Repetition Upper"
     RE_LOWER = "Repetition Lower"
-    GPP = "GPP / Recovery"
+    GPP = "Recovery / Conditioning"
     FULL_BODY = "Full Body"
     EVENT_TRAINING = "Event Training"
 
@@ -176,6 +186,14 @@ class Session(BaseModel):
     weekNumber: int = 1
     dayNumber: int = 1
     sessionType: SessionType = SessionType.ME_UPPER
+
+    @field_validator('sessionType', mode='before')
+    @classmethod
+    def migrate_session_type(cls, v: str) -> str:
+        """Auto-migrate legacy session type strings to the new terminology."""
+        if isinstance(v, str) and v in _SESSION_TYPE_MIGRATION:
+            return _SESSION_TYPE_MIGRATION[v]
+        return v
     objective: str = ""
     coachNote: str = ""
     exercises: List[SessionExercise] = []

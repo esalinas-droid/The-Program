@@ -139,9 +139,10 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
     const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
     const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
     const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
-    // Determine badge: DE days get 'dynamiceffort', ME days get 'maxeffort'
+    // Determine badge: Speed days get 'dynamiceffort', Heavy days get 'maxeffort'
     const isDynamic = session.sessionType.toLowerCase().includes('de') ||
-                      session.sessionType.toLowerCase().includes('dynamic');
+                      session.sessionType.toLowerCase().includes('dynamic') ||
+                      session.sessionType.toLowerCase().includes('speed');
     exs.push({
       id: 'local-main',
       name: liftName,
@@ -196,9 +197,9 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
 // ── Build Exercise list from API session data ──────────────────────────────────
 function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): Exercise[] {
   if (!apiExercises?.length) return EXERCISES;
-  // Determine if this is a Dynamic Effort session so main lift gets the right badge
+  // Determine if this is a Speed session so main lift gets the right badge
   const isDynamic = sessionType
-    ? sessionType.toLowerCase().includes('dynamic')
+    ? sessionType.toLowerCase().includes('dynamic') || sessionType.toLowerCase().includes('speed')
     : false;
 
   return apiExercises
@@ -243,12 +244,19 @@ const DAY_NUM: Record<string, number> = {
 };
 
 const SESSION_OBJECTIVES: Record<string, string> = {
-  'Max Effort Upper':    'Work to a 1RM on a pressing variation. Build supplemental and accessory volume.',
-  'Max Effort Lower':    'Work to a 1RM on a lower body pattern. Build posterior chain supplemental volume.',
-  'Dynamic Effort Upper':'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
-  'Dynamic Effort Lower':'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
-  'Event Day':           'Strongman event training. Prioritize technique and confidence across all implements.',
-  'Boxing / Recovery':   'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
+  // ── New terminology (forward-compatible) ───────────────────────────────────
+  'Heavy Upper':            'Build to a top set on a pressing variation. Add supplemental and accessory volume.',
+  'Heavy Lower':            'Build to a top set on a lower body pattern. Build posterior chain supplemental volume.',
+  'Speed Upper':            'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
+  'Speed Lower':            'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
+  'Recovery / Conditioning':'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
+  // ── Legacy (backward-compatible for existing saved plans) ─────────────────
+  'Max Effort Upper':       'Build to a top set on a pressing variation. Add supplemental and accessory volume.',
+  'Max Effort Lower':       'Build to a top set on a lower body pattern. Build posterior chain supplemental volume.',
+  'Dynamic Effort Upper':   'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
+  'Dynamic Effort Lower':   'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
+  'Event Day':              'Strongman event training. Prioritize technique and confidence across all implements.',
+  'Boxing / Recovery':      'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
 };
 
 const INJURY_MAP: Record<string, string[]> = {
@@ -281,8 +289,8 @@ function getSetCircleColor(type: SetType, logged: boolean): string {
 
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
   return ({
-    maxeffort:     { bg: COLORS.accent + '25',       text: COLORS.accent,           label: 'Max Effort' },
-    dynamiceffort: { bg: BLUE + '25',                text: BLUE,                    label: 'Dynamic Effort' },
+    maxeffort:     { bg: COLORS.accent + '25',       text: COLORS.accent,           label: 'Top Set' },
+    dynamiceffort: { bg: BLUE + '25',                text: BLUE,                    label: 'Speed Work' },
     supplemental:  { bg: COLORS.text.muted + '25',   text: COLORS.text.secondary,   label: 'Supplemental' },
     accessory:     { bg: COLORS.surfaceHighlight,     text: COLORS.text.secondary,   label: 'Accessory' },
     prehab:        { bg: TEAL + '25',                text: TEAL,                    label: 'Prehab' },
@@ -1198,7 +1206,7 @@ export default function TodayScreen() {
   const block        = getBlock(week);
   const blockLabel   = BLOCK_LABELS[block] || `BLOCK ${block}`;
   const dayNum       = DAY_NUM[todayName] || 1;
-  const sessionType  = apiSession?.session?.sessionType || todaySession?.sessionType || 'Max Effort Upper';
+  const sessionType  = apiSession?.session?.sessionType || todaySession?.sessionType || 'Heavy Upper';
   const sessionObj   = SESSION_OBJECTIVES[sessionType] || todaySession?.intentRPETarget || '';
   const coachNote    = todaySession?.coachingNotes
     || "Drive through today's session with full intent. Build deliberately to your peak and leave no doubt in those supplemental sets.";

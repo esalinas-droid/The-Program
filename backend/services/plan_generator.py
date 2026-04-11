@@ -568,11 +568,11 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
     injuries = injuries or []
     equipment = equipment or []
     type_map = {
-        SessionType.ME_UPPER: ("Max effort pressing day. Work to a heavy single, then build volume.", _build_me_upper, "upper"),
-        SessionType.ME_LOWER: ("Max effort squat/pull day. Work to a heavy single, then accessories.", _build_me_lower, "lower"),
-        SessionType.DE_UPPER: ("Dynamic effort pressing. Speed work with accommodating resistance.", _build_de_upper, "upper"),
-        SessionType.DE_LOWER: ("Dynamic effort squat/pull. Speed and power development.", _build_de_lower, "lower"),
-        SessionType.GPP: ("General physical preparedness. Low-intensity recovery work.", _build_gpp, "gpp"),
+        SessionType.ME_UPPER: ("Heavy pressing day. Build to a top single on a pressing variation, then build supplemental volume.", _build_me_upper, "upper"),
+        SessionType.ME_LOWER: ("Heavy lower body day. Build to a top single on a squat or pull pattern, then accessories.", _build_me_lower, "lower"),
+        SessionType.DE_UPPER: ("Speed upper day. Bar-speed work with accommodating resistance — explosive every rep.", _build_de_upper, "upper"),
+        SessionType.DE_LOWER: ("Speed lower day. Speed squats and pulls for power and rate-of-force development.", _build_de_lower, "lower"),
+        SessionType.GPP: ("Recovery and conditioning session. Low-intensity work to promote blood flow and movement quality.", _build_gpp, "gpp"),
     }
 
     objective, builder, warmup_key = type_map.get(session_type, type_map[SessionType.ME_UPPER])
@@ -656,20 +656,20 @@ PHASE_TEMPLATES = {
     GoalType.STRENGTH: [
         {"name": "Intro Phase", "goal": "Build work capacity and movement quality", "adaptation": "Motor pattern refinement, connective tissue prep", "weeks": 4},
         {"name": "Base Strength", "goal": "Establish baseline loading on all primary movements", "adaptation": "Strength endurance, volume tolerance", "weeks": 8},
-        {"name": "Accumulation", "goal": "Progressive overload with increasing intensity", "adaptation": "Muscle hypertrophy, strength gains", "weeks": 8},
-        {"name": "Intensification", "goal": "Push intensity while managing fatigue", "adaptation": "Peak strength expression, neural drive", "weeks": 8},
-        {"name": "Peaking", "goal": "Maximize strength expression on primary lifts", "adaptation": "1RM performance, competition prep", "weeks": 6},
+        {"name": "Building Phase", "goal": "Progressive overload with increasing intensity", "adaptation": "Muscle hypertrophy, strength gains", "weeks": 8},
+        {"name": "Strength Phase", "goal": "Push intensity while managing fatigue", "adaptation": "Peak strength expression, neural drive", "weeks": 8},
+        {"name": "Peaking", "goal": "Maximize strength expression on primary lifts", "adaptation": "Peak strength performance, competition prep", "weeks": 6},
         {"name": "Competition Prep", "goal": "Fine-tune openers and peak for competition", "adaptation": "Peak performance, confidence building", "weeks": 4},
-        {"name": "Off-Season", "goal": "Recovery, address weaknesses, build base for next cycle", "adaptation": "Recovery, hypertrophy, GPP", "weeks": 14},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses, build base for next cycle", "adaptation": "Recovery, hypertrophy, conditioning", "weeks": 14},
     ],
     GoalType.STRONGMAN: [
         {"name": "Intro Phase", "goal": "Build work capacity with event exposure", "adaptation": "Movement skill, conditioning base", "weeks": 4},
         {"name": "Base Strength", "goal": "Build absolute strength foundation", "adaptation": "Strength endurance, event technique", "weeks": 8},
         {"name": "Event Specialization", "goal": "Focus on competition events", "adaptation": "Event-specific strength and skill", "weeks": 8},
-        {"name": "Intensification", "goal": "Push event weights toward competition loads", "adaptation": "Peak strength, event confidence", "weeks": 8},
+        {"name": "Strength Phase", "goal": "Push event weights toward competition loads", "adaptation": "Peak strength, event confidence", "weeks": 8},
         {"name": "Peaking", "goal": "Practice competition events at target weights", "adaptation": "Competition readiness", "weeks": 6},
         {"name": "Competition Prep", "goal": "Taper and peak for competition day", "adaptation": "Peak performance", "weeks": 4},
-        {"name": "Off-Season", "goal": "Recovery, address weaknesses", "adaptation": "GPP, hypertrophy, rehab", "weeks": 14},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses", "adaptation": "Conditioning, hypertrophy, rehab", "weeks": 14},
     ],
 }
 
@@ -678,20 +678,20 @@ PHASE_TEMPLATES_NO_COMP = {
     GoalType.STRENGTH: [
         {"name": "Intro Phase", "goal": "Build work capacity and movement quality", "adaptation": "Motor pattern refinement, connective tissue prep", "weeks": 4},
         {"name": "Base Strength", "goal": "Establish baseline loading on all primary movements", "adaptation": "Strength endurance, volume tolerance", "weeks": 8},
-        {"name": "Accumulation", "goal": "Progressive overload with increasing intensity", "adaptation": "Muscle hypertrophy, strength gains", "weeks": 8},
-        {"name": "Intensification", "goal": "Push intensity while managing fatigue", "adaptation": "Peak strength expression, neural drive", "weeks": 8},
-        {"name": "Peaking", "goal": "Maximize strength expression on primary lifts", "adaptation": "Peak 1RM performance, strength consolidation", "weeks": 6},
-        {"name": "Strength Consolidation", "goal": "Consolidate strength gains and reset for the next training cycle", "adaptation": "Active recovery, GPP, mobility and movement quality work", "weeks": 4},
-        {"name": "Off-Season", "goal": "Recovery, address weaknesses, build the base for the next cycle", "adaptation": "Recovery, hypertrophy, GPP work", "weeks": 14},
+        {"name": "Building Phase", "goal": "Progressive overload with increasing intensity", "adaptation": "Muscle hypertrophy, strength gains", "weeks": 8},
+        {"name": "Strength Phase", "goal": "Push intensity while managing fatigue", "adaptation": "Peak strength expression, neural drive", "weeks": 8},
+        {"name": "Peaking", "goal": "Maximize strength expression on primary lifts", "adaptation": "Peak strength performance, consolidation", "weeks": 6},
+        {"name": "Strength Consolidation", "goal": "Consolidate strength gains and reset for the next training cycle", "adaptation": "Active recovery, conditioning, mobility and movement quality work", "weeks": 4},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses, build the base for the next cycle", "adaptation": "Recovery, hypertrophy, conditioning work", "weeks": 14},
     ],
     GoalType.STRONGMAN: [
         {"name": "Intro Phase", "goal": "Build work capacity with event exposure", "adaptation": "Movement skill, conditioning base", "weeks": 4},
         {"name": "Base Strength", "goal": "Build absolute strength foundation", "adaptation": "Strength endurance, event technique", "weeks": 8},
         {"name": "Event Specialization", "goal": "Focus on competition events and technique", "adaptation": "Event-specific strength and skill development", "weeks": 8},
-        {"name": "Intensification", "goal": "Push event weights and absolute strength", "adaptation": "Peak strength, event confidence", "weeks": 8},
+        {"name": "Strength Phase", "goal": "Push event weights and absolute strength", "adaptation": "Peak strength, event confidence", "weeks": 8},
         {"name": "Peaking", "goal": "Maximize event performance and strength expression", "adaptation": "Competition readiness, peak output", "weeks": 6},
-        {"name": "Strength Consolidation", "goal": "Consolidate event strength and reset for next cycle", "adaptation": "Active recovery, GPP, technique refinement", "weeks": 4},
-        {"name": "Off-Season", "goal": "Recovery, address weaknesses and rebuild", "adaptation": "GPP, hypertrophy, rehab work", "weeks": 14},
+        {"name": "Strength Consolidation", "goal": "Consolidate event strength and reset for next cycle", "adaptation": "Active recovery, conditioning, technique refinement", "weeks": 4},
+        {"name": "Off-Season", "goal": "Recovery, address weaknesses and rebuild", "adaptation": "Conditioning, hypertrophy, rehab work", "weeks": 14},
     ],
 }
 

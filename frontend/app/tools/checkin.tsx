@@ -94,7 +94,7 @@ export default function CheckInScreen() {
           <Text style={s.cardTitle}>THIS WEEK'S STATS</Text>
           <View style={s.statsGrid}>
             <StatItem label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats?.avgPain >= 3 ? COLORS.status.error : COLORS.text.primary} />
-            <StatItem label="AVG RPE" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} />
+            <StatItem label="AVG EFFORT" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} />
             <StatItem label="COMPLETION" value={weekStats ? `${weekStats.completionRate}%` : '—'} />
             <StatItem label="BODYWEIGHT" value={profile?.currentBodyweight ? `${profile.currentBodyweight} lbs` : '—'} />
           </View>
@@ -129,14 +129,14 @@ export default function CheckInScreen() {
           <Text style={s.cardTitle}>NEXT WEEK FOCUS (WEEK {nextWeek})</Text>
           <View style={s.nextRow}>
             <Text style={s.nextLabel}>Phase</Text>
-            <Text style={s.nextVal}>{DELOAD_WEEKS.includes(nextWeek) ? 'Deload' : getPhase(nextWeek)}</Text>
+            <Text style={s.nextVal}>{DELOAD_WEEKS.includes(nextWeek) ? 'Recovery Week' : getPhase(nextWeek)}</Text>
           </View>
           <View style={s.nextRow}>
             <Text style={s.nextLabel}>Block</Text>
             <Text style={s.nextVal}>{getBlockName(getBlock(nextWeek))}</Text>
           </View>
           <View style={s.nextRow}>
-            <Text style={s.nextLabel}>Deload</Text>
+            <Text style={s.nextLabel}>Recovery Week</Text>
             <Text style={[s.nextVal, DELOAD_WEEKS.includes(nextWeek) && { color: COLORS.text.muted }]}>{DELOAD_WEEKS.includes(nextWeek) ? 'YES — Keep intensity low' : 'No'}</Text>
           </View>
         </View>

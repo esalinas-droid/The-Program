@@ -44,7 +44,7 @@ function getBlockWeekRange(block: number): { start: number; end: number } {
 // ── Coaching directive (contextual, coach-voice) ──────────────────────────────
 function getCoachingDirective(week: number, block: number, phase: string): string {
   if (phase === 'Deload') {
-    return `Week ${week} is a mandatory deload. Adaptation happens here — not in the gym. Drop loads to 40–50%, move through full range, and prioritise sleep and food. Every deload you take seriously is a PR you will hit next block.`;
+    return `Week ${week} is a mandatory recovery week. Adaptation happens here — not in the gym. Drop loads to 40–50%, move through full range, and prioritise sleep and food. Every recovery week you take seriously is a PR you will hit next block.`;
   }
 
   const directives: Record<number, Record<string, string>> = {
@@ -66,7 +66,7 @@ function getCoachingDirective(week: number, block: number, phase: string): strin
     4: {
       Intro: `Block 4, Week ${week}. Volume-Strength — the workload climbs from here. Manage your recovery like a professional: eat around your sessions, sleep more than feels necessary, and keep pain scores low. Volume is the investment. Strength is the return.`,
       Build: `Week ${week} — both volume and intensity are elevated. This is the hardest block on paper. Do not skip accessories. Do not shortcut warm-ups. Everything that feels optional right now is compulsory.`,
-      Peak:  `Volume-Strength peak. Week ${week} — push through it. The sessions that feel hardest are the ones that pay off the most. Earn the deload.`,
+      Peak:  `Volume-Strength peak. Week ${week} — push through it. The sessions that feel hardest are the ones that pay off the most. Earn the recovery week.`,
     },
     5: {
       Intro: `Block 5, Week ${week}. Everything narrows to the main lifts now. Volume drops, intensity climbs. Treat every set on a primary movement as a statement of intent. This is Strength Emphasis — live up to the name.`,
@@ -328,7 +328,7 @@ export default function Dashboard() {
             <Text style={s.coachCardLabel}>COACH'S DIRECTIVE — WEEK {week}</Text>
             {deload && (
               <View testID="deload-badge" style={s.deloadPill}>
-                <Text style={s.deloadPillText}>DELOAD</Text>
+                <Text style={s.deloadPillText}>RECOVERY</Text>
               </View>
             )}
           </View>
@@ -436,7 +436,7 @@ export default function Dashboard() {
                 <MaterialCommunityIcons name="sleep" size={14} color='#FF9800' />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: '#FF9800' }]}>DELOAD RECOMMENDED</Text>
+                <Text style={[s.priorityCardTitle, { color: '#FF9800' }]}>RECOVERY RECOMMENDED</Text>
                 <Text style={s.priorityCardSub}>Score {deloadStatus.deloadScore}/12 — recovery needed</Text>
               </View>
               <View style={[s.comingSoonPill, { backgroundColor: '#FF980020', borderColor: '#FF980040', borderWidth: 1 }]}>
@@ -470,7 +470,7 @@ export default function Dashboard() {
                 <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEK {weeklyReview.week} REVIEW</Text>
                 <Text style={s.priorityCardSub}>
                   {weeklyReview.stats?.sessionsCompleted ?? 0}/{weeklyReview.stats?.sessionsPlanned ?? 4} sessions
-                  {weeklyReview.stats?.avgRPE > 0 ? `  ·  RPE ${weeklyReview.stats.avgRPE}/10` : ''}
+                  {weeklyReview.stats?.avgRPE > 0 ? `  ·  Effort ${weeklyReview.stats.avgRPE}/10` : ''}
                   {weeklyReview.stats?.prsHit > 0 ? `  ·  ${weeklyReview.stats.prsHit} PR${weeklyReview.stats.prsHit > 1 ? 's' : ''}` : ''}
                 </Text>
               </View>
@@ -522,7 +522,7 @@ export default function Dashboard() {
         <Text style={s.sectionTitle}>THIS WEEK</Text>
         <View style={s.statsGrid}>
           <StatBox label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats && weekStats.avgPain >= 3 ? COLORS.status.error : COLORS.text.primary} testID="stat-pain" />
-          <StatBox label="AVG RPE" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} testID="stat-rpe" />
+          <StatBox label="AVG EFFORT" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} testID="stat-rpe" />
           <StatBox label="COMPLETION" value={weekStats ? `${weekStats.completionRate}%` : '—'} testID="stat-completion" />
           <StatBox label="BODYWEIGHT" value={profile.currentBodyweight ? `${profile.currentBodyweight} lbs` : '—'} testID="stat-bw" />
         </View>
@@ -555,7 +555,7 @@ export default function Dashboard() {
         {bests && (
           <>
             <View style={s.sectionRow}>
-              <Text style={s.sectionTitle}>BEST E1RMs</Text>
+              <Text style={s.sectionTitle}>EST. MAXES</Text>
               <Text style={s.sectionSub}>From training logs</Text>
             </View>
             <View style={s.e1rmRow}>

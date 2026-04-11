@@ -23,13 +23,13 @@ export const COLORS = {
     info: '#2E75B6',
   },
   sessions: {
-    me_lower:  { bg: '#1A1200', borderColor: '#C9A84C', text: '#C9A84C', label: 'ME Lower' },
-    me_upper:  { bg: '#1A1500', borderColor: '#E8C96A', text: '#E8C96A', label: 'ME Upper' },
-    de_lower:  { bg: '#001A0D', borderColor: '#4CAF50', text: '#4CAF50', label: 'DE Lower' },
-    de_upper:  { bg: '#000D1A', borderColor: '#2E75B6', text: '#2E75B6', label: 'DE Upper' },
+    me_lower:  { bg: '#1A1200', borderColor: '#C9A84C', text: '#C9A84C', label: 'Heavy Lower' },
+    me_upper:  { bg: '#1A1500', borderColor: '#E8C96A', text: '#E8C96A', label: 'Heavy Upper' },
+    de_lower:  { bg: '#001A0D', borderColor: '#4CAF50', text: '#4CAF50', label: 'Speed Lower' },
+    de_upper:  { bg: '#000D1A', borderColor: '#2E75B6', text: '#2E75B6', label: 'Speed Upper' },
     event:     { bg: '#0D001A', borderColor: '#7B2FBE', text: '#9B6FDE', label: 'Event Day' },
-    recovery:  { bg: '#1A0D00', borderColor: '#FFA726', text: '#FFA726', label: 'Boxing / Recovery' },
-    deload:    { bg: '#141414', borderColor: '#666666', text: '#888888', label: 'Deload' },
+    recovery:  { bg: '#1A0D00', borderColor: '#FFA726', text: '#FFA726', label: 'Recovery / Conditioning' },
+    deload:    { bg: '#141414', borderColor: '#666666', text: '#888888', label: 'Recovery Week' },
   },
 };
 
@@ -48,8 +48,14 @@ export const FONTS = {
 
 export function getSessionStyle(sessionType: string) {
   const t = sessionType.toLowerCase();
-  // Handle full backend names ("Max Effort Lower", "Dynamic Effort Upper") and
-  // short local names ("ME Lower", "DE Upper") — order matters, check specific first
+  // ── New terminology (forward-compatible) ──────────────────────────────────
+  if (t.includes('heavy lower'))  return COLORS.sessions.me_lower;
+  if (t.includes('heavy upper'))  return COLORS.sessions.me_upper;
+  if (t.includes('speed lower'))  return COLORS.sessions.de_lower;
+  if (t.includes('speed upper'))  return COLORS.sessions.de_upper;
+  if (t.includes('recovery week')) return COLORS.sessions.deload;
+  if (t.includes('recovery / conditioning') || t.includes('conditioning')) return COLORS.sessions.recovery;
+  // ── Legacy terminology (backward-compatible for old DB records) ─────────
   if (t.includes('max effort lower') || t.includes('me lower')) return COLORS.sessions.me_lower;
   if (t.includes('max effort upper') || t.includes('me upper')) return COLORS.sessions.me_upper;
   if (t.includes('dynamic effort lower') || t.includes('de lower')) return COLORS.sessions.de_lower;

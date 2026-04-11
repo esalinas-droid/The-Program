@@ -28,7 +28,7 @@ const BUILD_PHASES = [
   'Programming volume and intensity',
   'Accounting for injuries and recovery',
   'Building your 52-week timeline',
-  'Calibrating deload and test weeks',
+  'Calibrating recovery and test weeks',
   'Finalizing your program',
 ];
 
@@ -49,10 +49,10 @@ function formatDate(iso: string): string {
 
 // ── Static training split ────────────────────────────────────────────────────
 const SPLIT_DAYS = [
-  { type: 'ME UPPER', color: GOLD,  icon: 'arm-flex-outline' as const, focus: 'Work to a daily 1RM variation — floor press, board press, or comp bench' },
-  { type: 'ME LOWER', color: BLUE,  icon: 'weight-lifter'    as const, focus: 'Max squat or pull variation — heavy single, then supplemental volume' },
-  { type: 'DE UPPER', color: GOLD,  icon: 'flash'            as const, focus: 'Speed bench 8×3 @ 50–60% + accommodating resistance — bar speed wins' },
-  { type: 'DE LOWER', color: BLUE,  icon: 'run-fast'         as const, focus: 'Speed squat 10×2 + speed pull 8×1 — reset each rep, explosive intent' },
+  { type: 'HEAVY UPPER', color: GOLD,  icon: 'arm-flex-outline' as const, focus: 'Build to a top set on a pressing variation — floor press, board press, or comp bench' },
+  { type: 'HEAVY LOWER', color: BLUE,  icon: 'weight-lifter'    as const, focus: 'Heavy squat or pull variation — top set, then supplemental volume' },
+  { type: 'SPEED UPPER', color: GOLD,  icon: 'flash'            as const, focus: 'Speed bench 8×3 @ 50–60% + accommodating resistance — bar speed wins' },
+  { type: 'SPEED LOWER', color: BLUE,  icon: 'run-fast'         as const, focus: 'Speed squat 10×2 + speed pull 8×1 — reset each rep, explosive intent' },
 ];
 
 // ── BuildPhaseRow ─────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ function PhaseCard({ phase, anim, testWeeks, deloadWeeks }: {
           )}
           {hasDeload && (
             <View style={pc.deloadBadge}>
-              <Text style={pc.deloadBadgeText}>DELOAD</Text>
+              <Text style={pc.deloadBadgeText}>RECOVERY</Text>
             </View>
           )}
         </View>
@@ -358,7 +358,7 @@ export default function ProgramRevealScreen() {
           <View style={s.sectionWrap}>
             <Text style={s.sectionTitle}>52-Week Phase Timeline</Text>
             <Text style={s.sectionSub}>
-              {phases.length} phases · {testWeeks.length} testing weeks · {deloadWeeks.length} deload week{deloadWeeks.length !== 1 ? 's' : ''}
+              {phases.length} phases · {testWeeks.length} testing weeks · {deloadWeeks.length} recovery week{deloadWeeks.length !== 1 ? 's' : ''}
             </Text>
           </View>
 
@@ -417,7 +417,7 @@ export default function ProgramRevealScreen() {
                 {deloadWeeks.map(w => (
                   <View key={`d${w}`} style={s.keyChipGreen}>
                     <MaterialCommunityIcons name="battery-charging-outline" size={10} color={GREEN} />
-                    <Text style={s.keyChipGreenText}>Deload  Wk {w}</Text>
+                    <Text style={s.keyChipGreenText}>Recovery  Wk {w}</Text>
                   </View>
                 ))}
               </ScrollView>
@@ -451,8 +451,9 @@ export default function ProgramRevealScreen() {
               </View>
             </View>
             <Text style={s.coachText}>
-              The Program avoids accommodation by rotating exercises every session. Max Effort days
-              drive absolute strength by working to a daily max. Dynamic Effort days build speed-strength
+              The Program avoids accommodation by rotating exercises every session. Heavy days
+              drive absolute strength by building to a top set. Speed days build speed-strength
+              through compensatory acceleration at sub-maximal loads. Running both simultaneously creates
               through compensatory acceleration at sub-maximal loads. Running both simultaneously creates
               a strength athlete who is both strong and explosive — the combination that separates
               competitive lifters from everyone else.

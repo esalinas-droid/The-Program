@@ -12,23 +12,39 @@ import { calendarApi } from '../../src/utils/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const SESSION_COLORS: Record<string, string> = {
-  'Max Effort Lower':    '#E8B84B',
-  'Max Effort Upper':    '#A78BFA',
-  'Dynamic Effort Lower':'#60A5FA',
-  'Dynamic Effort Upper':'#34D399',
-  'Event':               '#F97316',
-  'Deload':              '#6B7280',
-  default:               '#9CA3AF',
+  // New terminology
+  'Heavy Lower':            '#E8B84B',
+  'Heavy Upper':            '#A78BFA',
+  'Speed Lower':            '#60A5FA',
+  'Speed Upper':            '#34D399',
+  // Legacy (backward-compatible)
+  'Max Effort Lower':       '#E8B84B',
+  'Max Effort Upper':       '#A78BFA',
+  'Dynamic Effort Lower':   '#60A5FA',
+  'Dynamic Effort Upper':   '#34D399',
+  'Event':                  '#F97316',
+  'Recovery / Conditioning':'#FFA726',
+  'Recovery Week':          '#6B7280',
+  'Deload':                 '#6B7280',
+  default:                  '#9CA3AF',
 };
 
 const SESSION_DOTS: Record<string, string> = {
-  'Max Effort Lower':    '#E8B84B',
-  'Max Effort Upper':    '#9D77F2',
-  'Dynamic Effort Lower':'#5B9CF7',
-  'Dynamic Effort Upper':'#30C78A',
-  'Event':               '#F57C30',
-  'Deload':              '#6B7280',
-  default:               '#888',
+  // New terminology
+  'Heavy Lower':            '#E8B84B',
+  'Heavy Upper':            '#9D77F2',
+  'Speed Lower':            '#5B9CF7',
+  'Speed Upper':            '#30C78A',
+  // Legacy (backward-compatible)
+  'Max Effort Lower':       '#E8B84B',
+  'Max Effort Upper':       '#9D77F2',
+  'Dynamic Effort Lower':   '#5B9CF7',
+  'Dynamic Effort Upper':   '#30C78A',
+  'Event':                  '#F57C30',
+  'Recovery / Conditioning':'#FFA726',
+  'Recovery Week':          '#6B7280',
+  'Deload':                 '#6B7280',
+  default:                  '#888',
 };
 
 function sessionColor(type: string) {
@@ -525,7 +541,7 @@ function SessionCard({ event, onMove, onUndo }: {
           {event.isDeloadWeek && (
             <View style={sc.deloadBadge}>
               <MaterialCommunityIcons name="weather-night" size={10} color="#9CA3AF" />
-              <Text style={sc.deloadTxt}>Deload</Text>
+              <Text style={sc.deloadTxt}>Recovery</Text>
             </View>
           )}
           <MaterialCommunityIcons
