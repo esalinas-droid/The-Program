@@ -24,7 +24,7 @@ export default function CalculatorScreen() {
             <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={s.backBtn}>
               <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.text.secondary} />
             </TouchableOpacity>
-            <Text style={s.title}>1RM CALCULATOR</Text>
+            <Text style={s.title}>MAX CALCULATOR</Text>
           </View>
 
           {/* Input Fields */}
@@ -83,7 +83,7 @@ export default function CalculatorScreen() {
 
           {/* Note */}
           <View style={s.noteCard}>
-            <Text style={s.noteText}>Epley is most accurate between 2–10 reps. For a true 1-rep max, the actual weight lifted is your e1RM. Accuracy decreases above 10 reps.</Text>
+            <Text style={s.noteText}>Epley is most accurate between 2–10 reps. For a true max effort, the actual weight lifted is your estimated max. Accuracy decreases above 10 reps.</Text>
           </View>
           <View style={{ height: 40 }} />
         </ScrollView>
