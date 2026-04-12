@@ -105,13 +105,10 @@
 user_problem_statement: >
   Build a mobile-first strength training app "The Program" for advanced athletes using the conjugate method.
   React Native/Expo frontend, FastAPI+MongoDB backend.
-  Current session focus: (1) Overhaul onboarding-intake.tsx with 11 comprehensive steps including
-  Bodyweight, Primary Weaknesses, Specialty Equipment, Recovery Profile, and Gym+Competition steps.
-  (2) Make settings.tsx editable (Athlete profile, injury flags, weaknesses).
-  (3) Implement injury sync confirmation flow: edit injuries → preview exercise impact → Accept/Cancel modal.
-  New backend endpoints: POST /api/plan/injury-preview and POST /api/plan/apply-injury-update.
-  New profile fields in AthleteProfile: goal, primaryWeaknesses, specialtyEquipment, sleepHours,
-  stressLevel, occupationType, hasCompetition, competitionDate, competitionType, gymTypes, trainingDaysCount.
+  Current session focus: Set Edit & Remove functionality on Today + Log pages.
+  Add Remove set mode (red X circles, TAP TO DELETE, DONE REMOVING button) and Edit logged mode
+  (blue pencil, editable inputs, SAVE button, DONE EDITING button) to exercise cards on both tabs.
+  Also completed logo branding rollout (logo-full.png in auth.tsx, logo-icon-tight.png in program-reveal.tsx and settings.tsx).
 
 backend:
   - task: "Clean server.py — remove duplicate program_router import and include_router calls"

@@ -20,6 +20,7 @@ import { ProgramSession, TodaySessionResponse } from '../../src/types';
 // ── Additional palette ────────────────────────────────────────────────────────
 const TEAL = '#4DCEA6';
 const BLUE = '#5B9CF5';
+const RED  = '#EF5350';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
@@ -784,7 +785,8 @@ const rt = StyleSheet.create({
 });
 
 // ── SetRow ────────────────────────────────────────────────────────────────────
-function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast }: {
+function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
+  removeMode, editMode, onRemove, onEditSave }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
@@ -794,9 +796,76 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   onRepsChange: (v: string) => void;
   onLog: () => void;
   isLast?: boolean;
+  removeMode?: boolean;
+  editMode?: boolean;
+  onRemove?: () => void;
+  onEditSave?: () => void;
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
+
+  // ── REMOVE MODE ──
+  if (removeMode) {
+    return (
+      <TouchableOpacity
+        style={[sr.row, !isLast && sr.rowBorder, { backgroundColor: RED + '08' }]}
+        onPress={onRemove}
+        activeOpacity={0.7}
+      >
+        <View style={[sr.circle, { borderColor: RED, backgroundColor: RED + '20' }]}>
+          <MaterialCommunityIcons name="close" size={11} color={RED} />
+        </View>
+        <Text style={[sr.typeTag, { color: RED + '70' }]}>{typeTag}</Text>
+        <View style={[sr.input, { borderColor: RED + '30', justifyContent: 'center' }]}>
+          <Text style={{ color: RED, textAlign: 'center', fontSize: 13, fontWeight: '600' }}>{weight || '—'}</Text>
+        </View>
+        <Text style={[sr.sep, { color: RED }]}>×</Text>
+        <View style={[sr.input, sr.repsInput, { borderColor: RED + '30', justifyContent: 'center' }]}>
+          <Text style={{ color: RED, textAlign: 'center', fontSize: 13, fontWeight: '600' }}>{reps || '—'}</Text>
+        </View>
+        <View style={sr.doneWrap}>
+          <Text style={{ color: RED, fontSize: 9, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>{'TAP TO\nDELETE'}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  // ── EDIT MODE (logged set becomes editable) ──
+  if (editMode && logged) {
+    return (
+      <View style={[sr.row, !isLast && sr.rowBorder]}>
+        <View style={[sr.circle, { borderColor: BLUE, backgroundColor: BLUE + '20' }]}>
+          <MaterialCommunityIcons name="pencil" size={11} color={BLUE} />
+        </View>
+        <Text style={sr.typeTag}>{typeTag}</Text>
+        <TextInput
+          style={[sr.input, { borderColor: BLUE + '40', color: BLUE }]}
+          value={weight}
+          onChangeText={onWeightChange}
+          keyboardType="numeric"
+          editable
+          selectTextOnFocus
+          returnKeyType="done"
+          placeholder="lbs"
+          placeholderTextColor={COLORS.text.muted}
+        />
+        <Text style={sr.sep}>×</Text>
+        <TextInput
+          style={[sr.input, sr.repsInput, { borderColor: BLUE + '40', color: BLUE }]}
+          value={reps}
+          onChangeText={onRepsChange}
+          editable
+          selectTextOnFocus
+          returnKeyType="done"
+          placeholder="reps"
+          placeholderTextColor={COLORS.text.muted}
+        />
+        <TouchableOpacity onPress={onEditSave} style={[sr.logBtn, { backgroundColor: BLUE }]} activeOpacity={0.8}>
+          <Text style={sr.logBtnText}>SAVE</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[sr.row, !isLast && sr.rowBorder]}>
@@ -870,6 +939,7 @@ const sr = StyleSheet.create({
 function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
+  inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -884,6 +954,13 @@ function ExerciseCard({
   onSetValueChange: (setId: string, field: 'weight' | 'reps', value: string) => void;
   effort: number | undefined;
   onEffortChange: (v: number) => void;
+  inRemoveMode: boolean;
+  inEditMode: boolean;
+  onRemoveSet: (setId: string) => void;
+  onEditSave: (setId: string) => void;
+  onEnterRemoveMode: () => void;
+  onEnterEditMode: () => void;
+  onExitMode: () => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -891,16 +968,27 @@ function ExerciseCard({
   const allDone     = loggedCount === total;
   const displayName = swap?.replacement ?? exercise.name;
   const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
+  const cardBorderColor = inRemoveMode ? RED + '40' : inEditMode ? BLUE + '40' : COLORS.border;
 
   return (
-    <View style={ec.card}>
+    <View style={[ec.card, { borderColor: cardBorderColor }]}>
       {/* ── Collapsible header (category badge + progress + chevron) ── */}
       <TouchableOpacity onPress={onToggle} style={ec.header} activeOpacity={0.8}>
         <View style={ec.headerLeft}>
           <View style={[ec.catBadge, { backgroundColor: catStyle.bg }]}>
             <Text style={[ec.catBadgeText, { color: catStyle.text }]}>{catStyle.label}</Text>
           </View>
-          {swap && (
+          {inRemoveMode && (
+            <View style={ec.modeBadge}>
+              <Text style={ec.modeBadgeRemoveText}>REMOVING</Text>
+            </View>
+          )}
+          {inEditMode && (
+            <View style={[ec.modeBadge, ec.modeBadgeEdit]}>
+              <Text style={ec.modeBadgeEditText}>EDITING</Text>
+            </View>
+          )}
+          {swap && !inRemoveMode && !inEditMode && (
             <View style={ec.swapPill}>
               <MaterialCommunityIcons name="swap-horizontal" size={10} color={COLORS.accent} />
               <Text style={ec.swapPillText}>SWAPPED</Text>
@@ -963,6 +1051,10 @@ function ExerciseCard({
                 onRepsChange={(v) => onSetValueChange(set.id, 'reps', v)}
                 onLog={() => onLog(set.id, displayName, set)}
                 isLast={idx === exercise.sets.length - 1}
+                removeMode={inRemoveMode}
+                editMode={inEditMode}
+                onRemove={() => onRemoveSet(set.id)}
+                onEditSave={() => onEditSave(set.id)}
               />
             ))}
           </View>
@@ -1006,8 +1098,8 @@ function ExerciseCard({
               onPress={() => onReportPain(displayName)}
               activeOpacity={0.75}
             >
-              <MaterialCommunityIcons name="alert-circle-outline" size={13} color="#EF5350" />
-              <Text style={[ec.actionPillText, { color: '#EF5350' }]}>Pain</Text>
+              <MaterialCommunityIcons name="alert-circle-outline" size={13} color={RED} />
+              <Text style={[ec.actionPillText, { color: RED }]}>Pain</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1018,7 +1110,41 @@ function ExerciseCard({
               <MaterialCommunityIcons name="plus" size={13} color={COLORS.accent} />
               <Text style={[ec.actionPillText, { color: COLORS.accent }]}>Add Set</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[ec.actionPill, ec.actionPillRemove, inRemoveMode && ec.actionPillRemoveActive]}
+              onPress={inRemoveMode ? onExitMode : onEnterRemoveMode}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="minus-circle-outline" size={13} color={RED} />
+              <Text style={[ec.actionPillText, { color: RED }]}>Remove set</Text>
+            </TouchableOpacity>
+
+            {loggedCount > 0 && (
+              <TouchableOpacity
+                style={[ec.actionPill, ec.actionPillEdit, inEditMode && ec.actionPillEditActive]}
+                onPress={inEditMode ? onExitMode : onEnterEditMode}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="pencil-outline" size={13} color={BLUE} />
+                <Text style={[ec.actionPillText, { color: BLUE }]}>Edit logged</Text>
+              </TouchableOpacity>
+            )}
           </View>
+
+          {/* ── DONE REMOVING button ── */}
+          {inRemoveMode && (
+            <TouchableOpacity style={ec.doneRemoveBtn} onPress={onExitMode} activeOpacity={0.85}>
+              <Text style={ec.doneRemoveBtnText}>DONE REMOVING</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* ── DONE EDITING button ── */}
+          {inEditMode && (
+            <TouchableOpacity style={ec.doneEditBtn} onPress={onExitMode} activeOpacity={0.85}>
+              <Text style={ec.doneEditBtnText}>DONE EDITING</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Coach notes */}
           {exercise.notes ? (
@@ -1060,11 +1186,25 @@ const ec = StyleSheet.create({
   effortNum:         { fontSize: 13, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
   effortNumSelected: { color: '#0A0A0C' },
   // ── Action pills
-  actionRow:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.md },
+  actionRow:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.md, flexWrap: 'wrap' },
   actionPill:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
   actionPillText:{ fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
   actionPillPain:{ borderColor: '#EF535035' },
   actionPillAdd: { borderColor: COLORS.accent + '45' },
+  actionPillRemove:       { borderColor: '#EF535035' },
+  actionPillRemoveActive: { backgroundColor: '#EF535020' },
+  actionPillEdit:         { borderColor: '#5B9CF535' },
+  actionPillEditActive:   { backgroundColor: '#5B9CF520' },
+  // Mode badges
+  modeBadge:          { paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.full, backgroundColor: '#EF535020' },
+  modeBadgeEdit:      { backgroundColor: '#5B9CF520' },
+  modeBadgeRemoveText:{ fontSize: 9, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, color: '#EF5350' },
+  modeBadgeEditText:  { fontSize: 9, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, color: '#5B9CF5' },
+  // Done mode buttons
+  doneRemoveBtn:     { marginTop: SPACING.sm, paddingVertical: 10, borderRadius: 8, backgroundColor: '#EF535020', borderWidth: 1, borderColor: '#EF535040', alignItems: 'center' },
+  doneRemoveBtnText: { color: '#EF5350', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
+  doneEditBtn:       { marginTop: SPACING.sm, paddingVertical: 10, borderRadius: 8, backgroundColor: '#5B9CF520', borderWidth: 1, borderColor: '#5B9CF540', alignItems: 'center' },
+  doneEditBtnText:   { color: '#5B9CF5', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -1096,6 +1236,9 @@ export default function TodayScreen() {
     return new Set([exs[0]?.id || 'local-main']);
   });
   const [swaps, setSwaps]             = useState<SwapMap>({});
+  const [removeModeExId, setRemoveModeExId] = useState<string | null>(null);
+  const [editModeExId, setEditModeExId]     = useState<string | null>(null);
+  const [logEntryIds, setLogEntryIds]       = useState<Record<string, string>>({});
   const [warmupExpanded, setWarmupExpanded] = useState(false);
   const [warmupData, setWarmupData] = useState<{
     title: string;
@@ -1298,7 +1441,7 @@ export default function TodayScreen() {
       try {
         const todayStr  = new Date().toISOString().split('T')[0];
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-        await logApi.create({
+        const result = await logApi.create({
           date: todayStr,
           week: week || 1,
           day: dayOfWeek,
@@ -1311,6 +1454,10 @@ export default function TodayScreen() {
           pain: 0,
           completed: 'yes',
         });
+        if (result?._id || result?.id) {
+          const entryId = result._id || result.id;
+          setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
+        }
       } catch (err) {
         console.log('[Today] Backend log failed:', err);
       }
@@ -1358,8 +1505,45 @@ export default function TodayScreen() {
     // Pain per-set tracking removed — use card-level Pain button instead
   };
 
+  const handleRemoveSet = (exId: string, setId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    const wasLogged = loggedSets.has(setId);
+    setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
+    setExercises(prev => prev.map(e =>
+      e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
+    ));
+    if (wasLogged && logEntryIds[setId]) {
+      logApi.delete(logEntryIds[setId]).catch(() => {});
+      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+    }
+  };
+
+  const handleEditSave = async (exId: string, setId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const ex = exercises.find(e => e.id === exId);
+    if (!ex) return;
+    const vals    = setValues[setId];
+    const weight  = parseFloat(vals?.weight || '0') || 0;
+    const reps    = parseInt(vals?.reps || '1') || 1;
+    try {
+      const todayStr  = new Date().toISOString().split('T')[0];
+      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+      const result = await logApi.create({
+        date: todayStr, week: week || 1, day: dayOfWeek,
+        sessionType: sessionType || 'Training',
+        exercise: ex.name, sets: 1, weight, reps, rpe: 7, pain: 0, completed: 'yes',
+      });
+      if (result?._id || result?.id) {
+        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      }
+    } catch (e) { console.warn('[Today] Edit save failed:', e); }
+  };
+
   const handleToggleExpand = (exId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Exit remove/edit mode when switching to a different card
+    if (removeModeExId && removeModeExId !== exId) setRemoveModeExId(null);
+    if (editModeExId && editModeExId !== exId) setEditModeExId(null);
     setExpanded(prev => {
       const next = new Set(prev);
       if (next.has(exId)) next.delete(exId); else next.add(exId);
@@ -1563,6 +1747,13 @@ export default function TodayScreen() {
             onSetValueChange={handleSetValueChange}
             effort={efforts[ex.id]}
             onEffortChange={(v) => handleEffortChange(ex.id, v)}
+            inRemoveMode={removeModeExId === ex.id}
+            inEditMode={editModeExId === ex.id}
+            onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
+            onEditSave={(setId) => handleEditSave(ex.id, setId)}
+            onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+            onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+            onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
           />
         ))}
 
