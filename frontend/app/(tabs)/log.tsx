@@ -13,12 +13,13 @@ import { calendarApi, logApi } from '../../src/utils/api';
 const GOLD  = '#C9A84C';
 const RED   = '#EF5350';
 const GREEN = '#4DCEA6';
+const AMBER = '#FF9800';
 const BG    = '#0A0A0C';
 const CARD  = '#111114';
 const BORDER = '#1E1E22';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type DayStatus = 'completed' | 'today' | 'upcoming' | 'rest';
+type DayStatus = 'completed' | 'today' | 'upcoming' | 'missed' | 'rest';
 
 interface WeekDay {
   date: string;
@@ -35,6 +36,7 @@ interface SessionCard {
   sessionType: string;
   status: DayStatus;
   exerciseNames: string[];
+  exercises: any[];
   logEntries: any[];
   weekNumber: number;
   phaseName: string;
@@ -87,7 +89,7 @@ function getDayStatus(
   if (!hasEvent) return 'rest';
   if (dateStr === todayStr) return 'today';
   if (dateStr < todayStr) {
-    return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'rest';
+    return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'missed';
   }
   return 'upcoming';
 }
@@ -148,7 +150,8 @@ function DayCard({
   const statusColor =
     day.status === 'completed' ? RED :
     day.status === 'today'     ? GOLD :
-    day.status === 'upcoming'  ? GREEN : '#444';
+    day.status === 'upcoming'  ? GREEN :
+    day.status === 'missed'    ? AMBER : '#444';
 
   const isActive = day.status !== 'rest';
   const cardBg    = day.status === 'today' ? GOLD + '15' : CARD;
@@ -156,7 +159,8 @@ function DayCard({
     isFirstSwap || isSecondSwap ? GOLD :
     day.status === 'completed' ? RED + '40' :
     day.status === 'today'     ? GOLD + '60' :
-    day.status === 'upcoming'  ? GREEN + '40' : BORDER;
+    day.status === 'upcoming'  ? GREEN + '40' :
+    day.status === 'missed'    ? AMBER + '40' : BORDER;
 
   return (
     <TouchableOpacity
@@ -195,13 +199,16 @@ function SessionHistoryCard({
   const style = getSessionStyle(card.sessionType);
   const stats = computeStats(card.logEntries);
   const grouped = groupByExercise(card.logEntries);
+  const hasLogs = card.logEntries.length > 0;
+  const isExpandable = card.status === 'completed' || card.status === 'missed';
   const exerciseList = card.exerciseNames.length > 0
     ? card.exerciseNames.join(' · ')
     : Object.keys(grouped).join(' · ') || 'Session planned';
 
   const borderColor =
-    card.status === 'today'     ? GOLD :
-    card.status === 'upcoming'  ? GREEN + '50' : BORDER;
+    card.status === 'today'    ? GOLD :
+    card.status === 'upcoming' ? GREEN + '50' :
+    card.status === 'missed'   ? AMBER + '40' : BORDER;
   const borderWidth = card.status === 'today' ? 1.5 : 1;
 
   return (
@@ -209,8 +216,8 @@ function SessionHistoryCard({
       {/* Header row */}
       <TouchableOpacity
         style={s.sessCardHeader}
-        onPress={card.status === 'completed' ? onToggle : undefined}
-        activeOpacity={card.status === 'completed' ? 0.7 : 1}
+        onPress={isExpandable ? onToggle : undefined}
+        activeOpacity={isExpandable ? 0.7 : 1}
       >
         <View style={s.sessCardLeft}>
           <View style={[s.sessBadge, { backgroundColor: style.bg, borderColor: style.borderColor }]}>
@@ -224,13 +231,16 @@ function SessionHistoryCard({
           {card.status === 'completed' && (
             <MaterialCommunityIcons name="check-circle" size={14} color={RED} style={{ marginLeft: 6 }} />
           )}
+          {card.status === 'missed' && (
+            <Text style={[s.statusPill, { color: AMBER }]}>Not logged</Text>
+          )}
           {card.status === 'upcoming' && (
             <Text style={[s.statusPill, { color: GREEN }]}>Upcoming</Text>
           )}
         </View>
         <View style={s.sessCardRight}>
           <Text style={s.sessDate}>{card.dateLabel}</Text>
-          {card.status === 'completed' && (
+          {isExpandable && (
             <MaterialCommunityIcons
               name={expanded ? 'chevron-up' : 'chevron-down'}
               size={18} color={COLORS.text.muted}
@@ -245,7 +255,7 @@ function SessionHistoryCard({
         {exerciseList}
       </Text>
 
-      {/* Stats row — completed only */}
+      {/* Stats row — completed with logs only */}
       {card.status === 'completed' && stats.sets > 0 && (
         <View style={s.statsRow}>
           <Text style={s.statItem}>
@@ -275,35 +285,61 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
-      {/* Expanded exercise detail — completed only */}
-      {card.status === 'completed' && expanded && (
+      {/* Expanded detail — completed (logged sets) OR missed (planned exercises) */}
+      {isExpandable && expanded && (
         <View style={s.expandDetail}>
-          {Object.entries(grouped).map(([exName, entries]) => {
-            const topEntry = entries.reduce((mx, e) =>
-              (parseFloat(e.weight) || 0) > (parseFloat(mx.weight) || 0) ? e : mx, entries[0]);
-            return (
-              <View key={exName} style={s.exDetailRow}>
-                <Text style={s.exDetailName} numberOfLines={1}>{exName}</Text>
-                <View style={s.setPillsRow}>
-                  {entries.slice(0, 4).map((e, i) => {
-                    const isTop = e === topEntry;
-                    return (
-                      <View key={i} style={[s.setPill, isTop && s.setPillTop]}>
-                        <Text style={[s.setPillTxt, isTop && s.setPillTxtTop]}>
-                          {e.weight ? `${e.weight}×${e.reps}` : `—×${e.reps}`}
-                        </Text>
+          {hasLogs ? (
+            // Completed: show logged weight × reps pills
+            Object.entries(grouped).map(([exName, entries]) => {
+              const topEntry = entries.reduce((mx, e) =>
+                (parseFloat(e.weight) || 0) > (parseFloat(mx.weight) || 0) ? e : mx, entries[0]);
+              return (
+                <View key={exName} style={s.exDetailRow}>
+                  <Text style={s.exDetailName} numberOfLines={1}>{exName}</Text>
+                  <View style={s.setPillsRow}>
+                    {entries.slice(0, 4).map((e, i) => {
+                      const isTop = e === topEntry;
+                      return (
+                        <View key={i} style={[s.setPill, isTop && s.setPillTop]}>
+                          <Text style={[s.setPillTxt, isTop && s.setPillTxtTop]}>
+                            {e.weight ? `${e.weight}×${e.reps}` : `—×${e.reps}`}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                    {entries.length > 4 && (
+                      <View style={s.setPill}>
+                        <Text style={s.setPillTxt}>+{entries.length - 4}</Text>
                       </View>
-                    );
-                  })}
-                  {entries.length > 4 && (
-                    <View style={s.setPill}>
-                      <Text style={s.setPillTxt}>+{entries.length - 4}</Text>
-                    </View>
-                  )}
+                    )}
+                  </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })
+          ) : (
+            // Missed: show planned exercises from calendar event
+            <>
+              <Text style={s.plannedLabel}>Planned exercises</Text>
+              {card.exercises.length > 0 ? (
+                card.exercises.map((ex: any, i: number) => (
+                  <View key={i} style={s.plannedRow}>
+                    <View style={s.plannedDot} />
+                    <Text style={s.plannedName}>{ex.name || ex}</Text>
+                    {ex.sets && ex.reps ? (
+                      <Text style={s.plannedPrescription}>{ex.sets} × {ex.reps}</Text>
+                    ) : null}
+                  </View>
+                ))
+              ) : (
+                card.exerciseNames.map((name, i) => (
+                  <View key={i} style={s.plannedRow}>
+                    <View style={s.plannedDot} />
+                    <Text style={s.plannedName}>{name}</Text>
+                  </View>
+                ))
+              )}
+            </>
+          )}
         </View>
       )}
     </View>
@@ -387,6 +423,7 @@ export default function ScheduleScreen() {
           sessionType:   ev.sessionType || '',
           status,
           exerciseNames: exNames,
+          exercises:     ev.exercises || [],
           logEntries:    dayLogs,
           weekNumber:    ev.weekNumber || 1,
           phaseName:     ev.phaseName  || '',
@@ -397,7 +434,10 @@ export default function ScheduleScreen() {
         if (b.status === 'today') return 1;
         if (a.status === 'completed' && b.status === 'upcoming') return -1;
         if (a.status === 'upcoming' && b.status === 'completed') return 1;
-        if (a.status === 'completed' && b.status === 'completed') return b.date.localeCompare(a.date);
+        if (a.status === 'missed'    && b.status === 'upcoming') return -1;
+        if (a.status === 'upcoming'  && b.status === 'missed')   return 1;
+        if ((a.status === 'completed' || a.status === 'missed') &&
+            (b.status === 'completed' || b.status === 'missed')) return b.date.localeCompare(a.date);
         return a.date.localeCompare(b.date);
       });
       setSessions(cards);
@@ -417,7 +457,7 @@ export default function ScheduleScreen() {
       }
       setWeekStats({
         sessionsCompleted: cards.filter((c: SessionCard) => c.status === 'completed').length,
-        totalPlanned:      events.length,
+        totalPlanned:      cards.filter((c: SessionCard) => c.status !== 'rest').length,
         volume,
         avgEffort:         effCount > 0 ? totalEff / effCount : 0,
       });
@@ -597,6 +637,7 @@ export default function ScheduleScreen() {
                 { color: RED,   label: 'Completed' },
                 { color: GOLD,  label: 'Today'     },
                 { color: GREEN, label: 'Upcoming'  },
+                { color: AMBER, label: 'Missed'    },
                 { color: '#444',label: 'Rest'      },
               ] as {color:string;label:string}[]).map(({ color, label }) => (
                 <View key={label} style={s.legendItem}>
@@ -740,4 +781,11 @@ const s = StyleSheet.create({
   setPillTxtTop: { color: GOLD, fontWeight: FONTS.weights.semibold },
 
   loadingBox: { paddingVertical: 60, alignItems: 'center' },
+
+  // Missed session planned-exercise view
+  plannedLabel: { fontSize: 10, color: AMBER, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
+  plannedRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  plannedDot:   { width: 4, height: 4, borderRadius: 2, backgroundColor: AMBER + '80' },
+  plannedName:  { flex: 1, fontSize: 12, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  plannedPrescription: { fontSize: 11, color: COLORS.text.muted, fontVariant: ['tabular-nums'] },
 });
