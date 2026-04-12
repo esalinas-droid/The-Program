@@ -1318,6 +1318,23 @@ export default function TodayScreen() {
                 }
               }
               if (recovered.size > 0) setLoggedSets(recovered);
+
+              // BUG 5 fix: recover log entry IDs so remove/edit can delete correct backend entry
+              const recoveredIds: Record<string, string> = {};
+              for (const ex of apiExs) {
+                const exName = ex.name.toLowerCase();
+                const matchingLogs = todayLogs
+                  .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
+                  .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+                for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
+                  const logEntry = matchingLogs[i];
+                  const setId    = ex.sets[i].id;
+                  if (logEntry.id || logEntry._id) {
+                    recoveredIds[setId] = logEntry.id || logEntry._id;
+                  }
+                }
+              }
+              setLogEntryIds(recoveredIds);
             }
           } catch { /* Non-blocking — keep empty set if fetch fails */ }
         }
@@ -1526,6 +1543,10 @@ export default function TodayScreen() {
     const weight  = parseFloat(vals?.weight || '0') || 0;
     const reps    = parseInt(vals?.reps || '1') || 1;
     try {
+      // BUG 3 fix: delete old entry first to prevent duplicates
+      if (logEntryIds[setId]) {
+        await logApi.delete(logEntryIds[setId]).catch(() => {});
+      }
       const todayStr  = new Date().toISOString().split('T')[0];
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
       const result = await logApi.create({

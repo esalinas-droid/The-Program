@@ -800,7 +800,7 @@ async def get_week_stats(week_num: int):
         return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0}
     pain_vals = [d["pain"] for d in docs if d.get("pain") is not None]
     rpe_vals = [d["rpe"] for d in docs if d.get("rpe") is not None]
-    completed = sum(1 for d in docs if d.get("completed") in ["Completed", "Modified"])
+    completed = sum(1 for d in docs if d.get("completed") in ["Completed", "Modified", "yes"])
     total = len(docs)
     return {
         "avgPain": round(sum(pain_vals) / len(pain_vals), 1) if pain_vals else 0,

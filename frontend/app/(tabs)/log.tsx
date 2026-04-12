@@ -828,6 +828,7 @@ export default function LogScreen() {
   // Remove / Edit mode
   const [removeModeExId, setRemoveModeExId] = useState<string | null>(null);
   const [editModeExId, setEditModeExId]     = useState<string | null>(null);
+  const [logEntryIds, setLogEntryIds]       = useState<Record<string, string>>({});
 
   // Rehab section
   const [rehabData, setRehabData]               = useState<any | null>(null);
@@ -868,6 +869,23 @@ export default function LogScreen() {
               return { ...ex, sets: ex.sets.map((s: any, i: number) => ({ ...s, logged: i < count })) };
             });
             setExercises(synced);
+
+            // BUG 5 fix: recover log entry IDs so remove/edit can delete correct backend entry
+            const recoveredIds: Record<string, string> = {};
+            for (const ex of apiExs) {
+              const exName = ex.name.toLowerCase();
+              const matchingLogs = todayLogs
+                .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
+                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+              for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
+                const logEntry = matchingLogs[i];
+                const setId    = ex.sets[i].id;
+                if (logEntry.id || logEntry._id) {
+                  recoveredIds[setId] = logEntry.id || logEntry._id;
+                }
+              }
+            }
+            setLogEntryIds(recoveredIds);
           } catch { setExercises(apiExs); }
         }
       } catch { /* keep local */ }
@@ -949,7 +967,7 @@ export default function LogScreen() {
 
     try {
       const today = getTodayDayName();
-      await logApi.create({
+      const result = await logApi.create({
         date: new Date().toISOString().slice(0, 10),
         week, day: today === 'Sunday' ? 'Monday' : today,
         sessionType,
@@ -959,8 +977,11 @@ export default function LogScreen() {
         reps:   parseInt(set.actualReps) || parseTargetReps(set.targetReps),
         rpe:    ex.effortRating || 7,
         pain:   0,
-        completed: 'Completed',
+        completed: 'yes',
       });
+      if (result?.id || result?._id) {
+        setLogEntryIds(prev => ({ ...prev, [setId]: result.id || result._id }));
+      }
     } catch (e) { console.warn('Log save failed:', e); }
   };
 
@@ -992,8 +1013,14 @@ export default function LogScreen() {
 
   const handleRemoveSet = (exId: string, setId: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    setExercises(prev => prev.map(ex =>
-      ex.id !== exId ? ex : { ...ex, sets: ex.sets.filter(s => s.id !== setId) }
+    const ex  = exercises.find(e => e.id === exId);
+    const set = ex?.sets.find(s => s.id === setId);
+    if (set?.logged && logEntryIds[setId]) {
+      logApi.delete(logEntryIds[setId]).catch(() => {});
+      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+    }
+    setExercises(prev => prev.map(e =>
+      e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
     ));
   };
 
@@ -1005,16 +1032,23 @@ export default function LogScreen() {
     // Re-mark as logged (values already updated via onUpdate)
     mutateSet(exId, setId, { logged: true });
     try {
+      // BUG 3 fix: delete old entry before creating new one to avoid duplicates
+      if (logEntryIds[setId]) {
+        await logApi.delete(logEntryIds[setId]).catch(() => {});
+      }
       const today = getTodayDayName();
-      await logApi.create({
+      const result = await logApi.create({
         date: new Date().toISOString().slice(0, 10),
         week, day: today === 'Sunday' ? 'Monday' : today,
         sessionType,
         exercise: ex.name, sets: 1,
         weight: parseFloat(set.actualWeight) || set.targetWeight,
         reps:   parseInt(set.actualReps) || parseTargetReps(set.targetReps),
-        rpe:    ex.effortRating || 7, pain: 0, completed: 'Completed',
+        rpe:    ex.effortRating || 7, pain: 0, completed: 'yes',
       });
+      if (result?.id || result?._id) {
+        setLogEntryIds(prev => ({ ...prev, [setId]: result.id || result._id }));
+      }
     } catch (e) { console.warn('[Log] Edit save failed:', e); }
   };
 
