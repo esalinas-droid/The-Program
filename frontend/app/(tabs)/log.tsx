@@ -101,7 +101,7 @@ function getSessionShortLabel(sessionType: string): string {
   if (t.includes('speed lower') || t.includes('de lower') || t.includes('dynamic effort lower')) return 'SPEED';
   if (t.includes('speed upper') || t.includes('de upper') || t.includes('dynamic effort upper')) return 'SPEED';
   if (t.includes('event')) return 'EVENT';
-  if (t.includes('deload') || t.includes('recovery week')) return 'DELOAD';
+  if (t.includes('deload') || t.includes('recovery week')) return 'RECOVERY';
   if (t.includes('recovery') || t.includes('conditioning')) return 'EASY';
   return 'TRAIN';
 }

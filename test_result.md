@@ -1130,7 +1130,21 @@ agent_communication:
 agent_communication:
   - agent: "main"
     message: >
-      MAJOR CHANGE: Log tab completely replaced with new read-only "Schedule" page.
+      FULL APP QA AUDIT — All terminology fixes applied pre-test.
+      Fixed BEFORE testing:
+      1. today.tsx coach notes: "supplemental" → "support" in user-facing text
+      2. current-block.tsx: "Max effort rotation — work to 1RM weekly" → "Heavy rotation — build to a top set weekly"
+      3. current-block.tsx: "Avg RPE" → "Avg Effort"
+      4. tools/checkin.tsx: "RPE:" → "Effort:"
+      5. log.tsx getSessionShortLabel: "DELOAD" → "RECOVERY"
+      
+      Already correct (no changes needed):
+      - index.tsx: "AVG EFFORT" label ✅, "EST. MAXES" heading ✅, no FAB ✅
+      - settings.tsx: "Recovery week alert" ✅, no Lose It section ✅
+      - today.tsx: category badges (Primary/Speed/Support/Accessory/Injury Prevention) ✅
+      
+      Expo restarted. Run the full QA test now using test credentials:
+      user_a@theprogram.app / StrongmanA123 (POST /api/seed first)
       
       WHAT CHANGED:
       1. _layout.tsx: "Log" tab → "Schedule" tab with calendar-month-outline icon

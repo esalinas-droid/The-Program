@@ -219,8 +219,8 @@ const SESSION_OBJECTIVES: Record<string, string> = {
   'Speed Lower':            'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
   'Recovery / Conditioning':'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
   // ── Legacy (backward-compatible for existing saved plans) ─────────────────
-  'Max Effort Upper':       'Build to a top set on a pressing variation. Add supplemental and accessory volume.',
-  'Max Effort Lower':       'Build to a top set on a lower body pattern. Build posterior chain supplemental volume.',
+  'Max Effort Upper':       'Build to a top set on a pressing variation. Add support and accessory volume.',
+  'Max Effort Lower':       'Build to a top set on a lower body pattern. Build posterior chain support volume.',
   'Dynamic Effort Upper':   'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
   'Dynamic Effort Lower':   'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
   'Event Day':              'Strongman event training. Prioritize technique and confidence across all implements.',

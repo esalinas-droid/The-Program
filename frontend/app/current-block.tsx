@@ -43,10 +43,10 @@ const BLOCK_NUM        = 1;
 const BLOCK_TOTAL      = 7;
 
 const SESSIONS = [
-  { label: 'ME Upper', type: 'me_upper' as const },
-  { label: 'ME Lower', type: 'me_lower' as const },
-  { label: 'DE Upper', type: 'de_upper' as const },
-  { label: 'DE Lower', type: 'de_lower' as const },
+  { label: 'Heavy Upper', type: 'me_upper' as const },
+  { label: 'Heavy Lower', type: 'me_lower' as const },
+  { label: 'Speed Upper', type: 'de_upper' as const },
+  { label: 'Speed Lower', type: 'de_lower' as const },
 ];
 
 const BLOCK_WEEKS: BlockWeek[] = [
@@ -70,25 +70,25 @@ const SESSION_COLORS: Record<string, { text: string; bg: string }> = {
 const KEY_EXERCISES: KeyExercise[] = [
   {
     name: 'Floor Press',
-    role: 'ME Upper',
+    role: 'Heavy Upper',
     roleColor: COLORS.sessions.me_upper.text,
     roleBg: COLORS.sessions.me_upper.bg,
-    detail: 'Max effort rotation — work to 1RM weekly',
+    detail: 'Heavy rotation — build to a top set weekly',
     trend: 'up',
     trendNote: '+12 lbs from baseline',
   },
   {
     name: 'SSB Squat',
-    role: 'ME Lower',
+    role: 'Heavy Lower',
     roleColor: COLORS.sessions.me_lower.text,
     roleBg: COLORS.sessions.me_lower.bg,
-    detail: 'Max effort rotation — work to 1RM weekly',
+    detail: 'Heavy rotation — build to a top set weekly',
     trend: 'up',
     trendNote: '+20 lbs from baseline',
   },
   {
     name: 'Speed Bench',
-    role: 'DE Upper',
+    role: 'Speed Upper',
     roleColor: COLORS.sessions.de_upper.text,
     roleBg: COLORS.sessions.de_upper.bg,
     detail: '9×3 @ 50% + bands — focus on bar speed',
@@ -97,7 +97,7 @@ const KEY_EXERCISES: KeyExercise[] = [
   },
   {
     name: 'Speed Squat',
-    role: 'DE Lower',
+    role: 'Speed Lower',
     roleColor: COLORS.sessions.de_lower.text,
     roleBg: COLORS.sessions.de_lower.bg,
     detail: '10×2 @ 55% + chains — explosive hip drive',
@@ -187,7 +187,7 @@ function WeekRow({ week, status, todayIndex, isLast }: {
           <View style={wr.statsRow}>
             <MaterialCommunityIcons name="check-circle-outline" size={12} color={TEAL} />
             <Text style={wr.statsText}>
-              {week.completedStats.sessions}/{week.completedStats.total} sessions · Avg RPE {week.completedStats.avgRPE}
+              {week.completedStats.sessions}/{week.completedStats.total} sessions · Avg Effort {week.completedStats.avgRPE}
             </Text>
           </View>
         )}
@@ -444,7 +444,7 @@ export default function CurrentBlockScreen() {
             <Text style={s.cardTitle}>How This Block Progresses</Text>
           </View>
           <Text style={s.cardBody}>
-            Max effort variations rotate weekly to prevent accommodation. Dynamic effort loads increase 5% each week with accommodating resistance (bands or chains). Accessory volume holds steady while your general work capacity and connective tissue strength build through consistent exposure.
+            Heavy session variations rotate weekly to prevent accommodation. Speed session loads increase 5% each week with accommodating resistance (bands or chains). Accessory volume holds steady while your general work capacity and connective tissue strength build through consistent exposure.
           </Text>
         </AnimSection>
 

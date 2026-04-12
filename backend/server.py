@@ -2770,11 +2770,11 @@ async def check_deload_needed(userId: str = Depends(get_current_user)):
     if deload_score >= 4:
         urgency = "immediate"
         recommended = True
-        message = "Deload recommended immediately. Clear signs of systemic overreaching."
+        message = "Recovery week recommended immediately. Clear signs of systemic overreaching."
     elif deload_score >= 2:
         urgency = "soon"
         recommended = False
-        message = f"Fatigue building (score {deload_score}/12). Consider a deload within 1–2 weeks."
+        message = f"Fatigue building (score {deload_score}/12). Consider a recovery week within 1–2 weeks."
     else:
         urgency = "none"
         recommended = False

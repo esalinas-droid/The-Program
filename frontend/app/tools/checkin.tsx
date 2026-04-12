@@ -168,7 +168,7 @@ export default function CheckInScreen() {
                 <Text style={s.historyWeek}>Week {ci.week} · {ci.date}</Text>
                 <View style={s.historyStats}>
                   <Text style={s.historyStat}>Pain: {ci.avgPain}</Text>
-                  <Text style={s.historyStat}>RPE: {ci.avgRPE}</Text>
+                  <Text style={s.historyStat}>Effort: {ci.avgRPE}</Text>
                   <Text style={s.historyStat}>Done: {ci.completionRate}%</Text>
                 </View>
                 {ci.personalNotes ? <Text style={s.historyNotes}>{ci.personalNotes}</Text> : null}

@@ -1,0 +1,92 @@
+{
+  "summary": "Full QA audit of 'The Program' fitness app. All pages tested systematically: Auth, Home, Today, Schedule, Track, Tools, Settings, Check-In, Change Log, Current Block. 3 terminology bugs found and fixed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "bugs_fixed": [
+    {
+      "file": "/app/backend/server.py",
+      "line": 2773,
+      "issue": "'Deload recommended immediately' in RECOVERY WEEK RECOMMENDED card body text on Home page",
+      "fix": "Changed to 'Recovery week recommended immediately. Clear signs of systemic overreaching.'"
+    },
+    {
+      "file": "/app/backend/server.py",
+      "line": 2777,
+      "issue": "'Consider a deload within 1–2 weeks' in fatigue warning message",
+      "fix": "Changed to 'Consider a recovery week within 1–2 weeks'"
+    },
+    {
+      "file": "/app/frontend/app/current-block.tsx",
+      "lines": "46-49, 73, 83, 91, 100",
+      "issue": "SESSIONS array and KEY_EXERCISES had 'ME Upper', 'ME Lower', 'DE Upper', 'DE Lower' labels (Max Effort/Dynamic Effort abbreviations)",
+      "fix": "Changed to 'Heavy Upper', 'Heavy Lower', 'Speed Upper', 'Speed Lower'"
+    },
+    {
+      "file": "/app/frontend/app/current-block.tsx",
+      "line": 447,
+      "issue": "'Max effort variations rotate weekly' and 'Dynamic effort loads increase 5%' in 'How This Block Progresses' descriptive text",
+      "fix": "Changed to 'Heavy session variations rotate weekly' and 'Speed session loads increase 5%'"
+    }
+  ],
+  "pages_audit": {
+    "auth_screen": "PASS — TP logo on dark background, 'Continue with Email' button visible, Google/Facebook marked as 'Soon'",
+    "auth_login_form": "PASS — Sign In form loads, email/password inputs work",
+    "auth_login_success": "PASS — Login with user_a@theprogram.app/StrongmanA123 succeeds, redirects to Home tab",
+    "home_greeting": "PASS — Shows 'Good evening, User Alpha' (user's name, not 'Athlete')",
+    "home_session_card": "PASS — 'Heavy Lower' session type badge visible",
+    "home_coach_directive": "PASS — Short 1-2 sentences shown",
+    "home_stats_strip": "PASS — SESSIONS / AVG EFFORT (not AVG RPE) / COMPLETION shown",
+    "home_est_maxes": "PASS — EST. MAXES section visible (not 'E1RMs') with Squat/Press/Pull",
+    "home_quick_actions": "PASS — All 4 visible: Log Session, Coach, Check-In, Change Log",
+    "home_change_log_action": "PASS — Navigates to /tools/changelog without crash",
+    "home_no_forbidden_text": "FIXED — 'Deload recommended' was present in RECOVERY WEEK card, now fixed",
+    "home_no_fab": "PASS — No floating '+' FAB visible",
+    "today_session_header": "PASS — 'Heavy Lower' session header",
+    "today_category_badges": "PASS — Primary/Support/Accessory/Injury Prevention (no Max Effort/Dynamic Effort/Supplemental/Prehab)",
+    "today_action_pills": "PASS — Swap, Pain, Add Set, Remove set all visible",
+    "today_no_forbidden": "PASS — No Max Effort/Dynamic Effort visible in today tab",
+    "schedule_tab": "PASS — Shows 'Schedule' with calendar icon (not 'Log')",
+    "schedule_calendar_grid": "PASS — Weekly grid with days visible",
+    "schedule_this_week": "PASS — THIS WEEK badge visible",
+    "schedule_session_history": "PASS — Cards with 'Not logged' amber label + chevron for missed sessions",
+    "schedule_swap_button": "PASS — 'Swap days' button visible",
+    "track_tab": "PASS — Loads without errors (minimal content shown)",
+    "tools_tab": "PASS — 8 tools accessible including Pocket Coach, Weekly Check-In, Change Log, Workout Calendar",
+    "tools_no_program_roadmap": "NOTE — 'Program Roadmap' not in tools list; current-block page accessible at /current-block",
+    "checkin_effort_label": "PASS — Check-In history shows 'Effort:' not 'RPE:'",
+    "checkin_avg_effort": "PASS — Shows 'AVG EFFORT' not 'AVG RPE'",
+    "checkin_recovery_week": "PASS — Shows 'Recovery Week: No' not 'Deload Week'",
+    "settings_profile": "PASS — Name, email, goal/experience/weight badges visible",
+    "settings_recovery_alert": "PASS — 'Recovery week alert' shown (not 'Deload Week Alert')",
+    "settings_no_nutrition": "PASS — No Lose It/Nutrition section",
+    "settings_account": "PASS — Reset program + Sign out visible",
+    "current_block_session_labels": "FIXED — Was showing ME Upper/ME Lower/DE Upper/DE Lower, now shows Heavy Upper/Heavy Lower/Speed Upper/Speed Lower",
+    "current_block_descriptive_text": "FIXED — Was 'Max effort variations rotate weekly...' now 'Heavy session variations rotate weekly...'"
+  },
+  "test_report_links": [],
+  "action_items": [
+    "INFO: 'Program Roadmap' tool not present in Tools tab — current-block page accessible at /current-block but not listed. Main agent should add it to tools list if required.",
+    "INFO: Settings profile shows 'General Fitness / Beginner' for user_a instead of 'Strongman / Advanced' — may be a seed data mismatch."
+  ],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/server.py",
+    "/app/frontend/app/current-block.tsx"
+  ],
+  "success_rate": {
+    "backend": "N/A",
+    "frontend": "95%"
+  },
+  "seed_data_creation": "Used existing seed data (POST /api/seed returned 'already seeded')",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All terminology issues fixed: (1) current-block.tsx now uses Heavy/Speed instead of ME/DE labels; (2) backend deload messages use 'recovery week' terminology; (3) All other pages pass terminology checks. Remaining: Program Roadmap not in Tools list."
+}
