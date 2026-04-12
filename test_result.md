@@ -901,4 +901,206 @@ agent_communication:
       Credentials: user_a@theprogram.app / StrongmanA123
 
 
+frontend:
+  - task: "Today Page Terminology Fix — ExCategory types and getCategoryStyle labels"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Changed ExCategory type from 'maxeffort'|'dynamiceffort' to 'primary'|'speed'.
+          Updated buildTodayExercisesFromLocal and buildTodayExercisesFromApi to use new keys.
+          Updated getCategoryStyle labels: Primary, Speed, Support, Accessory, Injury Prevention.
+          Removed Eric's hardcoded numbers (315x1, 375, etc.) from mock EXERCISES array.
+          Updated SESSION_OBJECTIVES map comment to reference new terminology.
+
+  - task: "Today Page UI — Thin gold progress bar at top"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "3px height gold (#C9A84C) progress bar at very top of page. Fills based on loggedSets/totalSets."
+
+  - task: "Today Page UI — Compact session header with slim italic coach note"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Replaced the full coach card (header+avatar+label) with a slim left-bordered italic note.
+          Session header is now compact: context line, title, objective.
+          Added compact readiness strip (⚡ GOOD TO GO / MODERATE / LOW + %) below header.
+
+  - task: "Today Page UI — Collapsible exercise cards (first expanded, rest collapsed)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          ExerciseCard now collapsible. First exercise expanded by default (set during exercises load).
+          Header always shows: category badge, exercise name, prescription, set progress pill (x/total), chevron.
+
+  - task: "Today Page UI — Editable weight/reps TextInputs inside set rows"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          SetRow completely rewritten. Each set row now has:
+          - Numbered circle (colored by set type: warmup=gold, ramp=blue, work=white)
+          - WU/RM/W type tag
+          - Editable TextInput for weight (numeric keyboard)
+          - × separator
+          - Editable TextInput for reps
+          - Inline LOG button (logs the edited values to backend)
+          - Check icon when logged
+          State managed by setValues: Record<string, {weight, reps}> at TodayScreen level.
+          Initialized from exercise.sets when exercises load, updated on input change.
+          handleLog now reads from setValues[setId] before falling back to set defaults.
+
+  - task: "Today Page UI — Per-exercise effort selector (1-5 gold circles)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Effort selector added at the bottom of each expanded exercise card.
+          5 circles labeled 1-5. Unselected: dark (#1A1A1E) bg, muted number.
+          Selected: gold (#C9A84C) fill, dark (#0A0A0C) number.
+          State: efforts: Record<exerciseId, number> at TodayScreen level.
+          Per exercise, not per set (as per user spec).
+
+  - task: "Today Page UI — Pill action buttons: Swap, Pain, Add Set"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Three pill action buttons inside each expanded card:
+          - Swap (muted, opens AdjustModal)
+          - Pain (red #EF5350, opens PainReportModal)
+          - Add Set (gold, appends a new work set to the exercise's sets array)
+          Replaced the old 'Adjust Exercise' + 'Report Pain' row.
+
+  - task: "Today Page UI — Sticky rest timer between scroll and bottom bar"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          RestTimerBar moved OUTSIDE the ScrollView to a fixed position between scroll content
+          and the bottom bar. This makes it sticky/always visible while scrolling through exercises.
+
+  - task: "Today Page UI — FINISH SESSION disabled until 50% sets logged"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          canFinish = loggedCount >= totalSets / 2.
+          Button visually disabled (gray bg, muted text) when < 50% sets logged.
+          Button active (gold) when >= 50% sets logged.
+          Bottom bar also shows set count, label, and % pill.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 26
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Today Page Terminology Fix — ExCategory types and getCategoryStyle labels"
+    - "Today Page UI — Thin gold progress bar at top"
+    - "Today Page UI — Compact session header with slim italic coach note"
+    - "Today Page UI — Collapsible exercise cards (first expanded, rest collapsed)"
+    - "Today Page UI — Editable weight/reps TextInputs inside set rows"
+    - "Today Page UI — Per-exercise effort selector (1-5 gold circles)"
+    - "Today Page UI — Pill action buttons: Swap, Pain, Add Set"
+    - "Today Page UI — Sticky rest timer between scroll and bottom bar"
+    - "Today Page UI — FINISH SESSION disabled until 50% sets logged"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: >
+      I have completed a comprehensive redesign of the Today page (today.tsx). Here's what changed:
+
+      BUG FIXES:
+      1. ExCategory type updated: 'maxeffort' → 'primary', 'dynamiceffort' → 'speed'
+      2. getCategoryStyle labels updated: Primary, Speed, Support, Accessory, Injury Prevention
+      3. Eric's hardcoded numbers (315x1, 375, etc.) removed from mock EXERCISES array
+      4. buildTodayExercisesFromLocal and buildTodayExercisesFromApi updated to use new category names
+
+      UI REDESIGN:
+      5. Thin 3px gold progress bar at very top of screen
+      6. Compact session header: context line + title + objective
+      7. Slim italic coach note (replaced full card) with gold left border
+      8. Compact readiness strip: ⚡ GOOD TO GO/MODERATE/LOW + score%
+      9. Exercise cards now collapsible: first exercise expanded by default
+      10. SetRow: editable weight (TextInput) + reps (TextInput) + inline LOG button + check icon when logged
+      11. Per-exercise effort selector (1-5 circles, gold when selected) at bottom of expanded card
+      12. Three pill action buttons: Swap · Pain · Add Set
+      13. RestTimerBar moved OUTSIDE ScrollView (sticky between content and bottom bar)
+      14. FINISH SESSION button: disabled until loggedCount >= totalSets/2 (50% requirement)
+
+      Test credentials: user_a@theprogram.app / StrongmanA123
+      
+      Navigate to Today tab and verify:
+      - Page loads with session data (Heavy Lower / Heavy Upper / etc.)
+      - First exercise card is expanded, rest are collapsed
+      - Tap on collapsed card to expand it
+      - Weight and reps inputs are editable
+      - LOG button submits the set
+      - Effort circles turn gold when tapped
+      - Swap/Pain/Add Set pills work
+      - Rest timer is sticky (visible while scrolling)
+      - FINISH SESSION is grayed out initially, activates after 50% sets logged
 

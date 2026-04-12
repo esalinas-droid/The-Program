@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
-  ActivityIndicator, Animated, Pressable, Modal,
+  ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -23,7 +23,7 @@ const BLUE = '#5B9CF5';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
-type ExCategory  = 'maxeffort' | 'dynamiceffort' | 'supplemental' | 'accessory' | 'prehab';
+type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab';
 
 interface ExSet {
   id: string;
@@ -45,83 +45,50 @@ interface Exercise {
 type SwapInfo = { original: string; replacement: string; reason: string };
 type SwapMap  = Record<string, SwapInfo>;
 
-// ── Mock Exercise Data ────────────────────────────────────────────────────────
+// ── Offline Fallback Exercise Data (generic — no user-specific numbers) ────────
 const EXERCISES: Exercise[] = [
   {
-    id: 'floor-press',
-    name: 'Floor Press',
-    category: 'maxeffort',
-    prescription: 'Work to 1RM',
-    lastSession: '315 × 1  @  RPE 8.5',
-    cues: ['Pin shoulders back', 'Pause on floor 1-count', 'Drive through triceps'],
-    notes: 'If 375 moves clean, take 390. No grinding attempts.',
-    sets: [
-      { id: 'fp-wu-1', type: 'warmup', weight: 45,  reps: '5', label: 'Warm-Up' },
-      { id: 'fp-wu-2', type: 'warmup', weight: 95,  reps: '5', label: 'Warm-Up' },
-      { id: 'fp-wu-3', type: 'warmup', weight: 135, reps: '3', label: 'Warm-Up' },
-      { id: 'fp-wu-4', type: 'warmup', weight: 185, reps: '3', label: 'Warm-Up' },
-      { id: 'fp-wu-5', type: 'warmup', weight: 225, reps: '2', label: 'Warm-Up' },
-      { id: 'fp-r-1',  type: 'ramp',   weight: 275, reps: '1', label: 'Ramp'    },
-      { id: 'fp-r-2',  type: 'ramp',   weight: 315, reps: '1', label: 'Ramp'    },
-      { id: 'fp-r-3',  type: 'ramp',   weight: 355, reps: '1', label: 'Ramp'    },
-      { id: 'fp-w-1',  type: 'work',   weight: 375, reps: '1', label: 'Work'    },
-    ],
-  },
-  {
-    id: 'pendlay-row',
-    name: 'Pendlay Row',
-    category: 'supplemental',
-    prescription: '4 × 6-8',
-    lastSession: '225 × 6  @  RPE 7',
-    cues: ['Dead stop on floor', 'Elbows tight', 'Control the descent'],
-    notes: 'Use straps from set 3 onwards.',
-    sets: [
-      { id: 'pr-w-1', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
-      { id: 'pr-w-2', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
-      { id: 'pr-w-3', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
-      { id: 'pr-w-4', type: 'work', weight: 225, reps: '6-8', label: 'Work' },
-    ],
-  },
-  {
-    id: 'incline-db-press',
-    name: 'Incline DB Press',
-    category: 'accessory',
-    prescription: '3 × 10-12',
-    lastSession: '85 × 12  @  RPE 7',
-    cues: ['Slight arch', 'Elbows 45°', 'Full range of motion'],
+    id: 'fallback-main',
+    name: 'Main Lift',
+    category: 'primary',
+    prescription: 'Build to top set',
+    lastSession: '—',
+    cues: [],
     notes: '',
     sets: [
-      { id: 'idp-w-1', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
-      { id: 'idp-w-2', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
-      { id: 'idp-w-3', type: 'work', weight: 85, reps: '10-12', label: 'Work' },
+      { id: 'fb-w-1', type: 'warmup', weight: 0, reps: '5', label: 'Warm-Up' },
+      { id: 'fb-w-2', type: 'warmup', weight: 0, reps: '3', label: 'Warm-Up' },
+      { id: 'fb-w-3', type: 'ramp',   weight: 0, reps: '2', label: 'Ramp'    },
+      { id: 'fb-w-4', type: 'work',   weight: 0, reps: '1', label: 'Work'    },
     ],
   },
   {
-    id: 'tricep-pushdown',
-    name: 'Tricep Pushdown',
+    id: 'fallback-sup',
+    name: 'Supplemental',
+    category: 'supplemental',
+    prescription: '4 × 6-8',
+    lastSession: '—',
+    cues: [],
+    notes: '',
+    sets: [
+      { id: 'fbs-w-1', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
+      { id: 'fbs-w-2', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
+      { id: 'fbs-w-3', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
+      { id: 'fbs-w-4', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
+    ],
+  },
+  {
+    id: 'fallback-acc',
+    name: 'Accessory',
     category: 'accessory',
-    prescription: '3 × 15-20',
-    lastSession: '120 × 15  @  RPE 6',
-    cues: ['Lock elbows at sides', 'Full extension', 'Controlled negative'],
-    notes: 'Cable or bands — both acceptable.',
+    prescription: '3 × 10-12',
+    lastSession: '—',
+    cues: [],
+    notes: '',
     sets: [
-      { id: 'tp-w-1', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
-      { id: 'tp-w-2', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
-      { id: 'tp-w-3', type: 'work', weight: 120, reps: '15-20', label: 'Work' },
-    ],
-  },
-  {
-    id: 'face-pull',
-    name: 'Face Pull',
-    category: 'prehab',
-    prescription: '3 × 15-20',
-    lastSession: '50 × 20  @  RPE 5',
-    cues: ['Pull to nose height', 'External rotation at peak', 'Slow and controlled'],
-    notes: 'Mandatory — protect the shoulder.',
-    sets: [
-      { id: 'fp2-w-1', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
-      { id: 'fp2-w-2', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
-      { id: 'fp2-w-3', type: 'work', weight: 50, reps: '15-20', label: 'Work' },
+      { id: 'fba-w-1', type: 'work', weight: 0, reps: '10-12', label: 'Work' },
+      { id: 'fba-w-2', type: 'work', weight: 0, reps: '10-12', label: 'Work' },
+      { id: 'fba-w-3', type: 'work', weight: 0, reps: '10-12', label: 'Work' },
     ],
   },
 ];
@@ -139,14 +106,14 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
     const weightMatch = session.topSetScheme.match(/@\s*~?(\d+)/);
     const weight = weightMatch ? parseInt(weightMatch[1]) : 0;
     const liftName = session.mainLift.split('—')[0].split('(')[0].trim();
-    // Determine badge: Speed days get 'dynamiceffort', Heavy days get 'maxeffort'
+    // Determine badge: Speed days get 'speed', Heavy days get 'primary'
     const isDynamic = session.sessionType.toLowerCase().includes('de') ||
                       session.sessionType.toLowerCase().includes('dynamic') ||
                       session.sessionType.toLowerCase().includes('speed');
     exs.push({
       id: 'local-main',
       name: liftName,
-      category: (isDynamic ? 'dynamiceffort' : 'maxeffort') as ExCategory,
+    category: (isDynamic ? 'speed' : 'primary') as ExCategory,
       prescription: session.topSetScheme,
       lastSession: '—',
       cues: [],
@@ -208,7 +175,7 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
       id: ex.sessionExerciseId || `api-ex-${idx}`,
       name: ex.name || 'Exercise',
       category: (ex.category === 'main'
-        ? (isDynamic ? 'dynamiceffort' : 'maxeffort')
+        ? (isDynamic ? 'speed' : 'primary')
         : ex.category === 'supplemental' ? 'supplemental'
         : ex.category === 'prehab' ? 'prehab'
         : 'accessory') as ExCategory,
@@ -289,11 +256,11 @@ function getSetCircleColor(type: SetType, logged: boolean): string {
 
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
   return ({
-    maxeffort:     { bg: COLORS.accent + '25',       text: COLORS.accent,           label: 'Top Set' },
-    dynamiceffort: { bg: BLUE + '25',                text: BLUE,                    label: 'Speed Work' },
-    supplemental:  { bg: COLORS.text.muted + '25',   text: COLORS.text.secondary,   label: 'Supplemental' },
-    accessory:     { bg: COLORS.surfaceHighlight,     text: COLORS.text.secondary,   label: 'Accessory' },
-    prehab:        { bg: TEAL + '25',                text: TEAL,                    label: 'Prehab' },
+    primary:      { bg: COLORS.accent + '25',      text: COLORS.accent,         label: 'Primary' },
+    speed:        { bg: BLUE + '25',               text: BLUE,                  label: 'Speed' },
+    supplemental: { bg: COLORS.text.muted + '25',  text: COLORS.text.secondary, label: 'Support' },
+    accessory:    { bg: COLORS.surfaceHighlight,   text: COLORS.text.secondary, label: 'Accessory' },
+    prehab:       { bg: TEAL + '25',              text: TEAL,                  label: 'Injury Prevention' },
   } as Record<ExCategory, { bg: string; text: string; label: string }>)[cat] || { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: cat };
 }
 
@@ -817,41 +784,61 @@ const rt = StyleSheet.create({
 });
 
 // ── SetRow ────────────────────────────────────────────────────────────────────
-function SetRow({ set, logged, painFlagged, onLog, onPain, index }: {
-  set: ExSet; logged: boolean; painFlagged: boolean;
-  onLog: () => void; onPain: () => void; index: number;
+function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast }: {
+  set: ExSet;
+  setNum: number;
+  logged: boolean;
+  weight: string;
+  reps: string;
+  onWeightChange: (v: string) => void;
+  onRepsChange: (v: string) => void;
+  onLog: () => void;
+  isLast?: boolean;
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
+  const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
+
   return (
-    <View style={sr.row}>
-      {/* Numbered circle */}
-      <View style={[sr.circle, { backgroundColor: circleColor + '20', borderColor: circleColor }]}>
+    <View style={[sr.row, !isLast && sr.rowBorder]}>
+      {/* Set circle */}
+      <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
         {logged
           ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
-          : <Text style={[sr.circleNum, { color: circleColor }]}>{index + 1}</Text>
+          : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
         }
       </View>
 
-      {/* Weight × Reps */}
-      <Text style={[sr.weight, logged && sr.weightDone]}>
-        {set.weight} × {set.reps}
-      </Text>
+      {/* Set type tag */}
+      <Text style={sr.typeTag}>{typeTag}</Text>
 
-      {/* Type label */}
-      <Text style={[sr.typeLabel, logged && sr.typeLabelDone]}>
-        {logged ? 'Done' : set.label.toUpperCase()}
-      </Text>
+      {/* Weight input */}
+      <TextInput
+        style={[sr.input, logged && sr.inputDone]}
+        value={weight}
+        onChangeText={onWeightChange}
+        keyboardType="numeric"
+        editable={!logged}
+        placeholder="lbs"
+        placeholderTextColor={COLORS.text.muted}
+        selectTextOnFocus
+        returnKeyType="done"
+      />
 
-      {/* Pain flag button */}
-      <TouchableOpacity onPress={onPain} style={sr.painBtn} activeOpacity={0.7}>
-        <MaterialCommunityIcons
-          name="alert-circle-outline"
-          size={18}
-          color={painFlagged ? '#EF5350' : COLORS.border}
-        />
-      </TouchableOpacity>
+      <Text style={sr.sep}>×</Text>
 
-      {/* Log / Done */}
+      {/* Reps input */}
+      <TextInput
+        style={[sr.input, sr.repsInput, logged && sr.inputDone]}
+        value={reps}
+        onChangeText={onRepsChange}
+        editable={!logged}
+        placeholder="reps"
+        placeholderTextColor={COLORS.text.muted}
+        selectTextOnFocus
+        returnKeyType="done"
+      />
+
+      {/* LOG / Done */}
       {!logged ? (
         <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
           <Text style={sr.logBtnText}>LOG</Text>
@@ -865,33 +852,40 @@ function SetRow({ set, logged, painFlagged, onLog, onPain, index }: {
   );
 }
 const sr = StyleSheet.create({
-  row:          { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border + '55' },
-  circle:       { width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
-  circleNum:    { fontSize: 11, fontWeight: FONTS.weights.heavy },
-  weight:       { flex: 1, fontSize: 14, color: COLORS.text.primary, fontWeight: FONTS.weights.semibold },
-  weightDone:   { textDecorationLine: 'line-through', color: COLORS.text.muted },
-  typeLabel:    { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, width: 72, textAlign: 'right' },
-  typeLabelDone:{ color: TEAL },
-  painBtn:      { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  logBtn:       { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
-  logBtnText:   { color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-  doneWrap:     { width: 52, alignItems: 'center' },
+  row:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 6 },
+  rowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border + '60' },
+  circle:    { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  circleNum: { fontSize: 10, fontWeight: FONTS.weights.heavy },
+  typeTag:   { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, width: 20, letterSpacing: 0.3 },
+  input:     { flex: 1, height: 36, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 13, fontWeight: FONTS.weights.semibold },
+  repsInput: { flex: 1.3 },
+  inputDone: { color: COLORS.text.muted, textDecorationLine: 'line-through' },
+  sep:       { fontSize: 14, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
+  logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
+  logBtnText:{ color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  doneWrap:  { width: 52, alignItems: 'center' },
 });
 
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
-function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLog, onPain, onAdjust, onReportPain, swap }: {
+function ExerciseCard({
+  exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
+  onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
+}: {
   exercise: Exercise;
   expanded: boolean;
   loggedSets: Set<string>;
-  painSets: Set<string>;
   onToggle: () => void;
   onLog: (setId: string, exerciseName: string, set: ExSet) => void;
-  onPain: (setId: string) => void;
   onAdjust: (id: string, name: string) => void;
   onReportPain: (exerciseName: string) => void;
+  onAddSet: (exerciseId: string) => void;
   swap?: SwapInfo;
+  setValues: Record<string, { weight: string; reps: string }>;
+  onSetValueChange: (setId: string, field: 'weight' | 'reps', value: string) => void;
+  effort: number | undefined;
+  onEffortChange: (v: number) => void;
 }) {
-  const catStyle   = getCategoryStyle(exercise.category);
+  const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
   const total       = exercise.sets.length;
   const allDone     = loggedCount === total;
@@ -900,7 +894,7 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
 
   return (
     <View style={ec.card}>
-      {/* ── Collapsible header ── */}
+      {/* ── Collapsible header (category badge + progress + chevron) ── */}
       <TouchableOpacity onPress={onToggle} style={ec.header} activeOpacity={0.8}>
         <View style={ec.headerLeft}>
           <View style={[ec.catBadge, { backgroundColor: catStyle.bg }]}>
@@ -934,54 +928,102 @@ function ExerciseCard({ exercise, expanded, loggedSets, painSets, onToggle, onLo
       {/* ── Expanded body ── */}
       {expanded && (
         <View style={ec.body}>
-          {/* Last session ref */}
-          <View style={ec.lastRow}>
-            <MaterialCommunityIcons name="history" size={13} color={COLORS.text.muted} />
-            <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
-          </View>
+          {/* Last session reference */}
+          {exercise.lastSession !== '—' && (
+            <View style={ec.lastRow}>
+              <MaterialCommunityIcons name="history" size={12} color={COLORS.text.muted} />
+              <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
+            </View>
+          )}
 
           {/* Coaching cues */}
           {exercise.cues.length > 0 && (
             <View style={ec.cuesRow}>
-              <MaterialCommunityIcons name="lightbulb-on-outline" size={13} color={COLORS.accent} style={{ marginTop: 1 }} />
+              <MaterialCommunityIcons name="lightbulb-on-outline" size={12} color={COLORS.accent} style={{ marginTop: 1 }} />
               <Text style={ec.cuesText}>{exercise.cues.join('  ·  ')}</Text>
             </View>
           )}
 
-          {/* Divider */}
-          <View style={ec.divider} />
+          {/* Sets label + divider */}
+          <View style={ec.setsHeader}>
+            <Text style={ec.setsLabel}>SETS</Text>
+          </View>
 
-          {/* Set rows */}
+          {/* Set rows with editable inputs */}
           <View>
             {exercise.sets.map((set, idx) => (
               <SetRow
                 key={set.id}
                 set={set}
-                index={idx}
+                setNum={idx + 1}
                 logged={loggedSets.has(set.id)}
-                painFlagged={painSets.has(set.id)}
-                onLog={() => onLog(set.id, swap?.replacement ?? exercise.name, set)}
-                onPain={() => onPain(set.id)}
+                weight={setValues[set.id]?.weight ?? (set.weight > 0 ? String(set.weight) : '')}
+                reps={setValues[set.id]?.reps ?? set.reps}
+                onWeightChange={(v) => onSetValueChange(set.id, 'weight', v)}
+                onRepsChange={(v) => onSetValueChange(set.id, 'reps', v)}
+                onLog={() => onLog(set.id, displayName, set)}
+                isLast={idx === exercise.sets.length - 1}
               />
             ))}
           </View>
 
-          {/* Notes */}
+          {/* ── Overall Effort selector ── */}
+          <View style={ec.effortRow}>
+            <Text style={ec.effortLabel}>OVERALL EFFORT</Text>
+            <View style={ec.effortCircles}>
+              {[1, 2, 3, 4, 5].map(v => {
+                const selected = effort === v;
+                return (
+                  <TouchableOpacity
+                    key={v}
+                    style={[ec.effortCircle, selected && ec.effortCircleSelected]}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onEffortChange(v);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[ec.effortNum, selected && ec.effortNumSelected]}>{v}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* ── Pill action buttons ── */}
+          <View style={ec.actionRow}>
+            <TouchableOpacity
+              style={ec.actionPill}
+              onPress={() => onAdjust(exercise.id, displayName)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.text.muted} />
+              <Text style={ec.actionPillText}>Swap</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[ec.actionPill, ec.actionPillPain]}
+              onPress={() => onReportPain(displayName)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="alert-circle-outline" size={13} color="#EF5350" />
+              <Text style={[ec.actionPillText, { color: '#EF5350' }]}>Pain</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[ec.actionPill, ec.actionPillAdd]}
+              onPress={() => onAddSet(exercise.id)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="plus" size={13} color={COLORS.accent} />
+              <Text style={[ec.actionPillText, { color: COLORS.accent }]}>Add Set</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Coach notes */}
           {exercise.notes ? (
             <Text style={ec.notes}>{exercise.notes}</Text>
           ) : null}
-
-          {/* Adjust Exercise button */}
-          <View style={ec.actionRow}>
-            <TouchableOpacity style={ec.adjustBtn} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
-              <MaterialCommunityIcons name="swap-horizontal" size={14} color={COLORS.text.muted} />
-              <Text style={ec.adjustBtnText}>Adjust Exercise</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={ec.painBtn2} onPress={() => onReportPain(displayName)} activeOpacity={0.75}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={14} color='#EF5350' />
-              <Text style={ec.painBtnText}>Report Pain</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       )}
     </View>
@@ -1006,13 +1048,23 @@ const ec = StyleSheet.create({
   lastText:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic' },
   cuesRow:       { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: SPACING.md, backgroundColor: COLORS.accent + '10', borderRadius: RADIUS.md, padding: SPACING.sm },
   cuesText:      { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 17 },
-  divider:       { height: 1, backgroundColor: COLORS.border, marginBottom: SPACING.sm },
-  notes:         { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginTop: SPACING.md, lineHeight: 17 },
-  adjustBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  adjustBtnText: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
-  actionRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
-  painBtn2:      { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  painBtnText:   { fontSize: FONTS.sizes.xs, color: '#EF5350', fontWeight: FONTS.weights.semibold },
+  setsHeader:    { paddingBottom: SPACING.xs, marginBottom: SPACING.xs, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  setsLabel:     { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
+  notes:         { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginTop: SPACING.sm, lineHeight: 17 },
+  // ── Effort selector
+  effortRow:         { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
+  effortLabel:       { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, flex: 1 },
+  effortCircles:     { flexDirection: 'row', gap: 7 },
+  effortCircle:      { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1A1A1E', borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center' },
+  effortCircleSelected: { backgroundColor: '#C9A84C', borderColor: '#C9A84C' },
+  effortNum:         { fontSize: 13, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
+  effortNumSelected: { color: '#0A0A0C' },
+  // ── Action pills
+  actionRow:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.md },
+  actionPill:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  actionPillText:{ fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  actionPillPain:{ borderColor: '#EF535035' },
+  actionPillAdd: { borderColor: COLORS.accent + '45' },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -1035,7 +1087,8 @@ export default function TodayScreen() {
 
   // Exercise interaction
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
-  const [painSets, setPainSets]       = useState<Set<string>>(new Set());
+  const [setValues, setSetValues]     = useState<Record<string, { weight: string; reps: string }>>({});
+  const [efforts, setEfforts]         = useState<Record<string, number>>({});
   const [expanded, setExpanded]       = useState<Set<string>>(() => {
     // Default expand the first exercise based on local data
     const s = getTodaySession(1);
@@ -1151,6 +1204,24 @@ export default function TodayScreen() {
     })();
   }, []));
 
+  // ── Initialize setValues when exercises load/change ─────────────────────────
+  useEffect(() => {
+    setSetValues(prev => {
+      const init: Record<string, { weight: string; reps: string }> = {};
+      exercises.forEach(ex => {
+        ex.sets.forEach(s => {
+          if (!prev[s.id]) {
+            init[s.id] = {
+              weight: s.weight > 0 ? String(s.weight) : '',
+              reps: s.reps || '',
+            };
+          }
+        });
+      });
+      return { ...init, ...prev };
+    });
+  }, [exercises]);
+
   // ── Readiness submit handler ─────────────────────────────────────────────────
   const handleReadinessSubmit = async (data: { sleepQuality: number; soreness: number; moodEnergy: number }) => {
     setShowReadiness(false);
@@ -1218,10 +1289,14 @@ export default function TodayScreen() {
     setTimerSeconds(0);
     setTimerRunning(true);
 
-    // Bug 3 fix: Persist logged set to backend so Log tab sees it
-    if (exerciseName && set) {
+    // Use edited input values if available, fall back to set defaults
+    const currentVals = setValues[setId];
+    const weight = currentVals ? (parseFloat(currentVals.weight) || 0) : (set?.weight || 0);
+    const reps   = currentVals ? currentVals.reps : (set?.reps || '');
+
+    if (exerciseName) {
       try {
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr  = new Date().toISOString().split('T')[0];
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
         await logApi.create({
           date: todayStr,
@@ -1230,26 +1305,57 @@ export default function TodayScreen() {
           sessionType: sessionType || 'Training',
           exercise: exerciseName,
           sets: 1,
-          weight: set.weight || 0,
-          reps: parseInt(set.reps) || 1,
+          weight,
+          reps: parseInt(reps) || 1,
           rpe: 7,
           pain: 0,
           completed: 'yes',
         });
       } catch (err) {
-        // Non-blocking — log failure shouldn't interrupt the set indicator
         console.log('[Today] Backend log failed:', err);
       }
     }
   };
 
+  const handleSetValueChange = (setId: string, field: 'weight' | 'reps', value: string) => {
+    setSetValues(prev => ({
+      ...prev,
+      [setId]: { ...(prev[setId] || { weight: '', reps: '' }), [field]: value },
+    }));
+  };
+
+  const handleEffortChange = (exerciseId: string, v: number) => {
+    setEfforts(prev => ({ ...prev, [exerciseId]: v }));
+  };
+
+  const handleAddSet = (exerciseId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExercises(prev => prev.map(ex => {
+      if (ex.id !== exerciseId) return ex;
+      const lastSet = ex.sets[ex.sets.length - 1];
+      const newSetId = `${exerciseId}-added-${Date.now()}`;
+      const newSet: ExSet = {
+        id: newSetId,
+        type: 'work',
+        weight: lastSet?.weight || 0,
+        reps: lastSet?.reps || '5',
+        label: 'Work',
+      };
+      // Also initialize setValues for the new set
+      setSetValues(sv => ({
+        ...sv,
+        [newSetId]: {
+          weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
+          reps: lastSet?.reps || '',
+        },
+      }));
+      return { ...ex, sets: [...ex.sets, newSet] };
+    }));
+  };
+
   const handlePain = (setId: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    setPainSets(prev => {
-      const next = new Set(prev);
-      if (next.has(setId)) next.delete(setId); else next.add(setId);
-      return next;
-    });
+    // Pain per-set tracking removed — use card-level Pain button instead
   };
 
   const handleToggleExpand = (exId: string) => {
@@ -1318,16 +1424,34 @@ export default function TodayScreen() {
         style={s.scroll}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
 
         {/* ── SESSION HEADER ── */}
         <View style={s.sessionHeader}>
           <Text style={s.contextLine}>
-            {blockLabel} BLOCK {block}  ·  WEEK {week}  ·  DAY {dayNum}
+            {blockLabel}  ·  WEEK {week}  ·  DAY {dayNum}
           </Text>
           <Text style={s.sessionTitle}>{sessionType}</Text>
           {sessionObj ? <Text style={s.sessionObj}>{sessionObj}</Text> : null}
         </View>
+
+        {/* ── COMPACT READINESS STRIP ── */}
+        {readinessScore !== null && (
+          <View style={s.readinessStrip}>
+            <MaterialCommunityIcons
+              name="lightning-bolt"
+              size={12}
+              color={readinessScore >= 70 ? TEAL : readinessScore >= 50 ? COLORS.accent : '#EF5350'}
+            />
+            <Text style={[s.readinessStripStatus, {
+              color: readinessScore >= 70 ? TEAL : readinessScore >= 50 ? COLORS.accent : '#EF5350',
+            }]}>
+              {readinessScore >= 70 ? 'GOOD TO GO' : readinessScore >= 50 ? 'MODERATE READINESS' : 'LOW READINESS'}
+            </Text>
+            <Text style={s.readinessStripScore}>{readinessScore}%</Text>
+          </View>
+        )}
 
         {/* ── INJURY WARNING BANNERS ── */}
         {warnings.map((w, i) => (
@@ -1359,16 +1483,12 @@ export default function TodayScreen() {
           </View>
         )}
 
-        {/* ── COACH NOTE CARD ── */}
-        <View style={s.coachCard}>
-          <View style={s.coachHeader}>
-            <View style={s.coachAvatar}>
-              <Text style={s.coachAvatarIcon}>✦</Text>
-            </View>
-            <Text style={s.coachLabel}>COACH NOTE</Text>
+        {/* ── SLIM ITALIC COACH NOTE ── */}
+        {coachNote ? (
+          <View style={s.coachNote}>
+            <Text style={s.coachNoteText}>✦  {coachNote}</Text>
           </View>
-          <Text style={s.coachText}>{coachNote}</Text>
-        </View>
+        ) : null}
 
         {/* ── WARM-UP SECTION (Task 11 — Personalized) ── */}
         <TouchableOpacity
@@ -1423,14 +1543,6 @@ export default function TodayScreen() {
           </View>
         )}
 
-        {/* ── REST TIMER ── */}
-        <RestTimerBar
-          running={timerRunning}
-          seconds={timerSeconds}
-          onToggle={() => setTimerRunning(r => !r)}
-          onReset={() => { setTimerRunning(false); setTimerSeconds(0); }}
-        />
-
         {/* ── EXERCISES LABEL ── */}
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
@@ -1441,18 +1553,29 @@ export default function TodayScreen() {
             exercise={ex}
             expanded={expanded.has(ex.id)}
             loggedSets={loggedSets}
-            painSets={painSets}
             onToggle={() => handleToggleExpand(ex.id)}
             onLog={handleLog}
-            onPain={handlePain}
             onAdjust={openAdjust}
             onReportPain={openPainModal}
+            onAddSet={handleAddSet}
             swap={swaps[ex.id]}
+            setValues={setValues}
+            onSetValueChange={handleSetValueChange}
+            effort={efforts[ex.id]}
+            onEffortChange={(v) => handleEffortChange(ex.id, v)}
           />
         ))}
 
         <View style={{ height: SPACING.xl }} />
       </ScrollView>
+
+      {/* ── STICKY REST TIMER (between scroll and bottom bar) ── */}
+      <RestTimerBar
+        running={timerRunning}
+        seconds={timerSeconds}
+        onToggle={() => setTimerRunning(r => !r)}
+        onReset={() => { setTimerRunning(false); setTimerSeconds(0); }}
+      />
 
       {/* ── FIXED BOTTOM BAR ── */}
       <View style={s.bottomBar}>
@@ -1519,10 +1642,15 @@ const s = StyleSheet.create({
   progressFill: { height: 3, backgroundColor: COLORS.accent },
 
   // Session header
-  sessionHeader:{ paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.lg },
-  contextLine:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 2, marginBottom: SPACING.sm },
-  sessionTitle: { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 32, marginBottom: SPACING.sm },
+  sessionHeader:{ paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: SPACING.sm },
+  contextLine:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 2, marginBottom: SPACING.xs },
+  sessionTitle: { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 32, marginBottom: SPACING.xs },
   sessionObj:   { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, lineHeight: 20 },
+
+  // Compact readiness strip
+  readinessStrip:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginHorizontal: SPACING.lg, marginTop: SPACING.sm, marginBottom: SPACING.xs },
+  readinessStripStatus:{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  readinessStripScore: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
 
   // Injury banners
   injuryBanner:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#8B2222', borderRadius: RADIUS.md, padding: SPACING.md, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, gap: SPACING.sm },
@@ -1534,13 +1662,9 @@ const s = StyleSheet.create({
   painAlertBanner:    { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#EF535022', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: '#EF5350' },
   painAlertText:      { flex: 1, fontSize: FONTS.sizes.sm, color: '#EF5350', fontWeight: FONTS.weights.semibold, lineHeight: 18 },
 
-  // Coach note card — gold left border
-  coachCard:    { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderLeftWidth: 3, borderLeftColor: COLORS.accent, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg },
-  coachHeader:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
-  coachAvatar:  { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.accent + '25', justifyContent: 'center', alignItems: 'center' },
-  coachAvatarIcon:{ fontSize: 13, color: COLORS.accent },
-  coachLabel:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5 },
-  coachText:    { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
+  // Slim italic coach note (replaced old coachCard)
+  coachNote:     { marginHorizontal: SPACING.lg, marginTop: SPACING.sm, marginBottom: SPACING.md, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md, borderLeftWidth: 2, borderLeftColor: COLORS.accent + '70' },
+  coachNoteText: { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontStyle: 'italic', lineHeight: 20 },
 
   // AI Program panel (visible when annual plan exists)
   aiPanel:        { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.accentBlue + '50', borderLeftWidth: 3, borderLeftColor: COLORS.accentBlue, overflow: 'hidden' },
