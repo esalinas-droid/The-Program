@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView,
-  Platform, Animated, Easing,
+  Platform, Animated, Easing, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -204,10 +204,11 @@ export default function AuthScreen() {
       <View style={[s.root, { paddingTop: insets.top + 32 }]}>
         {/* Logo */}
         <View style={s.logoArea}>
-          <View style={s.logoIcon}>
-            <MaterialCommunityIcons name="weight-lifter" size={36} color={GOLD} />
-          </View>
-          <Text style={s.logoTitle}>The Program</Text>
+          <Image
+            source={require('../assets/logo-full.png')}
+            resizeMode="contain"
+            style={{ width: 180, height: 140, alignSelf: 'center', marginBottom: 8 }}
+          />
           <Text style={s.logoSubtitle}>Built for athletes who train with intent.</Text>
         </View>
 
@@ -287,9 +288,11 @@ export default function AuthScreen() {
         </TouchableOpacity>
 
         <View style={s.logoArea}>
-          <View style={s.logoIcon}>
-            <MaterialCommunityIcons name="weight-lifter" size={32} color={GOLD} />
-          </View>
+          <Image
+            source={require('../assets/logo-full.png')}
+            resizeMode="contain"
+            style={{ width: 140, height: 110, alignSelf: 'center', marginBottom: 8 }}
+          />
           <Text style={s.logoTitle}>{mode === 'register' ? 'Create account' : 'Welcome back'}</Text>
           <Text style={s.logoSubtitle}>
             {mode === 'register' ? 'Start your 12-month training calendar.' : 'Sign in to your account.'}

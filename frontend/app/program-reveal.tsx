@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, Animated, Easing, Platform,
+  SafeAreaView, Animated, Easing, Platform, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -278,14 +278,12 @@ export default function ProgramRevealScreen() {
       style={[s.phase1Wrap, { opacity: phase1Opacity }]}
       pointerEvents={showReveal ? 'none' : 'auto'}
     >
-      {/* Spinning gold arc */}
-      <View style={s.spinnerWrap}>
-        <View style={s.spinnerTrack} />
-        <Animated.View style={[s.spinnerArc, { transform: [{ rotate: spinDeg }] }]} />
-        <View style={s.spinnerCenter}>
-          <MaterialCommunityIcons name="dumbbell" size={20} color={GOLD} />
-        </View>
-      </View>
+      {/* Logo */}
+      <Image
+        source={require('../assets/logo-icon-tight.png')}
+        resizeMode="contain"
+        style={{ width: 80, height: 80, alignSelf: 'center', marginBottom: SPACING.xl }}
+      />
 
       <Text style={s.buildTitle}>Building Your Program</Text>
       <Text style={s.buildSub}>

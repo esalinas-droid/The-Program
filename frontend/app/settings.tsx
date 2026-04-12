@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   Alert, Switch, ActivityIndicator, TextInput, Modal, Platform,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -502,7 +502,14 @@ export default function SettingsScreen() {
         </View>
 
         {/* App version footer */}
-        <Text style={s.appVersion}>The Program  ·  v1.0.0</Text>
+        <View style={s.appVersionRow}>
+          <Image
+            source={require('../assets/logo-icon-tight.png')}
+            resizeMode="contain"
+            style={s.appVersionIcon}
+          />
+          <Text style={s.appVersionText}>The Program  ·  v1.0.0</Text>
+        </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -848,7 +855,9 @@ const s = StyleSheet.create({
   signOutText:     { fontSize: 14, fontWeight: '600' as any, color: '#EF5350', flex: 1 },
 
   // App version
-  appVersion: { textAlign: 'center', fontSize: FONTS.sizes.xs, color: '#333', marginTop: SPACING.xl, marginBottom: SPACING.md },
+  appVersionRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: SPACING.xl, marginBottom: SPACING.md },
+  appVersionIcon: { width: 20, height: 20, opacity: 0.4 },
+  appVersionText: { textAlign: 'center', fontSize: FONTS.sizes.xs, color: '#333' },
 
   // Edit Profile / Add modals shared
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
