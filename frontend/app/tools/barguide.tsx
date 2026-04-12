@@ -18,7 +18,7 @@ const BARS = [
     shaft: '27mm', icon: '━━━━━━━━━━━━━━━',
     characteristics: 'Longer, thinner shaft, more whip, aggressive knurling.',
     usedFor: 'Heavy deadlifts. More time to get set before plates leave floor.',
-    inProgram: 'ME Lower hinge variations.',
+    inProgram: 'Heavy Lower hinge variations.',
     ytSearch: 'deadlift bar vs standard bar',
   },
   {
@@ -26,23 +26,23 @@ const BARS = [
     shaft: '29mm', icon: '━━━━━━━━━━━━━━━',
     characteristics: 'Very stiff, heavy knurling, center knurl. No flex.',
     usedFor: 'Maximum power output. Standard in powerlifting.',
-    inProgram: 'ME Lower heavy squatting.',
+    inProgram: 'Heavy Lower heavy squatting.',
     ytSearch: 'powerlifting bar vs standard bar',
   },
   {
     id: 'ssb', category: 'specialty', name: 'Safety Squat Bar (SSB)', weightLbs: 65, weightKg: 29,
     shaft: 'Padded yoke + forward handles',
     characteristics: 'Eliminates traditional grip. Reduces shoulder stress. Anterior core + quad bias. More upright torso.',
-    usedFor: 'ME Lower squatting for athletes with shoulder or wrist issues.',
-    inProgram: 'Primary ME Lower movement — Weeks 1, 5, 9, 13... (Intro waves).',
+    usedFor: 'Heavy Lower squatting for athletes with shoulder or wrist issues.',
+    inProgram: 'Primary Heavy Lower movement — Weeks 1, 5, 9, 13... (Intro waves).',
     ytSearch: 'safety squat bar tutorial',
   },
   {
     id: 'cambered', category: 'specialty', name: 'Cambered Bar', weightLbs: 55, weightKg: 25,
     shaft: '4–10 inch drop below shoulder',
     characteristics: 'Unstable oscillating load. Deeper bottom stretch. Posterior chain demand.',
-    usedFor: 'ME Lower variation for hip drive and upper back strength.',
-    inProgram: 'ME Lower — Build wave weeks (2, 6, 10, 14...).',
+    usedFor: 'Heavy Lower variation for hip drive and upper back strength.',
+    inProgram: 'Heavy Lower — Build wave weeks (2, 6, 10, 14...).',
     ytSearch: 'cambered bar squat tutorial',
   },
   {
@@ -50,7 +50,7 @@ const BARS = [
     shaft: 'Hexagonal frame, hip-height handles',
     characteristics: 'Reduced lumbar stress. More knee bend. Most joint-friendly heavy hinge.',
     usedFor: 'Primary pulling movement with injury sensitivity.',
-    inProgram: 'ME Lower — Peak wave weeks (3, 7, 11, 15...).',
+    inProgram: 'Heavy Lower — Peak wave weeks (3, 7, 11, 15...).',
     ytSearch: 'trap bar deadlift high handle',
   },
   {
@@ -58,7 +58,7 @@ const BARS = [
     shaft: 'Multiple neutral/angled grips',
     characteristics: 'Natural wrist position. Reduces shoulder internal rotation.',
     usedFor: 'Pressing for athletes with shoulder impingement history.',
-    inProgram: 'Accessory pressing on ME Upper days.',
+    inProgram: 'Accessory pressing on Heavy Upper days.',
     ytSearch: 'swiss bar football bar press',
   },
   {
@@ -66,7 +66,7 @@ const BARS = [
     shaft: '2 inches diameter, no sleeve spin',
     characteristics: 'Fat diameter challenges grip. No spin demands wrist/forearm strength.',
     usedFor: 'Axle deadlift, axle clean and press. Common in strongman.',
-    inProgram: 'ME Upper Axle C&P weeks. Strongman Event Days.',
+    inProgram: 'Heavy Upper Axle C&P weeks. Strongman Event Days.',
     ytSearch: 'axle bar strongman tutorial',
   },
   {
@@ -74,7 +74,7 @@ const BARS = [
     shaft: 'Thick cylinder, neutral parallel handles',
     characteristics: 'Unique clean technique: hip-to-lap, pop to front rack, press. Tests overhead strength and hip power.',
     usedFor: 'Most common strongman pressing event.',
-    inProgram: 'ME Upper Log weeks. Strongman Event Days. Priority event.',
+    inProgram: 'Heavy Upper Log weeks. Strongman Event Days. Priority event.',
     ytSearch: 'log clean and press technique',
   },
   {

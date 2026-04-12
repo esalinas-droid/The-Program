@@ -25,13 +25,13 @@ const EXERCISES = [
 ];
 
 const WARMUPS = [
-  { type: 'ME Lower — Squat Bias', drills: [
+  { type: 'Heavy Lower — Squat Bias', drills: [
     { name: '90/90 Breathing', sr: '2×5', purpose: 'Diaphragm reset', cue: 'Full exhale, rib cage down' },
     { name: 'Adductor Rockback', sr: '1×8/side', purpose: 'Hip mobility', cue: 'Sit back into stretch' },
     { name: 'Glute Bridge', sr: '2×10', purpose: 'Glute activation', cue: 'Squeeze at top for 1 sec' },
     { name: 'BW Box Squat', sr: '2×6', purpose: 'Movement rehearsal', cue: 'Sit back to box, drive hips through' },
   ]},
-  { type: 'ME Upper — Press Bias', drills: [
+  { type: 'Heavy Upper — Press Bias', drills: [
     { name: 'Band Pull-Apart', sr: '2×20', purpose: 'Scapular retraction', cue: 'Elbows straight, full range' },
     { name: 'Face Pull', sr: '2×15', purpose: 'Rear delt / cuff activation', cue: 'External rotate at finish' },
     { name: 'Band External Rotation', sr: '2×12', purpose: 'Rotator cuff', cue: 'Elbow at 90°, controlled' },

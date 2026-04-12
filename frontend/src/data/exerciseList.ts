@@ -115,10 +115,10 @@ export const EXERCISE_LIST = [
 ];
 
 export const SESSION_TYPES = [
-  'ME Lower',
-  'ME Upper',
-  'DE Lower',
-  'DE Upper',
+  'Heavy Lower',
+  'Heavy Upper',
+  'Speed Lower',
+  'Speed Upper',
   'Strongman Event Day',
   'Boxing / Recovery / Mobility',
   'Extra Workout / Recovery',
