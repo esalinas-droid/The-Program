@@ -819,6 +819,8 @@ export default function LogScreen() {
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [sessionDuration, setSessionDuration]   = useState(0);
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialLoadDone = useRef(false);
+  const exercisesRef = useRef<ExerciseLog[]>([]);
 
   // Modals
   const [historyEx, setHistoryEx]           = useState<ExerciseLog | null>(null);
@@ -840,6 +842,40 @@ export default function LogScreen() {
 
   useFocusEffect(useCallback(() => {
     (async () => {
+      // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
+      if (initialLoadDone.current) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        try {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const logsResp = await logApi.list();
+          const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+          const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+          const logCountMap = new Map<string, number>();
+          for (const lg of todayLogs) {
+            logCountMap.set((lg.exercise || '').toLowerCase(), (logCountMap.get((lg.exercise || '').toLowerCase()) || 0) + 1);
+          }
+          setExercises(prev => prev.map(ex => {
+            const count = logCountMap.get(ex.name.toLowerCase()) || 0;
+            return { ...ex, sets: ex.sets.map((s, i) => ({ ...s, logged: i < count })) };
+          }));
+          const currentExs = exercisesRef.current;
+          const recoveredIds: Record<string, string> = {};
+          for (const ex of currentExs) {
+            const exName = ex.name.toLowerCase();
+            const matchingLogs = todayLogs
+              .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
+              .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+            for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
+              if (matchingLogs[i].id || matchingLogs[i]._id) {
+                recoveredIds[ex.sets[i].id] = matchingLogs[i].id || matchingLogs[i]._id;
+              }
+            }
+          }
+          setLogEntryIds(recoveredIds);
+        } catch { /* Non-blocking */ }
+        return; // skip full rebuild
+      }
+
       const prof = await getProfile();
       const w    = prof?.currentWeek || 1;
       setWeek(w);
@@ -895,6 +931,7 @@ export default function LogScreen() {
         setRehabData(rData?.hasActiveRehab ? rData : null);
       } catch { /* not critical */ }
 
+      initialLoadDone.current = true;
       setLoading(false);
     })();
     return () => {
@@ -927,6 +964,9 @@ export default function LogScreen() {
     }
     return () => { if (durationRef.current) clearInterval(durationRef.current); };
   }, [sessionStartTime]);
+
+  // ── Keep exercisesRef in sync with latest exercises state ────────────────────
+  useEffect(() => { exercisesRef.current = exercises; }, [exercises]);
 
   // ── Computed ─────────────────────────────────────────────────────────────────
   const totalSets  = exercises.reduce((s, ex) => s + ex.sets.length, 0);

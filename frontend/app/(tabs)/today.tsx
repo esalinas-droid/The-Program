@@ -1254,6 +1254,8 @@ export default function TodayScreen() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialLoadDone = useRef(false);
+  const exercisesRef = useRef<Exercise[]>([]);
 
   // Adjust modal
   const [modalVisible, setModal]   = useState(false);
@@ -1275,6 +1277,44 @@ export default function TodayScreen() {
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
+      // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
+      if (initialLoadDone.current) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        try {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const logsResp = await logApi.list();
+          const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+          const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+          const logCountMap = new Map<string, number>();
+          for (const lg of todayLogs) {
+            logCountMap.set((lg.exercise || '').toLowerCase(), (logCountMap.get((lg.exercise || '').toLowerCase()) || 0) + 1);
+          }
+          const currentExs = exercisesRef.current;
+          const recovered = new Set<string>();
+          for (const ex of currentExs) {
+            const count = logCountMap.get(ex.name.toLowerCase()) || 0;
+            for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
+              recovered.add(ex.sets[i].id);
+            }
+          }
+          setLoggedSets(recovered);
+          const recoveredIds: Record<string, string> = {};
+          for (const ex of currentExs) {
+            const exName = ex.name.toLowerCase();
+            const matchingLogs = todayLogs
+              .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
+              .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+            for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
+              if (matchingLogs[i].id || matchingLogs[i]._id) {
+                recoveredIds[ex.sets[i].id] = matchingLogs[i].id || matchingLogs[i]._id;
+              }
+            }
+          }
+          setLogEntryIds(recoveredIds);
+        } catch { /* Non-blocking */ }
+        return; // skip full rebuild
+      }
+
       const prof = await getProfile();
       const w    = prof?.currentWeek || 1;
       setWeek(w);
@@ -1361,6 +1401,7 @@ export default function TodayScreen() {
         setWarmupData(wu);
       } catch { /* Warm-up not critical */ }
 
+      initialLoadDone.current = true;
       setLoading(false);
     })();
   }, []));
@@ -1382,6 +1423,9 @@ export default function TodayScreen() {
       return { ...init, ...prev };
     });
   }, [exercises]);
+
+  // ── Keep exercisesRef in sync with latest exercises state ────────────────────
+  useEffect(() => { exercisesRef.current = exercises; }, [exercises]);
 
   // ── Readiness submit handler ─────────────────────────────────────────────────
   const handleReadinessSubmit = async (data: { sleepQuality: number; soreness: number; moodEnergy: number }) => {

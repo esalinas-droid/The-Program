@@ -1113,6 +1113,21 @@ agent_communication:
       3. Eric's hardcoded numbers (315x1, 375, etc.) removed from mock EXERCISES array
       4. buildTodayExercisesFromLocal and buildTodayExercisesFromApi updated to use new category names
 
+      === CROSS-TAB SYNC FIX (Root Cause Analysis applied 2025-06-12) ===
+      ROOT CAUSE 1 FIXED: Both today.tsx and log.tsx now use `initialLoadDone` ref — only do the full
+      rebuild (programApi.getTodaySession + build exercises) on FIRST LOAD. On subsequent tab focuses,
+      only re-sync logged state from logApi.list() without rebuilding exercises. This preserves expanded
+      state, effort ratings, and prevents state wipes.
+
+      ROOT CAUSE 2 FIXED: 300ms delay added before logApi.list() in re-sync path to handle race
+      conditions where logApi.create() might still be in-flight on fast tab switches.
+
+      ROOT CAUSE 3 FIXED: setExpanded() call only runs on initial load path (handled by Root Cause 1).
+      Expanded/collapsed state is fully preserved on subsequent focuses.
+
+      Files changed: today.tsx (initialLoadDone ref, exercisesRef, re-sync block, exercisesRef useEffect)
+                     log.tsx (same pattern, uses setExercises(prev=>...) for logged state)
+
       UI REDESIGN:
       5. Thin 3px gold progress bar at very top of screen
       6. Compact session header: context line + title + objective
