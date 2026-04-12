@@ -1,8 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
-  TextInput, KeyboardAvoidingView, Platform, Modal, Animated,
-  Pressable, FlatList, ActivityIndicator, Alert,
+  TextInput, Modal, Animated, Pressable, ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -25,10 +24,8 @@ interface SetData {
   type: SetType;
   targetWeight: number;
   targetReps: string;
-  actualWeight: string;   // TextInput value
+  actualWeight: string;
   actualReps: string;
-  rpe: number;
-  pain: number;           // 0-4
   logged: boolean;
 }
 
@@ -43,12 +40,13 @@ interface ExerciseLog {
   id: string;
   name: string;
   prescription: string;
-  lastRef: string;        // "225×8, 225×7, 225×6"
+  lastRef: string;
   sets: SetData[];
   notes: string;
   notesExpanded: boolean;
   expanded: boolean;
   history: HistoryEntry[];
+  effortRating: number;    // 0 = unset, 6–10 RPE scale
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -72,100 +70,11 @@ function mkSet(id: string, type: SetType, w: number, reps: string): SetData {
   return {
     id, type,
     targetWeight: w, targetReps: reps,
-    actualWeight: String(w),
+    actualWeight: w > 0 ? String(w) : '',
     actualReps:   String(parseTargetReps(reps)),
-    rpe: 7, pain: 0, logged: false,
+    logged: false,
   };
 }
-
-// ── Mock Session Exercises ────────────────────────────────────────────────────
-const INITIAL_EXERCISES: ExerciseLog[] = [
-  {
-    id: 'floor-press', name: 'Floor Press', prescription: '4×6-8',
-    lastRef: '225×8,  225×8,  225×7,  225×6',
-    expanded: true, notes: '', notesExpanded: false,
-    sets: [
-      mkSet('fp-1', 'warmup', 95,  '8'),
-      mkSet('fp-2', 'warmup', 135, '5'),
-      mkSet('fp-3', 'warmup', 185, '3'),
-      mkSet('fp-4', 'work',   225, '6-8'),
-      mkSet('fp-5', 'work',   225, '6-8'),
-      mkSet('fp-6', 'work',   225, '6-8'),
-      mkSet('fp-7', 'work',   225, '6-8'),
-    ],
-    history: [
-      { date: 'Week 1 · Mon', sets: '4×6-8 @ 215 lbs', avgRPE: '7.0', volume: 5160 },
-      { date: 'Week 2 · Mon', sets: '4×6-8 @ 220 lbs', avgRPE: '7.5', volume: 5280 },
-      { date: 'Week 3 · Mon', sets: '4×8 @ 225 lbs',   avgRPE: '7.8', volume: 7200 },
-      { date: 'Week 4 · Mon', sets: '4×7 @ 225 lbs',   avgRPE: '8.0', volume: 6300 },
-    ],
-  },
-  {
-    id: 'pendlay-row', name: 'Pendlay Row', prescription: '4×6-8',
-    lastRef: '185×8,  185×8,  185×7,  185×6',
-    expanded: false, notes: '', notesExpanded: false,
-    sets: [
-      mkSet('pr-1', 'work', 185, '6-8'),
-      mkSet('pr-2', 'work', 185, '6-8'),
-      mkSet('pr-3', 'work', 185, '6-8'),
-      mkSet('pr-4', 'work', 185, '6-8'),
-    ],
-    history: [
-      { date: 'Week 1 · Mon', sets: '4×6 @ 175 lbs', avgRPE: '7.0', volume: 4200 },
-      { date: 'Week 2 · Mon', sets: '4×7 @ 180 lbs', avgRPE: '7.5', volume: 5040 },
-      { date: 'Week 3 · Mon', sets: '4×8 @ 185 lbs', avgRPE: '7.8', volume: 5920 },
-      { date: 'Week 4 · Mon', sets: '4×7 @ 185 lbs', avgRPE: '8.0', volume: 5180 },
-    ],
-  },
-  {
-    id: 'incline-db', name: 'Incline DB Press', prescription: '3×10-12',
-    lastRef: '70×12,  70×11,  70×10',
-    expanded: false, notes: '', notesExpanded: false,
-    sets: [
-      mkSet('idp-1', 'work', 70, '10-12'),
-      mkSet('idp-2', 'work', 70, '10-12'),
-      mkSet('idp-3', 'work', 70, '10-12'),
-    ],
-    history: [
-      { date: 'Week 1 · Mon', sets: '3×10 @ 65 lbs', avgRPE: '7.5', volume: 1950 },
-      { date: 'Week 2 · Mon', sets: '3×11 @ 67.5 lbs', avgRPE: '7.8', volume: 2228 },
-      { date: 'Week 3 · Mon', sets: '3×12 @ 70 lbs',   avgRPE: '8.0', volume: 2520 },
-      { date: 'Week 4 · Mon', sets: '3×11 @ 70 lbs',   avgRPE: '8.2', volume: 2310 },
-    ],
-  },
-  {
-    id: 'tricep-pushdown', name: 'Tricep Pushdown', prescription: '3×15-20',
-    lastRef: '100×18,  100×17,  100×15',
-    expanded: false, notes: '', notesExpanded: false,
-    sets: [
-      mkSet('tp-1', 'work', 100, '15-20'),
-      mkSet('tp-2', 'work', 100, '15-20'),
-      mkSet('tp-3', 'work', 100, '15-20'),
-    ],
-    history: [
-      { date: 'Week 1', sets: '3×15 @ 90 lbs', avgRPE: '6.5', volume: 4050 },
-      { date: 'Week 2', sets: '3×17 @ 95 lbs', avgRPE: '7.0', volume: 4845 },
-      { date: 'Week 3', sets: '3×18 @ 100 lbs', avgRPE: '7.2', volume: 5400 },
-      { date: 'Week 4', sets: '3×17 @ 100 lbs', avgRPE: '7.5', volume: 5100 },
-    ],
-  },
-  {
-    id: 'face-pull', name: 'Face Pull', prescription: '3×15-20',
-    lastRef: '45×20,  45×20,  45×18',
-    expanded: false, notes: '', notesExpanded: false,
-    sets: [
-      mkSet('fp2-1', 'work', 45, '15-20'),
-      mkSet('fp2-2', 'work', 45, '15-20'),
-      mkSet('fp2-3', 'work', 45, '15-20'),
-    ],
-    history: [
-      { date: 'Week 1', sets: '3×20 @ 40 lbs', avgRPE: '5.5', volume: 2400 },
-      { date: 'Week 2', sets: '3×20 @ 45 lbs', avgRPE: '6.0', volume: 2700 },
-      { date: 'Week 3', sets: '3×20 @ 45 lbs', avgRPE: '5.8', volume: 2700 },
-      { date: 'Week 4', sets: '3×20 @ 45 lbs', avgRPE: '6.0', volume: 2700 },
-    ],
-  },
-];
 
 // ── Build ExerciseLogs from API session exercises ──────────────────────────────
 function buildFromApi(apiExercises: any[]): ExerciseLog[] {
@@ -192,6 +101,7 @@ function buildFromApi(apiExercises: any[]): ExerciseLog[] {
         notesExpanded: false,
         sets,
         history: [],
+        effortRating: 0,
       } as ExerciseLog;
     });
 }
@@ -230,6 +140,7 @@ function buildFromLocal(session: import('../../src/types').ProgramSession): Exer
         mkSet(`main-w-${i}`, 'work', weight, reps)
       ),
       history: [],
+      effortRating: 0,
     });
   }
 
@@ -242,6 +153,7 @@ function buildFromLocal(session: import('../../src/types').ProgramSession): Exer
       lastRef: '—', expanded: !hasMainLift && idx === 0, notes: '', notesExpanded: false,
       sets: Array.from({ length: Math.min(sc, 8) }, (_, i) => mkSet(`sup-${idx}-${i}`, 'work', 0, r)),
       history: [],
+      effortRating: 0,
     });
   });
 
@@ -254,6 +166,7 @@ function buildFromLocal(session: import('../../src/types').ProgramSession): Exer
       lastRef: '—', expanded: false, notes: '', notesExpanded: false,
       sets: Array.from({ length: Math.min(sc, 6) }, (_, i) => mkSet(`acc-${idx}-${i}`, 'work', 0, r)),
       history: [],
+      effortRating: 0,
     });
   });
 
@@ -261,64 +174,139 @@ function buildFromLocal(session: import('../../src/types').ProgramSession): Exer
 }
 
 const REST_OPTIONS = [60, 90, 120, 180, 300];
-const PAIN_LABELS  = ['None', 'Aware', 'Mild', 'Modify', 'Stop'];
-const PAIN_COLORS  = [TEAL, '#AED6F1', AMBER, '#E67E22', '#EF5350'];
 const RPE_VALUES   = [6, 7, 8, 9, 10];
 
-// ── PainModal ─────────────────────────────────────────────────────────────────
-function PainModal({ visible, currentPain, onSelect, onClose }: {
-  visible: boolean; currentPain: number;
-  onSelect: (p: number) => void; onClose: () => void;
+// ── SetRow ─────────────────────────────────────────────────────────────────────
+function SetRow({ set, index, isActive, onUpdate, onLog }: {
+  set: SetData;
+  index: number;
+  isActive: boolean;   // true for first unlogged set in this exercise
+  onUpdate: (field: 'actualWeight' | 'actualReps', val: string) => void;
+  onLog: () => void;
 }) {
-  const slideAnim = useRef(new Animated.Value(300)).current;
-  useEffect(() => {
-    Animated.spring(slideAnim, {
-      toValue: visible ? 0 : 300,
-      useNativeDriver: true, damping: 20, stiffness: 300,
-    }).start();
-  }, [visible]);
+  const circleColor = set.logged ? TEAL : set.type === 'warmup' ? '#555' : COLORS.accent;
+
+  // Logged state — teal + strikethrough
+  if (set.logged) {
+    return (
+      <View style={sr.rowDone}>
+        <View style={[sr.circle, { backgroundColor: TEAL + '22', borderColor: TEAL }]}>
+          <MaterialCommunityIcons name="check" size={11} color={TEAL} />
+        </View>
+        <Text style={sr.targetDone}>{set.targetWeight} × {set.targetReps}</Text>
+        <View style={sr.inputsDone}>
+          <Text style={sr.doneVal}>{set.actualWeight}</Text>
+          <Text style={sr.doneSep}>×</Text>
+          <Text style={sr.doneVal}>{set.actualReps}</Text>
+        </View>
+        <View style={sr.checkWrap}>
+          <MaterialCommunityIcons name="check-circle" size={20} color={TEAL} />
+        </View>
+      </View>
+    );
+  }
+
+  const borderCol = isActive ? COLORS.accent + '70' : '#2A2A2E';
+  const textCol   = isActive ? COLORS.accent : COLORS.text.primary;
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={pm.overlay} onPress={onClose}>
-        <Animated.View style={[pm.sheet, { transform: [{ translateY: slideAnim }] }]}>
-          <Pressable onPress={e => e.stopPropagation()}>
-            <View style={pm.handle}><View style={pm.handleBar} /></View>
-            <Text style={pm.title}>PAIN LEVEL</Text>
-            {PAIN_LABELS.map((label, i) => (
-              <TouchableOpacity
-                key={i} style={[pm.option, currentPain === i && { borderColor: PAIN_COLORS[i], backgroundColor: PAIN_COLORS[i] + '20' }]}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(i); onClose(); }}
-                activeOpacity={0.8}
-              >
-                <View style={[pm.dot, { backgroundColor: PAIN_COLORS[i] }]} />
-                <View style={pm.optLabel}>
-                  <Text style={[pm.optNum, { color: PAIN_COLORS[i] }]}>{i}</Text>
-                  <Text style={[pm.optText, currentPain === i && { color: PAIN_COLORS[i] }]}>{label}</Text>
-                </View>
-                {currentPain === i && <MaterialCommunityIcons name="check" size={18} color={PAIN_COLORS[i]} />}
-              </TouchableOpacity>
-            ))}
-          </Pressable>
-        </Animated.View>
-      </Pressable>
-    </Modal>
+    <View style={[sr.row, isActive && sr.rowActive]}>
+      {/* Numbered circle */}
+      <View style={[sr.circle, { backgroundColor: circleColor + '20', borderColor: circleColor }]}>
+        <Text style={[sr.circleNum, { color: circleColor }]}>{index + 1}</Text>
+      </View>
+
+      {/* Target reference */}
+      <Text style={sr.target}>{set.targetWeight > 0 ? `${set.targetWeight}×${set.targetReps}` : set.targetReps}</Text>
+
+      {/* Weight input */}
+      <TextInput
+        style={[sr.input, { borderColor: borderCol, color: textCol }]}
+        value={set.actualWeight}
+        onChangeText={v => onUpdate('actualWeight', v.replace(/[^0-9.]/g, ''))}
+        keyboardType="numeric"
+        selectTextOnFocus
+        returnKeyType="done"
+        placeholder="lbs"
+        placeholderTextColor={COLORS.text.muted}
+      />
+
+      <Text style={sr.timesSign}>×</Text>
+
+      {/* Reps input */}
+      <TextInput
+        style={[sr.input, sr.repsInput, { borderColor: borderCol, color: textCol }]}
+        value={set.actualReps}
+        onChangeText={v => onUpdate('actualReps', v.replace(/[^0-9]/g, ''))}
+        keyboardType="numeric"
+        selectTextOnFocus
+        returnKeyType="done"
+        placeholder="reps"
+        placeholderTextColor={COLORS.text.muted}
+      />
+
+      {/* LOG button */}
+      <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
+        <Text style={sr.logBtnText}>LOG</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
-const pm = StyleSheet.create({
-  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
-  sheet:    { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40 },
-  handle:   { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
-  handleBar:{ width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
-  title:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginBottom: SPACING.md },
-  option:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: SPACING.lg, borderBottomWidth: 1, borderBottomColor: COLORS.border, gap: SPACING.md, borderWidth: 0 },
-  dot:      { width: 10, height: 10, borderRadius: 5 },
-  optLabel: { flex: 1, flexDirection: 'row', gap: SPACING.sm, alignItems: 'center' },
-  optNum:   { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, width: 32 },
-  optText:  { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, fontWeight: FONTS.weights.semibold },
+
+const sr = StyleSheet.create({
+  row:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, gap: 6, flex: 1 },
+  rowActive: { backgroundColor: COLORS.accent + '08', marginHorizontal: -SPACING.md, paddingHorizontal: SPACING.md, borderRadius: RADIUS.md },
+  rowDone:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, gap: 6, opacity: 0.75, flex: 1 },
+  circle:    { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  circleNum: { fontSize: 10, fontWeight: FONTS.weights.heavy },
+  target:    { fontSize: 11, color: '#666', width: 58, flexShrink: 0 },
+  targetDone:{ fontSize: 11, color: '#444', width: 58, flexShrink: 0 },
+  input:     { width: 72, height: 38, backgroundColor: '#1A1A1E', borderRadius: 6, borderWidth: 1, textAlign: 'center', fontSize: 14, fontWeight: FONTS.weights.semibold },
+  repsInput: { width: 60 },
+  timesSign: { fontSize: 14, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
+  logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, minWidth: 46, alignItems: 'center', height: 38, justifyContent: 'center' },
+  logBtnText:{ color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  inputsDone:{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  doneVal:   { fontSize: 13, color: TEAL, fontWeight: FONTS.weights.semibold, textDecorationLine: 'line-through' },
+  doneSep:   { fontSize: 13, color: '#444' },
+  checkWrap: { width: 46, alignItems: 'center' },
 });
 
-// ── HistoryDrawer ─────────────────────────────────────────────────────────────
+// ── QuickStatsStrip ────────────────────────────────────────────────────────────
+function QuickStatsStrip({ loggedSets, totalSets, totalVolume, avgEffort }: {
+  loggedSets: number;
+  totalSets: number;
+  totalVolume: number;
+  avgEffort: string;
+}) {
+  const setsColor = loggedSets > 0 ? TEAL : COLORS.text.muted;
+  return (
+    <View style={qs.strip}>
+      <View style={qs.pill}>
+        <Text style={[qs.value, { color: setsColor }]}>{loggedSets}<Text style={qs.denom}>/{totalSets}</Text></Text>
+        <Text style={qs.label}>SETS</Text>
+      </View>
+      <View style={qs.divider} />
+      <View style={qs.pill}>
+        <Text style={qs.value}>{totalVolume > 0 ? totalVolume.toLocaleString() : '—'}</Text>
+        <Text style={qs.label}>LB VOLUME</Text>
+      </View>
+      <View style={qs.divider} />
+      <View style={qs.pill}>
+        <Text style={[qs.value, avgEffort !== '—' && { color: COLORS.accent }]}>{avgEffort}</Text>
+        <Text style={qs.label}>AVG RPE</Text>
+      </View>
+    </View>
+  );
+}
+const qs = StyleSheet.create({
+  strip:   { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: '#111114', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  pill:    { flex: 1, alignItems: 'center', paddingVertical: SPACING.md },
+  value:   { fontSize: 18, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, fontVariant: ['tabular-nums'] as any },
+  denom:   { fontSize: 13, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  label:   { fontSize: 8, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, marginTop: 2 },
+  divider: { width: 1, alignSelf: 'stretch', backgroundColor: COLORS.border, marginVertical: 8 },
+});
 function HistoryDrawer({ exercise, visible, onClose }: {
   exercise: ExerciseLog | null; visible: boolean; onClose: () => void;
 }) {
@@ -422,159 +410,35 @@ const tc = StyleSheet.create({
   optTextActive:{ color: COLORS.primary },
 });
 
-// ── SetRow ─────────────────────────────────────────────────────────────────────
-function SetRow({ set, index, onUpdate, onLog, onPain }: {
-  set: SetData; index: number;
-  onUpdate: (field: 'actualWeight' | 'actualReps' | 'rpe', val: string | number) => void;
-  onLog: () => void;
-  onPain: () => void;
-}) {
-  const circleColor = set.logged
-    ? TEAL
-    : set.type === 'warmup' ? '#666666' : COLORS.accent;
-
-  if (set.logged) {
-    return (
-      <View style={sr.rowDone}>
-        <View style={[sr.circle, { backgroundColor: TEAL + '22', borderColor: TEAL }]}>
-          <MaterialCommunityIcons name="check" size={11} color={TEAL} />
-        </View>
-        <Text style={sr.doneSummary}>
-          {set.actualWeight} × {set.actualReps}  @  RPE {set.rpe}
-          {set.pain > 0 && <Text style={sr.painBadge}>  🔴 Pain {set.pain}</Text>}
-        </Text>
-        <MaterialCommunityIcons name="check-circle" size={20} color={TEAL} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={sr.row}>
-      {/* Set number circle */}
-      <View style={[sr.circle, { backgroundColor: circleColor + '20', borderColor: circleColor }]}>
-        <Text style={[sr.circleNum, { color: circleColor }]}>{index + 1}</Text>
-      </View>
-
-      {/* Target reference */}
-      <Text style={sr.target}>
-        {set.targetWeight} × {set.targetReps}
-      </Text>
-
-      {/* Weight input */}
-      <View style={sr.inputWrap}>
-        <TextInput
-          style={sr.input}
-          value={set.actualWeight}
-          onChangeText={v => onUpdate('actualWeight', v.replace(/[^0-9.]/g, ''))}
-          keyboardType="numeric"
-          selectTextOnFocus
-        />
-        <Text style={sr.inputUnit}>lb</Text>
-      </View>
-
-      <Text style={sr.timesSign}>×</Text>
-
-      {/* Reps input */}
-      <View style={sr.repsWrap}>
-        <TextInput
-          style={sr.repsInput}
-          value={set.actualReps}
-          onChangeText={v => onUpdate('actualReps', v.replace(/[^0-9]/g, ''))}
-          keyboardType="numeric"
-          selectTextOnFocus
-        />
-      </View>
-
-      {/* Pain button */}
-      <TouchableOpacity onPress={onPain} style={sr.painBtn} activeOpacity={0.7}>
-        <MaterialCommunityIcons
-          name="alert-circle-outline"
-          size={18}
-          color={set.pain > 0 ? PAIN_COLORS[set.pain] : COLORS.border}
-        />
-      </TouchableOpacity>
-
-      {/* Log button */}
-      <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
-        <Text style={sr.logBtnText}>LOG</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-// RPE pills row shown below each unlogged set group
-function RPERow({ setId, rpe, onRPEChange }: {
-  setId: string; rpe: number; onRPEChange: (v: number) => void;
-}) {
-  return (
-    <View style={sr.rpeRow}>
-      <Text style={sr.rpeLabel}>RPE</Text>
-      {RPE_VALUES.map(v => (
-        <TouchableOpacity
-          key={v}
-          style={[sr.rpePill, rpe === v && sr.rpePillActive]}
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRPEChange(v); }}
-          activeOpacity={0.7}
-        >
-          <Text style={[sr.rpePillText, rpe === v && sr.rpePillTextActive]}>{v}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-const sr = StyleSheet.create({
-  row:        { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, gap: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border + '55' },
-  rowDone:    { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, gap: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border + '55', opacity: 0.7 },
-  circle:     { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
-  circleNum:  { fontSize: 11, fontWeight: FONTS.weights.heavy },
-  target:     { fontSize: 11, color: COLORS.text.muted, width: 60, flexShrink: 0 },
-  inputWrap:  { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.accent + '60', paddingHorizontal: 6, height: 40, minWidth: 62 },
-  input:      { color: COLORS.accent, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, minWidth: 38, textAlign: 'center' },
-  inputUnit:  { fontSize: 9, color: COLORS.text.muted, marginLeft: 2 },
-  timesSign:  { fontSize: FONTS.sizes.base, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
-  repsWrap:   { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.accent + '60', paddingHorizontal: 8, height: 40, justifyContent: 'center', minWidth: 46 },
-  repsInput:  { color: COLORS.accent, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, textAlign: 'center' },
-  painBtn:    { width: 36, height: 40, justifyContent: 'center', alignItems: 'center' },
-  logBtn:     { backgroundColor: COLORS.accent, paddingHorizontal: 10, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 46, alignItems: 'center', height: 40, justifyContent: 'center' },
-  logBtnText: { color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-  doneSummary:{ flex: 1, fontSize: FONTS.sizes.sm, color: TEAL, fontWeight: FONTS.weights.semibold },
-  painBadge:  { color: '#EF5350', fontSize: FONTS.sizes.xs },
-  // RPE row
-  rpeRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 5, paddingLeft: 32 },
-  rpeLabel:   { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1, marginRight: 2, width: 28 },
-  rpePill:    { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, backgroundColor: COLORS.surfaceHighlight, borderWidth: 1, borderColor: COLORS.border },
-  rpePillActive:    { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  rpePillText:      { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
-  rpePillTextActive:{ color: COLORS.primary },
-});
-
 // ── ExerciseCard ───────────────────────────────────────────────────────────────
-function ExerciseCard({ ex, onToggleExpand, onUpdateSet, onLogSet, onOpenPain,
-  onAddSet, onToggleNotes, onNoteChange, onOpenHistory, onUpdateRPE }: {
+function ExerciseCard({ ex, onToggleExpand, onUpdateSet, onLogSet,
+  onAddSet, onToggleNotes, onNoteChange, onOpenHistory, onEffortChange }: {
   ex: ExerciseLog;
   onToggleExpand: () => void;
   onUpdateSet: (setId: string, field: 'actualWeight' | 'actualReps', val: string) => void;
   onLogSet: (setId: string) => void;
-  onOpenPain: (setId: string) => void;
   onAddSet: () => void;
   onToggleNotes: () => void;
   onNoteChange: (text: string) => void;
   onOpenHistory: () => void;
-  onUpdateRPE: (setId: string, rpe: number) => void;
+  onEffortChange: (rating: number) => void;
 }) {
-  const loggedCount = ex.sets.filter(s => s.logged).length;
-  const total       = ex.sets.length;
-  const allDone     = loggedCount === total;
-  const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
+  const loggedCount  = ex.sets.filter(s => s.logged).length;
+  const total        = ex.sets.length;
+  const allDone      = loggedCount === total;
+  const progColor    = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
+  const activeSetIdx = ex.sets.findIndex(s => !s.logged);   // first unlogged
 
   return (
-    <View style={ec.card}>
-      {/* ── Header (always visible) ── */}
+    <View style={[ec.card, loggedCount > 0 && !allDone && ec.cardActive]}>
+      {/* ── Collapsed header ── */}
       <TouchableOpacity style={ec.header} onPress={onToggleExpand} activeOpacity={0.8}>
         <View style={ec.headerLeft}>
           <Text style={ec.name} numberOfLines={1}>{ex.name}</Text>
-          <Text style={ec.prescription}>{ex.prescription}</Text>
+          <Text style={ec.subLine}>
+            {ex.prescription}
+            {ex.lastRef !== '—' ? `  ·  Last: ${ex.lastRef}` : ''}
+          </Text>
         </View>
         <View style={ec.headerRight}>
           <View style={[ec.progressPill, { backgroundColor: progColor + '22' }]}>
@@ -587,50 +451,69 @@ function ExerciseCard({ ex, onToggleExpand, onUpdateSet, onLogSet, onOpenPain,
         </View>
       </TouchableOpacity>
 
-      {/* Last session reference (tappable → history drawer) */}
-      <TouchableOpacity style={ec.lastRow} onPress={onOpenHistory} activeOpacity={0.75}>
-        <MaterialCommunityIcons name="history" size={13} color={COLORS.text.muted} />
-        <Text style={ec.lastText}>Last: {ex.lastRef}</Text>
-        <MaterialCommunityIcons name="chevron-right" size={13} color={COLORS.text.muted} />
-      </TouchableOpacity>
-
       {/* ── Expanded body ── */}
       {ex.expanded && (
         <View style={ec.body}>
-          {ex.sets.map((set, idx) => (
-            <React.Fragment key={set.id}>
-              <SetRow
-                set={set}
-                index={idx}
-                onUpdate={(field, val) => onUpdateSet(set.id, field as any, String(val))}
-                onLog={() => onLogSet(set.id)}
-                onPain={() => onOpenPain(set.id)}
-              />
-              {/* RPE row shown for unlogged sets only */}
-              {!set.logged && (
-                <RPERow
-                  setId={set.id}
-                  rpe={set.rpe}
-                  onRPEChange={v => onUpdateRPE(set.id, v)}
-                />
-              )}
-            </React.Fragment>
-          ))}
-
-          {/* Exercise controls */}
-          <View style={ec.controlsRow}>
-            <TouchableOpacity style={ec.ctrlBtn} onPress={onAddSet} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="plus" size={14} color={COLORS.accent} />
-              <Text style={ec.ctrlBtnText}>Add Set</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={ec.ctrlBtn} onPress={onToggleNotes} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="pencil-outline" size={14} color={COLORS.text.muted} />
-              <Text style={[ec.ctrlBtnText, { color: COLORS.text.muted }]}>
-                {ex.notesExpanded ? 'Hide Notes' : 'Notes'}
-              </Text>
-            </TouchableOpacity>
+          {/* Column headers */}
+          <View style={ec.colHeaders}>
+            <View style={{ width: 34 }} />
+            <Text style={[ec.colHdr, { width: 62 }]}>TARGET</Text>
+            <Text style={[ec.colHdr, { flex: 1, textAlign: 'center' }]}>WEIGHT</Text>
+            <View style={{ width: 18 }} />
+            <Text style={[ec.colHdr, { flex: 0.9, textAlign: 'center' }]}>REPS</Text>
+            <View style={{ width: 46 }} />
           </View>
 
+          {/* Set rows */}
+          {ex.sets.map((set, idx) => (
+            <SetRow
+              key={set.id}
+              set={set}
+              index={idx}
+              isActive={idx === activeSetIdx}
+              onUpdate={(field, val) => onUpdateSet(set.id, field, val)}
+              onLog={() => onLogSet(set.id)}
+            />
+          ))}
+
+          {/* ── Effort + Action pills row ── */}
+          <View style={ec.bottomRow}>
+            <View style={ec.effortSection}>
+              <Text style={ec.effortLabel}>EFFORT</Text>
+              <View style={ec.effortCircles}>
+                {RPE_VALUES.map(v => {
+                  const sel = ex.effortRating === v;
+                  return (
+                    <TouchableOpacity
+                      key={v}
+                      style={[ec.effortCircle, sel && ec.effortCircleOn]}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortChange(v); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[ec.effortNum, sel && ec.effortNumOn]}>{v}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={ec.actionPills}>
+              <TouchableOpacity style={ec.pill} onPress={onAddSet} activeOpacity={0.75}>
+                <MaterialCommunityIcons name="plus" size={11} color={COLORS.accent} />
+                <Text style={[ec.pillText, { color: COLORS.accent }]}>Set</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={ec.pill} onPress={onToggleNotes} activeOpacity={0.75}>
+                <MaterialCommunityIcons name="pencil-outline" size={11} color={COLORS.text.muted} />
+                <Text style={ec.pillText}>Notes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={ec.pill} onPress={onOpenHistory} activeOpacity={0.75}>
+                <MaterialCommunityIcons name="chart-line" size={11} color={COLORS.text.muted} />
+                <Text style={ec.pillText}>History</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Notes input */}
           {ex.notesExpanded && (
             <TextInput
               style={ec.notesInput}
@@ -641,73 +524,69 @@ function ExerciseCard({ ex, onToggleExpand, onUpdateSet, onLogSet, onOpenPain,
               multiline
             />
           )}
-
-          {/* Pain summary if any sets flagged */}
-          {ex.sets.some(s => s.pain > 0) && (
-            <View style={ec.painSummary}>
-              <MaterialCommunityIcons name="alert-circle" size={13} color={AMBER} />
-              <Text style={ec.painSummaryText}>
-                Pain flagged on {ex.sets.filter(s => s.pain > 0).length} set(s) — review before next session
-              </Text>
-            </View>
-          )}
         </View>
       )}
     </View>
   );
 }
 const ec = StyleSheet.create({
-  card:         { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
-  header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.md, paddingBottom: SPACING.sm },
-  headerLeft:   { flex: 1, gap: 2 },
-  name:         { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
-  prescription: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
-  headerRight:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  progressPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
-  progressText: { fontSize: 11, fontWeight: FONTS.weights.heavy },
-  lastRow:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: SPACING.lg, paddingBottom: SPACING.sm },
-  lastText:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', flex: 1 },
-  body:         { paddingHorizontal: SPACING.md, paddingBottom: SPACING.md },
-  controlsRow:  { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
-  ctrlBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: SPACING.md, backgroundColor: COLORS.accent + '15', borderRadius: RADIUS.md },
-  ctrlBtnText:  { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
-  notesInput:   { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, padding: SPACING.sm, color: COLORS.text.primary, fontSize: FONTS.sizes.sm, marginTop: SPACING.sm, minHeight: 64, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border },
-  painSummary:  { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: SPACING.sm, backgroundColor: AMBER + '15', borderRadius: RADIUS.md, padding: SPACING.sm },
-  painSummaryText: { fontSize: FONTS.sizes.xs, color: AMBER, flex: 1, lineHeight: 16 },
+  card:           { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#111114', borderRadius: 12, borderWidth: 1, borderColor: '#1E1E22', overflow: 'hidden' },
+  cardActive:     { borderColor: '#C9A84C30' },
+  header:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
+  headerLeft:     { flex: 1, gap: 3 },
+  name:           { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  subLine:        { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  headerRight:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  progressPill:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
+  progressText:   { fontSize: 11, fontWeight: FONTS.weights.heavy },
+  body:           { paddingHorizontal: SPACING.md, paddingBottom: SPACING.lg, borderTopWidth: 1, borderTopColor: '#1E1E22' },
+  // Column headers
+  colHeaders:     { flexDirection: 'row', alignItems: 'center', paddingTop: SPACING.sm, paddingBottom: 4, gap: 6 },
+  colHdr:         { fontSize: 9, fontWeight: FONTS.weights.heavy, color: '#444', letterSpacing: 1 },
+  // Effort + actions bottom row
+  bottomRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: '#1E1E22' },
+  effortSection:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  effortLabel:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.2 },
+  effortCircles:  { flexDirection: 'row', gap: 5 },
+  effortCircle:   { width: 28, height: 28, borderRadius: 14, backgroundColor: '#1A1A1E', borderWidth: 1.5, borderColor: '#2A2A2E', justifyContent: 'center', alignItems: 'center' },
+  effortCircleOn: { backgroundColor: '#C9A84C', borderColor: '#C9A84C' },
+  effortNum:      { fontSize: 12, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
+  effortNumOn:    { color: '#0A0A0C' },
+  // Action pills
+  actionPills:    { flexDirection: 'row', gap: 5 },
+  pill:           { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#2A2A2E', backgroundColor: COLORS.primary },
+  pillText:       { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  // Notes
+  notesInput:     { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, padding: SPACING.sm, color: COLORS.text.primary, fontSize: FONTS.sizes.sm, marginTop: SPACING.sm, minHeight: 64, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border },
 });
 
-// ── RestTimerBar (fixed above session bar) ────────────────────────────────────
+// ── HistoryDrawer ─────────────────────────────────────────────────────────────
+// ── RestTimerBar (always visible, sticky above session bar) ───────────────────
 function RestTimerBar({ active, seconds, total, onToggle, onReset, onConfig }: {
   active: boolean; seconds: number; total: number;
   onToggle: () => void; onReset: () => void; onConfig: () => void;
 }) {
-  const pct      = total > 0 ? Math.max(0, seconds / total) : 0;
+  const pct      = total > 0 ? Math.max(0, seconds / total) : 1;
+  const idle     = !active && seconds === total;
   const expired  = active && seconds === 0;
-  const timeColor = expired ? TEAL : seconds <= 15 ? AMBER : COLORS.accent;
-
-  if (!active && seconds === total) return null; // not started yet
+  const timeColor = expired ? TEAL : idle ? COLORS.text.muted : seconds <= 15 ? AMBER : COLORS.accent;
 
   return (
     <View style={rtb.bar}>
-      {/* Timer display */}
       <View style={rtb.left}>
-        <MaterialCommunityIcons name="timer-sand" size={16} color={timeColor} />
+        <MaterialCommunityIcons name={idle ? 'timer-sand-empty' : 'timer-sand'} size={16} color={timeColor} />
         <Text style={rtb.restLabel}>REST</Text>
         {expired
           ? <Text style={[rtb.time, { color: TEAL }]}>DONE ✓</Text>
           : <Text style={[rtb.time, { color: timeColor }]}>{formatDuration(seconds)}</Text>
         }
       </View>
-
-      {/* Progress track */}
       <View style={rtb.progressTrack}>
-        <View style={[rtb.progressFill, { width: `${pct * 100}%` as any, backgroundColor: timeColor }]} />
+        <View style={[rtb.progressFill, { width: `${pct * 100}%` as any, backgroundColor: idle ? COLORS.border : timeColor }]} />
       </View>
-
-      {/* Controls */}
       <View style={rtb.controls}>
         <TouchableOpacity onPress={onToggle} style={rtb.ctrlBtn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name={active ? 'pause' : 'play'} size={20} color={COLORS.accent} />
+          <MaterialCommunityIcons name={active ? 'pause' : 'play'} size={20} color={idle ? COLORS.text.muted : COLORS.accent} />
         </TouchableOpacity>
         <TouchableOpacity onPress={onReset} style={rtb.ctrlBtn} activeOpacity={0.75}>
           <MaterialCommunityIcons name="refresh" size={18} color={COLORS.text.muted} />
@@ -780,72 +659,61 @@ const sb = StyleSheet.create({
 
 // ── Main LogScreen ─────────────────────────────────────────────────────────────
 export default function LogScreen() {
-  // Initialize directly from local programData for the current day — no async needed,
-  // no ME Upper flash. useFocusEffect will override once profile week is loaded.
   const [exercises, setExercises] = useState<ExerciseLog[]>(() => {
-    const s = getTodaySession(1); // week 1 default; correct day schedule is independent of week
+    const s = getTodaySession(1);
     const local = buildFromLocal(s);
-    return local.length > 0 ? local : INITIAL_EXERCISES;
+    return local.length > 0 ? local : [];
   });
-  const [week, setWeek]           = useState(1);
-  // Initialize sessionType from local programData too — no 'ME Upper' default
+  const [week, setWeek]               = useState(1);
   const [sessionType, setSessionType] = useState(() => getTodaySession(1).sessionType);
-  const [loading, setLoading]     = useState(true);
+  const [loading, setLoading]         = useState(true);
 
-  // Rest timer
-  const [timerActive, setTimerActive] = useState(false);
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerTotal, setTimerTotal]     = useState(90);
-  const [restDuration, setRestDuration] = useState(90);
+  // Rest timer (countdown)
+  const [timerActive, setTimerActive]     = useState(false);
+  const [timerSeconds, setTimerSeconds]   = useState(90);
+  const [timerTotal, setTimerTotal]       = useState(90);
+  const [restDuration, setRestDuration]   = useState(90);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Session duration
+  // Session elapsed timer
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [sessionDuration, setSessionDuration]   = useState(0);
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Modals
-  const [painTarget, setPainTarget]     = useState<{ exId: string; setId: string } | null>(null);
-  const [historyEx, setHistoryEx]       = useState<ExerciseLog | null>(null);
+  const [historyEx, setHistoryEx]           = useState<ExerciseLog | null>(null);
   const [timerConfigVis, setTimerConfigVis] = useState(false);
+  const [finishVisible, setFinishVisible]   = useState(false);
 
-  // Finish modal
-  const [finishVisible, setFinishVisible] = useState(false);
-
-  // ── Rehab section (Task 8) ────────────────────────────────────────────────
-  const [rehabData, setRehabData] = useState<any | null>(null);
-  const [rehabExpanded, setRehabExpanded] = useState(true);
-  const [loggingRehabEx, setLoggingRehabEx] = useState<string | null>(null);
+  // Rehab section
+  const [rehabData, setRehabData]               = useState<any | null>(null);
+  const [rehabExpanded, setRehabExpanded]       = useState(true);
+  const [loggingRehabEx, setLoggingRehabEx]     = useState<string | null>(null);
   const [rehabSetsCompleted, setRehabSetsCompleted] = useState('3');
-  const [rehabPainLevel, setRehabPainLevel] = useState(0);
-  const [rehabLogSuccess, setRehabLogSuccess] = useState<string | null>(null);
+  const [rehabPainLevel, setRehabPainLevel]     = useState(0);
+  const [rehabLogSuccess, setRehabLogSuccess]   = useState<string | null>(null);
 
   useFocusEffect(useCallback(() => {
     (async () => {
       const prof = await getProfile();
-      const week = prof?.currentWeek || 1;
-      setWeek(week);
+      const w    = prof?.currentWeek || 1;
+      setWeek(w);
 
-      // Immediately populate from local training schedule (instant, offline-ready)
-      const localSession = getTodaySession(week);
+      const localSession = getTodaySession(w);
       setSessionType(localSession.sessionType);
       const localExs = buildFromLocal(localSession);
       if (localExs.length > 0) setExercises(localExs);
 
-      // Override with real generated plan exercises from backend
       try {
         const todayData = await programApi.getTodaySession();
-        if (todayData?.session?.sessionType) {
-          setSessionType(todayData.session.sessionType);
-        }
+        if (todayData?.session?.sessionType) setSessionType(todayData.session.sessionType);
         const apiExs = buildFromApi(todayData?.session?.exercises);
         if (apiExs.length > 0) {
-          // ── Sync logged sets with Today tab ──────────────────────────────────
           try {
-            const todayStr = new Date().toISOString().split('T')[0];
-            const logsResp = await logApi.list();
-            const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
-            const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+            const todayStr   = new Date().toISOString().split('T')[0];
+            const logsResp   = await logApi.list();
+            const allLogs    = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+            const todayLogs  = allLogs.filter((l: any) => l.date === todayStr);
             const logCountMap = new Map<string, number>();
             for (const lg of todayLogs) {
               const key = (lg.exercise || '').toLowerCase();
@@ -856,17 +724,14 @@ export default function LogScreen() {
               return { ...ex, sets: ex.sets.map((s: any, i: number) => ({ ...s, logged: i < count })) };
             });
             setExercises(synced);
-          } catch {
-            setExercises(apiExs);
-          }
+          } catch { setExercises(apiExs); }
         }
-      } catch { /* Keep local data */ }
+      } catch { /* keep local */ }
 
-      // ── Fetch active rehab exercises (Task 8) ─────────────────────────────
       try {
         const rData = await rehabApi.getExercises();
         setRehabData(rData?.hasActiveRehab ? rData : null);
-      } catch { /* Rehab not critical */ }
+      } catch { /* not critical */ }
 
       setLoading(false);
     })();
@@ -881,11 +746,7 @@ export default function LogScreen() {
     if (timerActive && timerSeconds > 0) {
       timerRef.current = setInterval(() => {
         setTimerSeconds(s => {
-          if (s <= 1) {
-            setTimerActive(false);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            return 0;
-          }
+          if (s <= 1) { setTimerActive(false); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); return 0; }
           return s - 1;
         });
       }, 1000);
@@ -895,7 +756,7 @@ export default function LogScreen() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [timerActive]);
 
-  // Session duration counter
+  // Session elapsed counter
   useEffect(() => {
     if (sessionStartTime) {
       durationRef.current = setInterval(() => {
@@ -909,7 +770,18 @@ export default function LogScreen() {
   const totalSets  = exercises.reduce((s, ex) => s + ex.sets.length, 0);
   const loggedSets = exercises.reduce((s, ex) => s + ex.sets.filter(set => set.logged).length, 0);
 
-  // ── Exercise mutation helpers ─────────────────────────────────────────────────
+  const totalVolume = exercises.reduce((sum, ex) =>
+    sum + ex.sets.filter(s => s.logged).reduce((ss, s) =>
+      ss + (parseFloat(s.actualWeight) || 0) * (parseInt(s.actualReps) || 0), 0), 0);
+
+  const effortRatings = exercises.filter(ex => ex.effortRating > 0).map(ex => ex.effortRating);
+  const avgEffort = effortRatings.length > 0
+    ? (effortRatings.reduce((a, b) => a + b, 0) / effortRatings.length).toFixed(1)
+    : '—';
+
+  const canFinish = loggedSets >= totalSets / 2 && totalSets > 0;
+
+  // ── Mutation helpers ──────────────────────────────────────────────────────────
   const mutateSet = (exId: string, setId: string, update: Partial<SetData>) =>
     setExercises(prev => prev.map(ex =>
       ex.id !== exId ? ex : { ...ex, sets: ex.sets.map(s => s.id === setId ? { ...s, ...update } : s) }
@@ -918,9 +790,6 @@ export default function LogScreen() {
   const handleUpdateSet = (exId: string, setId: string, field: 'actualWeight' | 'actualReps', val: string) =>
     mutateSet(exId, setId, { [field]: val });
 
-  const handleUpdateRPE = (exId: string, setId: string, rpe: number) =>
-    mutateSet(exId, setId, { rpe });
-
   const handleLogSet = async (exId: string, setId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const ex  = exercises.find(e => e.id === exId);
@@ -928,16 +797,12 @@ export default function LogScreen() {
     if (!ex || !set) return;
 
     mutateSet(exId, setId, { logged: true });
-
-    // Start session timer on first log
     if (!sessionStartTime) setSessionStartTime(Date.now());
 
-    // Start rest timer
     setTimerTotal(restDuration);
     setTimerSeconds(restDuration);
     setTimerActive(true);
 
-    // Save to backend
     try {
       const today = getTodayDayName();
       await logApi.create({
@@ -947,19 +812,16 @@ export default function LogScreen() {
         exercise: ex.name,
         sets: 1,
         weight: parseFloat(set.actualWeight) || set.targetWeight,
-        reps: parseInt(set.actualReps) || parseTargetReps(set.targetReps),
-        rpe: set.rpe,
-        pain: set.pain,
+        reps:   parseInt(set.actualReps) || parseTargetReps(set.targetReps),
+        rpe:    ex.effortRating || 7,
+        pain:   0,
         completed: 'Completed',
       });
-    } catch (e) {
-      console.warn('Log save failed:', e);
-    }
+    } catch (e) { console.warn('Log save failed:', e); }
   };
 
-  const handlePainSelect = (pain: number) => {
-    if (painTarget) mutateSet(painTarget.exId, painTarget.setId, { pain });
-  };
+  const handleEffortChange = (exId: string, rating: number) =>
+    setExercises(prev => prev.map(ex => ex.id === exId ? { ...ex, effortRating: rating } : ex));
 
   const handleAddSet = (exId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -969,11 +831,11 @@ export default function LogScreen() {
       const newSet: SetData = {
         id: `${exId}-add-${Date.now()}`,
         type: 'work',
-        targetWeight: last.targetWeight,
-        targetReps: last.targetReps,
-        actualWeight: last.actualWeight,
-        actualReps: last.actualReps,
-        rpe: 7, pain: 0, logged: false,
+        targetWeight: last?.targetWeight || 0,
+        targetReps:   last?.targetReps || '5',
+        actualWeight: last?.actualWeight || '',
+        actualReps:   last?.actualReps || '',
+        logged: false,
       };
       return { ...ex, sets: [...ex.sets, newSet] };
     }));
@@ -990,212 +852,205 @@ export default function LogScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
 
-        {/* ── Scrollable content ── */}
-        <ScrollView
-          style={s.scroll}
-          contentContainerStyle={s.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* ── Session header ── */}
-          <View style={s.sessionHeader}>
-            <View style={[s.sessionTypeBadge, { backgroundColor: currentSession.bg, borderColor: currentSession.borderColor }]}>
-              <Text style={[s.sessionTypeBadgeText, { color: currentSession.text }]}>{sessionType}</Text>
+      {/* ── Scrollable content ── */}
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ── SESSION HEADER ── */}
+        <View style={s.sessionHeader}>
+          <View style={s.headerLeft}>
+            <View style={[s.sessionBadge, { backgroundColor: currentSession.bg, borderColor: currentSession.borderColor }]}>
+              <Text style={[s.sessionBadgeText, { color: currentSession.text }]}>{sessionType.toUpperCase()}</Text>
             </View>
-            <View style={s.headerText}>
-              <Text style={s.headerTitle}>WORKOUT LOG</Text>
-              <Text style={s.headerSub}>
-                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                {'  ·  '}Week {week}
-              </Text>
-            </View>
+            <Text style={s.headerTitle}>Workout Log</Text>
+            <Text style={s.headerSub}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              {'  ·  Week '}{week}
+            </Text>
           </View>
-
-          {/* ── Section label ── */}
-          <Text style={s.sectionLabel}>EXERCISES  ·  {exercises.length}</Text>
-
-          {/* ── Exercise Cards ── */}
-          {exercises.map(ex => (
-            <ExerciseCard
-              key={ex.id}
-              ex={ex}
-              onToggleExpand={() => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, expanded: !e.expanded } : e))}
-              onUpdateSet={(setId, field, val) => handleUpdateSet(ex.id, setId, field, val)}
-              onLogSet={(setId) => handleLogSet(ex.id, setId)}
-              onOpenPain={(setId) => setPainTarget({ exId: ex.id, setId })}
-              onAddSet={() => handleAddSet(ex.id)}
-              onToggleNotes={() => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, notesExpanded: !e.notesExpanded } : e))}
-              onNoteChange={(text) => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, notes: text } : e))}
-              onOpenHistory={() => setHistoryEx(ex)}
-              onUpdateRPE={(setId, rpe) => handleUpdateRPE(ex.id, setId, rpe)}
-            />
-          ))}
-
-          {/* ── REHAB EXERCISES SECTION (Task 8) ── */}
-          {rehabData?.hasActiveRehab && (
-            <View style={s.rehabSection}>
-              {/* Section header */}
-              <TouchableOpacity
-                style={s.rehabHeader}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setRehabExpanded(e => !e); }}
-                activeOpacity={0.8}
-              >
-                <View style={s.rehabHeaderLeft}>
-                  <View style={s.rehabBadge}>
-                    <MaterialCommunityIcons name="medical-bag" size={11} color={TEAL} />
-                  </View>
-                  <View>
-                    <Text style={s.rehabTitle}>REHAB EXERCISES</Text>
-                    <Text style={s.rehabSubtitle}>
-                      {rehabData.injuryInput} · Phase {rehabData.currentPhase} — {rehabData.phaseName}
-                    </Text>
-                  </View>
-                </View>
-                <View style={s.rehabHeaderRight}>
-                  <Text style={s.rehabCount}>{(rehabData.exercises || []).length} exercises</Text>
-                  <MaterialCommunityIcons name={rehabExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.text.muted} />
-                </View>
-              </TouchableOpacity>
-
-              {rehabExpanded && (
-                <View style={s.rehabContent}>
-                  {(rehabData.exercises || []).map((ex: any, i: number) => (
-                    <View key={i} style={s.rehabExCard}>
-                      <TouchableOpacity
-                        style={s.rehabExHeader}
-                        onPress={() => {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          setLoggingRehabEx(loggingRehabEx === ex.name ? null : ex.name);
-                          setRehabSetsCompleted('3');
-                          setRehabPainLevel(0);
-                          setRehabLogSuccess(null);
-                        }}
-                        activeOpacity={0.85}
-                      >
-                        <View style={s.rehabExLeft}>
-                          <View style={[s.rehabLevelDot, {
-                            backgroundColor: ex.level === 'gentle' ? '#4DCEA650' : ex.level === 'light' ? '#5B9CF550' : ex.is_rag ? '#F5A62350' : '#EF535050',
-                          }]} />
-                          <View>
-                            <Text style={s.rehabExName}>{ex.name}</Text>
-                            <Text style={s.rehabExPrescription}>{ex.prescription}</Text>
-                          </View>
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          {ex.is_rag && (
-                            <View style={s.rehabRagBadge}>
-                              <MaterialCommunityIcons name="dna" size={8} color={AMBER} />
-                            </View>
-                          )}
-                          <MaterialCommunityIcons
-                            name={loggingRehabEx === ex.name ? 'check-circle-outline' : 'plus-circle-outline'}
-                            size={20}
-                            color={loggingRehabEx === ex.name ? TEAL : COLORS.text.muted}
-                          />
-                        </View>
-                      </TouchableOpacity>
-
-                      {/* Inline log form */}
-                      {loggingRehabEx === ex.name && (
-                        <View style={s.rehabLogForm}>
-                          {ex.notes ? <Text style={s.rehabExNote}>{ex.notes}</Text> : null}
-                          <View style={s.rehabFormRow}>
-                            <Text style={s.rehabFormLabel}>Sets completed</Text>
-                            <View style={s.rehabSetsPicker}>
-                              {['1','2','3','4','5'].map(n => (
-                                <TouchableOpacity
-                                  key={n}
-                                  style={[s.rehabSetBtn, rehabSetsCompleted === n && s.rehabSetBtnActive]}
-                                  onPress={() => setRehabSetsCompleted(n)}
-                                >
-                                  <Text style={[s.rehabSetBtnText, rehabSetsCompleted === n && s.rehabSetBtnTextActive]}>{n}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          </View>
-                          <View style={s.rehabFormRow}>
-                            <Text style={s.rehabFormLabel}>Pain (0 = none, 4 = severe)</Text>
-                            <View style={s.rehabSetsPicker}>
-                              {[0,1,2,3,4].map(n => (
-                                <TouchableOpacity
-                                  key={n}
-                                  style={[s.rehabSetBtn, rehabPainLevel === n && { ...s.rehabSetBtnActive, backgroundColor: n >= 3 ? '#EF535030' : TEAL + '25', borderColor: n >= 3 ? '#EF5350' : TEAL }]}
-                                  onPress={() => setRehabPainLevel(n)}
-                                >
-                                  <Text style={[s.rehabSetBtnText, rehabPainLevel === n && s.rehabSetBtnTextActive]}>{n}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          </View>
-                          <TouchableOpacity
-                            style={s.rehabLogBtn}
-                            onPress={async () => {
-                              try {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                const result = await rehabApi.log({
-                                  exerciseName: ex.name,
-                                  setsCompleted: parseInt(rehabSetsCompleted),
-                                  painLevel: rehabPainLevel,
-                                });
-                                setRehabLogSuccess(result.message || 'Logged!');
-                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                                // Refresh rehab data to show updated clean sessions
-                                const updated = await rehabApi.getExercises();
-                                if (updated?.hasActiveRehab) setRehabData(updated);
-                                setTimeout(() => { setLoggingRehabEx(null); setRehabLogSuccess(null); }, 1800);
-                              } catch { setRehabLogSuccess('Error logging — try again'); }
-                            }}
-                          >
-                            <MaterialCommunityIcons name="check" size={14} color={COLORS.primary} />
-                            <Text style={s.rehabLogBtnText}>LOG SET</Text>
-                          </TouchableOpacity>
-                          {rehabLogSuccess && (
-                            <Text style={s.rehabSuccessText}>{rehabLogSuccess}</Text>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  ))}
-                </View>
-              )}
+          {sessionStartTime !== null && (
+            <View style={s.sessionTimerWrap}>
+              <Text style={s.sessionTimerValue}>{formatDuration(sessionDuration)}</Text>
+              <Text style={s.sessionTimerLabel}>SESSION</Text>
             </View>
           )}
+        </View>
 
-          <View style={{ height: SPACING.xxl }} />
-        </ScrollView>
-
-        {/* ── Rest Timer Bar (shows after first set logged) ── */}
-        {sessionStartTime && (
-          <RestTimerBar
-            active={timerActive}
-            seconds={timerSeconds}
-            total={timerTotal}
-            onToggle={() => setTimerActive(a => !a)}
-            onReset={() => { setTimerActive(false); setTimerSeconds(restDuration); setTimerTotal(restDuration); }}
-            onConfig={() => setTimerConfigVis(true)}
-          />
-        )}
-
-        {/* ── Session Bar ── */}
-        <SessionBar
+        {/* ── QUICK STATS STRIP ── */}
+        <QuickStatsStrip
           loggedSets={loggedSets}
           totalSets={totalSets}
-          durationSecs={sessionDuration}
-          onFinish={handleFinish}
+          totalVolume={totalVolume}
+          avgEffort={avgEffort}
         />
-      </KeyboardAvoidingView>
 
-      {/* ── Pain Modal ── */}
-      <PainModal
-        visible={!!painTarget}
-        currentPain={
-          exercises.find(e => e.id === painTarget?.exId)
-            ?.sets.find(s => s.id === painTarget?.setId)?.pain ?? 0
-        }
-        onSelect={handlePainSelect}
-        onClose={() => setPainTarget(null)}
+        {/* ── EXERCISES SECTION LABEL ── */}
+        <Text style={s.sectionLabel}>EXERCISES  ·  {exercises.length}</Text>
+
+        {/* ── EXERCISE CARDS ── */}
+        {exercises.map(ex => (
+          <ExerciseCard
+            key={ex.id}
+            ex={ex}
+            onToggleExpand={() => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, expanded: !e.expanded } : e))}
+            onUpdateSet={(setId, field, val) => handleUpdateSet(ex.id, setId, field, val)}
+            onLogSet={(setId) => handleLogSet(ex.id, setId)}
+            onAddSet={() => handleAddSet(ex.id)}
+            onToggleNotes={() => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, notesExpanded: !e.notesExpanded } : e))}
+            onNoteChange={(text) => setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, notes: text } : e))}
+            onOpenHistory={() => setHistoryEx(ex)}
+            onEffortChange={(rating) => handleEffortChange(ex.id, rating)}
+          />
+        ))}
+
+        {/* ── REHAB EXERCISES SECTION ── */}
+        {rehabData?.hasActiveRehab && (
+          <View style={s.rehabSection}>
+            <TouchableOpacity
+              style={s.rehabHeader}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setRehabExpanded(e => !e); }}
+              activeOpacity={0.8}
+            >
+              <View style={s.rehabHeaderLeft}>
+                <View style={s.rehabBadge}>
+                  <MaterialCommunityIcons name="medical-bag" size={11} color={TEAL} />
+                </View>
+                <View>
+                  <Text style={s.rehabTitle}>INJURY PREVENTION</Text>
+                  <Text style={s.rehabSubtitle}>
+                    {rehabData.injuryInput} · Phase {rehabData.currentPhase} — {rehabData.phaseName}
+                  </Text>
+                </View>
+              </View>
+              <View style={s.rehabHeaderRight}>
+                <Text style={s.rehabCount}>{(rehabData.exercises || []).length} exercises</Text>
+                <MaterialCommunityIcons name={rehabExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.text.muted} />
+              </View>
+            </TouchableOpacity>
+
+            {rehabExpanded && (
+              <View style={s.rehabContent}>
+                {(rehabData.exercises || []).map((ex: any, i: number) => (
+                  <View key={i} style={s.rehabExCard}>
+                    <TouchableOpacity
+                      style={s.rehabExHeader}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setLoggingRehabEx(loggingRehabEx === ex.name ? null : ex.name);
+                        setRehabSetsCompleted('3');
+                        setRehabPainLevel(0);
+                        setRehabLogSuccess(null);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={s.rehabExLeft}>
+                        <View style={[s.rehabLevelDot, {
+                          backgroundColor: ex.level === 'gentle' ? '#4DCEA650' : ex.level === 'light' ? '#5B9CF550' : ex.is_rag ? '#F5A62350' : '#EF535050',
+                        }]} />
+                        <View>
+                          <Text style={s.rehabExName}>{ex.name}</Text>
+                          <Text style={s.rehabExPrescription}>{ex.prescription}</Text>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        {ex.is_rag && (
+                          <View style={s.rehabRagBadge}>
+                            <MaterialCommunityIcons name="dna" size={8} color={AMBER} />
+                          </View>
+                        )}
+                        <MaterialCommunityIcons
+                          name={loggingRehabEx === ex.name ? 'check-circle-outline' : 'plus-circle-outline'}
+                          size={20}
+                          color={loggingRehabEx === ex.name ? TEAL : COLORS.text.muted}
+                        />
+                      </View>
+                    </TouchableOpacity>
+
+                    {loggingRehabEx === ex.name && (
+                      <View style={s.rehabLogForm}>
+                        {ex.notes ? <Text style={s.rehabExNote}>{ex.notes}</Text> : null}
+                        <View style={s.rehabFormRow}>
+                          <Text style={s.rehabFormLabel}>Sets completed</Text>
+                          <View style={s.rehabSetsPicker}>
+                            {['1','2','3','4','5'].map(n => (
+                              <TouchableOpacity
+                                key={n}
+                                style={[s.rehabSetBtn, rehabSetsCompleted === n && s.rehabSetBtnActive]}
+                                onPress={() => setRehabSetsCompleted(n)}
+                              >
+                                <Text style={[s.rehabSetBtnText, rehabSetsCompleted === n && s.rehabSetBtnTextActive]}>{n}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                        <View style={s.rehabFormRow}>
+                          <Text style={s.rehabFormLabel}>Pain (0 = none, 4 = severe)</Text>
+                          <View style={s.rehabSetsPicker}>
+                            {[0,1,2,3,4].map(n => (
+                              <TouchableOpacity
+                                key={n}
+                                style={[s.rehabSetBtn, rehabPainLevel === n && { ...s.rehabSetBtnActive, backgroundColor: n >= 3 ? '#EF535030' : TEAL + '25', borderColor: n >= 3 ? '#EF5350' : TEAL }]}
+                                onPress={() => setRehabPainLevel(n)}
+                              >
+                                <Text style={[s.rehabSetBtnText, rehabPainLevel === n && s.rehabSetBtnTextActive]}>{n}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={s.rehabLogBtn}
+                          onPress={async () => {
+                            try {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                              const result = await rehabApi.log({
+                                exerciseName: ex.name,
+                                setsCompleted: parseInt(rehabSetsCompleted),
+                                painLevel: rehabPainLevel,
+                              });
+                              setRehabLogSuccess(result.message || 'Logged!');
+                              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                              const updated = await rehabApi.getExercises();
+                              if (updated?.hasActiveRehab) setRehabData(updated);
+                              setTimeout(() => { setLoggingRehabEx(null); setRehabLogSuccess(null); }, 1800);
+                            } catch { setRehabLogSuccess('Error logging — try again'); }
+                          }}
+                        >
+                          <MaterialCommunityIcons name="check" size={14} color={COLORS.primary} />
+                          <Text style={s.rehabLogBtnText}>LOG SET</Text>
+                        </TouchableOpacity>
+                        {rehabLogSuccess && <Text style={s.rehabSuccessText}>{rehabLogSuccess}</Text>}
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
+        <View style={{ height: SPACING.xxl }} />
+      </ScrollView>
+
+      {/* ── REST TIMER (always sticky, visible from page open) ── */}
+      <RestTimerBar
+        active={timerActive}
+        seconds={timerSeconds}
+        total={timerTotal}
+        onToggle={() => setTimerActive(a => !a)}
+        onReset={() => { setTimerActive(false); setTimerSeconds(restDuration); setTimerTotal(restDuration); }}
+        onConfig={() => setTimerConfigVis(true)}
+      />
+
+      {/* ── SESSION BAR ── */}
+      <SessionBar
+        loggedSets={loggedSets}
+        totalSets={totalSets}
+        durationSecs={sessionDuration}
+        onFinish={handleFinish}
       />
 
       {/* ── History Drawer ── */}
@@ -1209,7 +1064,7 @@ export default function LogScreen() {
       <TimerConfigModal
         visible={timerConfigVis}
         current={restDuration}
-        onSelect={(s) => { setRestDuration(s); setTimerSeconds(s); setTimerTotal(s); }}
+        onSelect={(sec) => { setRestDuration(sec); setTimerSeconds(sec); setTimerTotal(sec); }}
         onClose={() => setTimerConfigVis(false)}
       />
 
@@ -1223,10 +1078,10 @@ export default function LogScreen() {
             </View>
             <View style={s.finishStats}>
               {[
-                ['Sets Logged', `${loggedSets} / ${totalSets}`],
-                ['Duration',    formatDuration(sessionDuration)],
-                ['Exercises',   String(exercises.length)],
-                ['Pain Flags',  String(exercises.reduce((s, ex) => s + ex.sets.filter(set => set.pain > 0).length, 0))],
+                ['Sets Logged',   `${loggedSets} / ${totalSets}`],
+                ['Total Volume',  totalVolume > 0 ? `${totalVolume.toLocaleString()} lb` : '—'],
+                ['Duration',      formatDuration(sessionDuration)],
+                ['Exercises',     String(exercises.length)],
               ].map(([label, val]) => (
                 <View key={label} style={s.finishStatRow}>
                   <Text style={s.finishStatLabel}>{label}</Text>
@@ -1234,11 +1089,7 @@ export default function LogScreen() {
                 </View>
               ))}
             </View>
-            <TouchableOpacity
-              style={s.finishDoneBtn}
-              onPress={() => setFinishVisible(false)}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={s.finishDoneBtn} onPress={() => setFinishVisible(false)} activeOpacity={0.85}>
               <Text style={s.finishDoneBtnText}>Done</Text>
             </TouchableOpacity>
           </View>
@@ -1254,52 +1105,58 @@ const s = StyleSheet.create({
   loading:        { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' },
   scroll:         { flex: 1 },
   scrollContent:  { paddingBottom: SPACING.xl },
-  sessionHeader:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: SPACING.md },
-  sessionTypeBadge:     { paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1 },
-  sessionTypeBadgeText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
-  headerText:     { flex: 1 },
-  headerTitle:    { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 1 },
-  headerSub:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 2 },
   sectionLabel:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginBottom: SPACING.sm },
-  // Finish modal
-  finishOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', padding: SPACING.xl },
-  finishCard:     { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.xl, borderWidth: 1, borderColor: COLORS.accent },
-  finishHeader:   { alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.lg },
-  finishTitle:    { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
-  finishStats:    { gap: SPACING.sm, marginBottom: SPACING.lg },
-  finishStatRow:  { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  finishStatLabel:{ fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
-  finishStatValue:{ fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
-  finishDoneBtn:  { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 14, alignItems: 'center' },
+
+  // ── Session header (two-column: left meta + right timer)
+  sessionHeader:    { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: SPACING.md },
+  headerLeft:       { flex: 1, gap: 4 },
+  sessionBadge:     { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, marginBottom: 2 },
+  sessionBadgeText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
+  headerTitle:      { fontSize: 26, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 31 },
+  headerSub:        { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  sessionTimerWrap: { alignItems: 'flex-end', paddingTop: 4 },
+  sessionTimerValue:{ fontSize: 22, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, fontVariant: ['tabular-nums'] as any },
+  sessionTimerLabel:{ fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, marginTop: 2 },
+
+  // ── Finish modal
+  finishOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', padding: SPACING.xl },
+  finishCard:       { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.xl, borderWidth: 1, borderColor: COLORS.accent },
+  finishHeader:     { alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.lg },
+  finishTitle:      { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  finishStats:      { gap: SPACING.sm, marginBottom: SPACING.lg },
+  finishStatRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  finishStatLabel:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+  finishStatValue:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
+  finishDoneBtn:    { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 14, alignItems: 'center' },
   finishDoneBtnText:{ color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 0.5 },
 
-  // ── Rehab Section (Task 8) ──────────────────────────────────────────────
-  rehabSection:   { marginHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, borderWidth: 1.5, borderColor: TEAL + '40', overflow: 'hidden' },
-  rehabHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: TEAL + '20' },
-  rehabHeaderLeft:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  // ── Rehab Section
+  rehabSection:    { marginHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, borderWidth: 1.5, borderColor: TEAL + '40', overflow: 'hidden' },
+  rehabHeader:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: TEAL + '20' },
+  rehabHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   rehabHeaderRight:{ flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rehabBadge:     { width: 22, height: 22, borderRadius: 11, backgroundColor: TEAL + '25', justifyContent: 'center', alignItems: 'center' },
-  rehabTitle:     { fontSize: 10, fontWeight: '800' as any, color: TEAL, letterSpacing: 1.5 },
-  rehabSubtitle:  { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
-  rehabCount:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
-  rehabContent:   { padding: SPACING.sm },
-  rehabExCard:    { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, marginBottom: 6, overflow: 'hidden' },
-  rehabExHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md },
-  rehabExLeft:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
-  rehabLevelDot:  { width: 8, height: 8, borderRadius: 4 },
-  rehabExName:    { fontSize: FONTS.sizes.sm, fontWeight: '600' as any, color: COLORS.text.primary },
+  rehabBadge:      { width: 22, height: 22, borderRadius: 11, backgroundColor: TEAL + '25', justifyContent: 'center', alignItems: 'center' },
+  rehabTitle:      { fontSize: 10, fontWeight: '800' as any, color: TEAL, letterSpacing: 1.5 },
+  rehabSubtitle:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+  rehabCount:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  rehabContent:    { padding: SPACING.sm },
+  rehabExCard:     { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md, marginBottom: 6, overflow: 'hidden' },
+  rehabExHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.md },
+  rehabExLeft:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  rehabLevelDot:   { width: 8, height: 8, borderRadius: 4 },
+  rehabExName:     { fontSize: FONTS.sizes.sm, fontWeight: '600' as any, color: COLORS.text.primary },
   rehabExPrescription: { fontSize: FONTS.sizes.xs, color: TEAL, marginTop: 1, fontWeight: '600' as any },
-  rehabRagBadge:  { width: 14, height: 14, borderRadius: 7, backgroundColor: AMBER + '20', justifyContent: 'center', alignItems: 'center' },
-  rehabLogForm:   { padding: SPACING.md, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border },
-  rehabExNote:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 16, marginBottom: SPACING.sm, fontStyle: 'italic' },
-  rehabFormRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
-  rehabFormLabel: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, flex: 1 },
-  rehabSetsPicker:{ flexDirection: 'row', gap: 4 },
-  rehabSetBtn:    { width: 32, height: 32, borderRadius: 8, backgroundColor: COLORS.border, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
-  rehabSetBtnActive: { backgroundColor: TEAL + '25', borderColor: TEAL },
-  rehabSetBtnText:   { fontSize: 13, color: COLORS.text.muted, fontWeight: '600' as any },
+  rehabRagBadge:   { width: 14, height: 14, borderRadius: 7, backgroundColor: AMBER + '20', justifyContent: 'center', alignItems: 'center' },
+  rehabLogForm:    { padding: SPACING.md, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border },
+  rehabExNote:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 16, marginBottom: SPACING.sm, fontStyle: 'italic' },
+  rehabFormRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
+  rehabFormLabel:  { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, flex: 1 },
+  rehabSetsPicker: { flexDirection: 'row', gap: 4 },
+  rehabSetBtn:     { width: 32, height: 32, borderRadius: 8, backgroundColor: COLORS.border, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
+  rehabSetBtnActive:   { backgroundColor: TEAL + '25', borderColor: TEAL },
+  rehabSetBtnText:     { fontSize: 13, color: COLORS.text.muted, fontWeight: '600' as any },
   rehabSetBtnTextActive: { color: TEAL },
-  rehabLogBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: TEAL, borderRadius: RADIUS.md, paddingVertical: 10, marginTop: SPACING.sm },
-  rehabLogBtnText:{ color: '#000', fontWeight: '700' as any, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
-  rehabSuccessText: { fontSize: FONTS.sizes.xs, color: TEAL, textAlign: 'center', marginTop: 4 },
+  rehabLogBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: TEAL, borderRadius: RADIUS.md, paddingVertical: 10, marginTop: SPACING.sm },
+  rehabLogBtnText: { color: '#000', fontWeight: '700' as any, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
+  rehabSuccessText:{ fontSize: FONTS.sizes.xs, color: TEAL, textAlign: 'center', marginTop: 4 },
 });

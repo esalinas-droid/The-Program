@@ -1071,7 +1071,44 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: >
-      I have completed a comprehensive redesign of the Today page (today.tsx). Here's what changed:
+      LOG PAGE UX/UI REDESIGN complete. Changes:
+
+      BUG FIXES:
+      1. Removed INITIAL_EXERCISES hardcoded array (Floor Press 225, Pendlay Row 185, etc.)
+      2. Removed KeyboardAvoidingView — uses keyboardShouldPersistTaps="handled" instead
+      3. Removed PainModal component (pain reported on Today tab)
+      4. Removed RPERow component (replaced by per-exercise effort selector)
+      5. SetData.rpe and SetData.pain fields removed from interface
+      6. Added effortRating: number to ExerciseLog interface (0=unset, 6-10)
+
+      UI REDESIGN:
+      7. Session header: LEFT=session badge + "Workout Log" title + date/week; RIGHT=live session timer (appears after first set logged)
+      8. QuickStatsStrip: 3 pills — Sets (teal when active), LB Volume (live), Avg RPE (gold when set)
+      9. ExerciseCards: collapsed shows name + subline (prescription + "Last: x") + progress pill + chevron
+      10. ExerciseCards expanded: column headers (TARGET | WEIGHT | REPS), set rows, effort selector (6-10), action pills
+      11. SetRow: numbered circle + target ref + editable weight input + × + editable reps input + LOG button; logged=teal strikethrough
+      12. Active set (first unlogged): gold border on inputs
+      13. Per-exercise effort circles: 6-10, gold when selected (RPE scale)
+      14. Action pills: "+ Set" | "Notes" | "History"
+      15. RestTimerBar: always visible from page open (idle state shows configured time in muted gray, counts down after first set)
+      16. Session elapsed timer: auto-starts on first set logged, shows in header
+      17. Volume computation: weight × reps per logged set, formatted with commas
+      18. Avg RPE: average of all effortRating > 0 per exercise
+
+      Test credentials: user_a@theprogram.app / StrongmanA123
+      
+      Navigate to Log tab and verify:
+      - Page loads with today's exercises from API (NOT Floor Press/Pendlay Row hardcoded data)
+      - RestTimerBar visible immediately in idle/muted state showing "1:30"
+      - Log a set → timer starts counting down, session timer appears in header
+      - QuickStatsStrip updates live (sets count, volume, RPE)
+      - Exercise cards collapse/expand
+      - Column headers (TARGET | WEIGHT | × | REPS) visible in expanded card
+      - Editable weight and reps inputs
+      - Active set has gold border
+      - Effort circles 6-10, tap one → turns gold
+      - "+ Set" adds a set row; "Notes" shows text input; "History" opens drawer
+      - FINISH SESSION disabled <50%, gold when >=50%
 
       BUG FIXES:
       1. ExCategory type updated: 'maxeffort' → 'primary', 'dynamiceffort' → 'speed'
