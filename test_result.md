@@ -1130,6 +1130,20 @@ agent_communication:
 agent_communication:
   - agent: "main"
     message: >
+      CRITICAL FIX SESSION: Today → Log sync. Three fixes applied and verified in code:
+      1. today.tsx input/repsInput styles now have minWidth: 0 to prevent LOG button overflow on web.
+      2. lastLoadDate.current ref added to useFocusEffect in both today.tsx and log.tsx to prevent
+         same-day double rebuilds and handle midnight rollovers.
+      3. setIndex-based precise sync: handleLog/handleEditSave in both tabs pass setIndex to API;
+         re-sync paths use bySetIdx map for exact set matching (count-based fallback for legacy entries).
+      
+      PRIMARY TEST: Log 2 sets on Today page → switch to Log tab → BOTH sets must appear as logged.
+      ALSO TEST: all 9 cross-tab sync scenarios below.
+      
+      Expo restarted. Please test now.
+
+  - agent: "main"
+    message: >
       setIndex-based sync implemented. Please test all 9 cross-tab sync scenarios:
       1. Log 2 sets on Today → switch to Log → BOTH appear logged
       2. Log 1 more on Log → switch to Today → ALL 3 appear logged
