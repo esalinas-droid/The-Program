@@ -1529,12 +1529,14 @@ export default function TodayScreen() {
         // Find the index of this set within its exercise so sync is exact
         const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
         const setIdx   = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
+        const logName  = exForSet?.name ?? exerciseName;
+        console.log('[Today] Logging:', logName, 'setIdx:', setIdx, 'exerciseName:', exerciseName);
         const result = await logApi.create({
           date: todayStr,
           week: week || 1,
           day: dayOfWeek,
           sessionType: sessionType || 'Training',
-          exercise: exerciseName,
+          exercise: logName,
           sets: 1,
           weight,
           reps: parseInt(reps) || 1,
@@ -1543,6 +1545,7 @@ export default function TodayScreen() {
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
         });
+        console.log('[Today] Log result:', result?.id || result?._id);
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));

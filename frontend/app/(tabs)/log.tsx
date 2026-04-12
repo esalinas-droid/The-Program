@@ -850,6 +850,7 @@ export default function LogScreen() {
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
           const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+          console.log('[Log] Re-sync todayLogs count:', todayLogs.length, 'todayStr:', todayStr);
 
           // Build per-exercise lookup: setIndex-based first, count-based fallback
           const logsByEx = new Map<string, any[]>();
@@ -863,8 +864,10 @@ export default function LogScreen() {
               bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
             }
           }
+          console.log('[Log] Re-sync bySetIdx exercises:', [...bySetIdx.keys()]);
 
           const currentExs = exercisesRef.current;
+          console.log('[Log] Re-sync current exercises:', currentExs.map(e => e.name));
           const recoveredIds: Record<string, string> = {};
           setExercises(prev => prev.map(ex => {
             const exName = ex.name.toLowerCase();
