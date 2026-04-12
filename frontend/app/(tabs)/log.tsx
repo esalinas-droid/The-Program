@@ -821,6 +821,7 @@ export default function LogScreen() {
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initialLoadDone = useRef(false);
   const exercisesRef = useRef<ExerciseLog[]>([]);
+  const lastLoadDate = useRef('');
 
   // Modals
   const [historyEx, setHistoryEx]           = useState<ExerciseLog | null>(null);
@@ -843,14 +844,13 @@ export default function LogScreen() {
   useFocusEffect(useCallback(() => {
     (async () => {
       // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
-      if (initialLoadDone.current) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         await new Promise(resolve => setTimeout(resolve, 300));
         try {
-          const todayStr = new Date().toISOString().split('T')[0];
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
           const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
-          console.log('[Log] Re-sync todayLogs count:', todayLogs.length, 'todayStr:', todayStr);
 
           // Build per-exercise lookup: setIndex-based first, count-based fallback
           const logsByEx = new Map<string, any[]>();
@@ -864,10 +864,8 @@ export default function LogScreen() {
               bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
             }
           }
-          console.log('[Log] Re-sync bySetIdx exercises:', [...bySetIdx.keys()]);
 
           const currentExs = exercisesRef.current;
-          console.log('[Log] Re-sync current exercises:', currentExs.map(e => e.name));
           const recoveredIds: Record<string, string> = {};
           setExercises(prev => prev.map(ex => {
             const exName = ex.name.toLowerCase();

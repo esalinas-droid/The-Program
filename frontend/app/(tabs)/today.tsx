@@ -926,8 +926,8 @@ const sr = StyleSheet.create({
   circle:    { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   circleNum: { fontSize: 10, fontWeight: FONTS.weights.heavy },
   typeTag:   { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, width: 20, letterSpacing: 0.3 },
-  input:     { flex: 1, height: 36, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 13, fontWeight: FONTS.weights.semibold },
-  repsInput: { flex: 1.3 },
+  input:     { flex: 1, minWidth: 0, height: 36, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 13, fontWeight: FONTS.weights.semibold },
+  repsInput: { flex: 1.3, minWidth: 0 },
   inputDone: { color: COLORS.text.muted, textDecorationLine: 'line-through' },
   sep:       { fontSize: 14, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
   logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
@@ -1256,6 +1256,7 @@ export default function TodayScreen() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initialLoadDone = useRef(false);
   const exercisesRef = useRef<Exercise[]>([]);
+  const lastLoadDate = useRef('');
 
   // Adjust modal
   const [modalVisible, setModal]   = useState(false);
@@ -1278,10 +1279,10 @@ export default function TodayScreen() {
   useFocusEffect(useCallback(() => {
     (async () => {
       // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
-      if (initialLoadDone.current) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         await new Promise(resolve => setTimeout(resolve, 300));
         try {
-          const todayStr = new Date().toISOString().split('T')[0];
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
           const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
@@ -1425,6 +1426,7 @@ export default function TodayScreen() {
       } catch { /* Warm-up not critical */ }
 
       initialLoadDone.current = true;
+      lastLoadDate.current = todayStr;
       setLoading(false);
     })();
   }, []));
@@ -1530,7 +1532,6 @@ export default function TodayScreen() {
         const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
         const setIdx   = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
         const logName  = exForSet?.name ?? exerciseName;
-        console.log('[Today] Logging:', logName, 'setIdx:', setIdx, 'exerciseName:', exerciseName);
         const result = await logApi.create({
           date: todayStr,
           week: week || 1,
@@ -1545,7 +1546,6 @@ export default function TodayScreen() {
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
         });
-        console.log('[Today] Log result:', result?.id || result?._id);
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
