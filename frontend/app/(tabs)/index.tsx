@@ -91,6 +91,22 @@ function getCoachingDirective(week: number, block: number, phase: string): strin
   );
 }
 
+// ── Shorten coaching directive to first 2 sentences ──────────────────────────
+function getShortDirective(text: string): string {
+  const sentences = text.match(/[^.!?]+[.!?]+\s*/g) || [text];
+  return sentences.slice(0, 2).join('').trim();
+}
+
+// ── Alert data type ───────────────────────────────────────────────────────────
+type AlertData = {
+  type: string;
+  color: string;
+  icon: string;
+  title: string;
+  sub: string;
+  actionRoute?: string;
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 const TEAL_COLOR = '#4DCEA6';
 export default function Dashboard() {
@@ -103,6 +119,8 @@ export default function Dashboard() {
   const [bests, setBests] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expandedCoach, setExpandedCoach] = useState(false);
+  const [expandedAlerts, setExpandedAlerts] = useState(false);
 
   // ── Priority card state ──────────────────────────────────────────────────────
   const [flaggedRegions, setFlaggedRegions] = useState<string[]>([]);
@@ -217,6 +235,19 @@ export default function Dashboard() {
   const { start: blockStart, end: blockEnd } = getBlockWeekRange(block);
   const blockProgress = Math.min((week - blockStart) / (blockEnd - blockStart + 1), 1);
   const coachingNote  = getCoachingDirective(week, block, phase);
+  const shortNote     = getShortDirective(coachingNote);
+  const hasMoreText   = shortNote.length < coachingNote.length;
+
+  // ── Build prioritised alerts list ──────────────────────────────────────────
+  const alerts: AlertData[] = [];
+  if (flaggedRegions.length > 0)
+    alerts.push({ type: 'pain', color: '#EF5350', icon: 'alert-circle', title: 'PAIN PATTERN DETECTED', sub: `${flaggedRegions[0]} flagged 3+ times this week`, actionRoute: '/(tabs)/today' });
+  if (!hasReadinessToday && hasReadinessToday !== null && !isRestDay)
+    alerts.push({ type: 'readiness', color: COLORS.accent, icon: 'lightning-bolt', title: 'PRE-SESSION CHECK-IN', sub: "Rate today's readiness — takes 20 seconds", actionRoute: '/(tabs)/today' });
+  if (rotationStatus?.count > 0)
+    alerts.push({ type: 'rotation', color: COLORS.accentBlue, icon: 'rotate-3d-variant', title: 'EXERCISE ROTATION DUE', sub: `${rotationStatus.count} exercise${rotationStatus.count > 1 ? 's' : ''} overdue for variation` });
+  if (deloadStatus?.deloadRecommended)
+    alerts.push({ type: 'recovery', color: '#FF9800', icon: 'sleep', title: 'RECOVERY WEEK RECOMMENDED', sub: (deloadStatus.message || `Score ${deloadStatus.deloadScore}/12 — recovery needed`).slice(0, 90) });
 
   return (
     <SafeAreaView style={s.safe}>
@@ -227,6 +258,18 @@ export default function Dashboard() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />}
         showsVerticalScrollIndicator={false}
       >
+
+        {/* ── COMPETITION SLIM BANNER (above header when active) ── */}
+        {competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0 && (
+          <View style={s.compSlimBanner} testID="competition-banner">
+            <MaterialCommunityIcons name="trophy-outline" size={12} color={competitionStatus.color || TEAL_COLOR} />
+            <Text style={[s.compSlimText, { color: competitionStatus.color || TEAL_COLOR }]}>
+              {(competitionStatus.weeksOut ?? 0) <= 0 ? '🏆 COMPETITION DAY' : `🏆 ${competitionStatus.weeksOut} WEEKS OUT`}
+            </Text>
+            <MaterialCommunityIcons name="circle-small" size={12} color={COLORS.text.muted} />
+            <Text style={s.compSlimPhase}>{competitionStatus.phaseLabel || `${phase} Phase`}</Text>
+          </View>
+        )}
 
         {/* ── HEADER ── */}
         <View style={s.header}>
@@ -239,112 +282,10 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* ── PRIORITY CARD STACK ── */}
-
-        {/* P0: Competition Countdown Banner (Task 9) */}
-        {competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0 && (
-          <View style={[s.competitionBanner, { borderLeftColor: competitionStatus.color || TEAL_COLOR }]} testID="competition-banner">
-            <View style={s.competitionBannerRow}>
-              <MaterialCommunityIcons name="trophy-outline" size={18} color={competitionStatus.color || TEAL_COLOR} />
-              <View style={{ flex: 1 }}>
-                <Text style={[s.competitionBannerTitle, { color: competitionStatus.color || TEAL_COLOR }]}>
-                  {(competitionStatus.weeksOut ?? 0) <= 0 ? '🏆 COMPETITION DAY' : `${competitionStatus.weeksOut} WEEKS OUT`}
-                </Text>
-                <Text style={s.competitionBannerEvent}>
-                  {competitionStatus.eventName || 'Competition'} · {competitionStatus.phaseLabel}
-                </Text>
-              </View>
-            </View>
-            {competitionStatus.adjustments?.[0] && (
-              <Text style={s.competitionAdjNote}>{competitionStatus.adjustments[0]}</Text>
-            )}
-            {competitionStatus.ragTip && (
-              <Text style={[s.competitionAdjNote, { color: TEAL_COLOR, fontStyle: 'italic' }]}>
-                Research: {competitionStatus.ragTip}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* P1: Pain Alert (shown when flagged regions detected) */}
-        {flaggedRegions.length > 0 && (
-          <View style={s.priorityCard} testID="pain-alert-card">
-            <View style={s.priorityCardHeader}>
-              <View style={[s.priorityIconBadge, { backgroundColor: '#EF535025' }]}>
-                <MaterialCommunityIcons name="alert-circle" size={14} color='#EF5350' />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: '#EF5350' }]}>PAIN PATTERN DETECTED</Text>
-                <Text style={s.priorityCardSub}>Flagged area: {flaggedRegions.join(', ')}</Text>
-              </View>
-            </View>
-            <Text style={s.priorityCardBody}>
-              {flaggedRegions[0]} has been reported 3+ times in the last 7 days.
-              This needs coach attention before your next heavy session.
-            </Text>
-            <TouchableOpacity
-              style={[s.priorityBtn, { backgroundColor: '#EF535015', borderColor: '#EF535040', borderWidth: 1 }]}
-              onPress={() => router.push('/(tabs)/today')}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons name="arrow-right" size={13} color='#EF5350' />
-              <Text style={[s.priorityBtnText, { color: '#EF5350' }]}>Go to Today's Session</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* P2: Readiness Check nudge (if not done today & not rest day) */}
-        {!hasReadinessToday && hasReadinessToday !== null && !isRestDay && (
-          <View style={s.priorityCard} testID="readiness-nudge-card">
-            <View style={s.priorityCardHeader}>
-              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accent + '25' }]}>
-                <MaterialCommunityIcons name="lightning-bolt" size={14} color={COLORS.accent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: COLORS.accent }]}>PRE-SESSION CHECK-IN</Text>
-                <Text style={s.priorityCardSub}>How are you feeling today?</Text>
-              </View>
-            </View>
-            <Text style={s.priorityCardBody}>
-              Your daily readiness check helps your coach adjust today's loads. Takes 20 seconds.
-            </Text>
-            <TouchableOpacity
-              style={[s.priorityBtn, { backgroundColor: COLORS.accent + '15', borderColor: COLORS.accent + '40', borderWidth: 1 }]}
-              onPress={() => router.push('/(tabs)/today')}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons name="flag-checkered" size={13} color={COLORS.accent} />
-              <Text style={[s.priorityBtnText, { color: COLORS.accent }]}>Start Today's Session</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ── COACH'S DIRECTIVE (gold border card) ── */}
-        <View style={s.coachCard}>
-          <View style={s.coachCardHeader}>
-            <View style={s.coachIconBadge}>
-              <MaterialCommunityIcons name="brain" size={14} color={COLORS.accent} />
-            </View>
-            <Text style={s.coachCardLabel}>COACH'S DIRECTIVE — WEEK {week}</Text>
-            {deload && (
-              <View testID="deload-badge" style={s.deloadPill}>
-                <Text style={s.deloadPillText}>RECOVERY</Text>
-              </View>
-            )}
-          </View>
-          <Text style={s.coachCardText}>{coachingNote}</Text>
-          <View style={s.coachCardFooter}>
-            <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.accent} />
-            <Text style={s.coachCardTag}>Block {block} of 7</Text>
-            <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.text.muted} />
-            <Text style={s.coachCardTag}>{phase} Phase</Text>
-          </View>
-        </View>
-
-        {/* P3: TODAY'S SESSION CTA ── */}
+        {/* ── TODAY'S SESSION CARD (prominently first) ── */}
         {!isRestDay && displaySession ? (
-          <View style={s.sessionCtaCard}>
-            <View style={s.sessionCtaTop}>
+          <View style={s.sessionCard}>
+            <View style={s.sessionCardTop}>
               {(() => {
                 const sc = getSessionStyle(displaySession.sessionType);
                 return (
@@ -353,26 +294,24 @@ export default function Dashboard() {
                   </View>
                 );
               })()}
-              <Text style={s.sessionCtaDayLabel}>{todayName}</Text>
+              <Text style={s.sessionCardDay}>{todayName}</Text>
             </View>
-            {/* Main lift from API session (exercises[0]) or local fallback */}
-            <Text style={s.sessionCtaLift}>
-              {programSession?.session?.exercises?.[0]?.name
-                ?? displaySession.mainLift
-                ?? 'Today\'s Session'}
+            <Text style={s.sessionLift}>
+              {programSession?.session?.exercises?.[0]?.name ?? displaySession.mainLift ?? "Today's Session"}
             </Text>
-            <Text style={s.sessionCtaScheme}>
-              {programSession?.session?.exercises?.[0]?.prescription
-                ?? displaySession.topSetScheme
-                ?? ''}
+            <Text style={s.sessionScheme}>
+              {programSession?.session?.exercises?.[0]?.prescription ?? displaySession.topSetScheme ?? ''}
             </Text>
+            {programSession?.session?.coachNote ? (
+              <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
+            ) : null}
             <TouchableOpacity
               testID="today-session-card"
               style={s.startBtn}
               onPress={() => router.push('/(tabs)/today')}
               activeOpacity={0.85}
             >
-              <Text style={s.startBtnText}>START TODAY'S SESSION</Text>
+              <Text style={s.startBtnText}>START SESSION</Text>
               <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
@@ -390,77 +329,122 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ── AI Coach Note (from generated plan) ── */}
-        {programSession?.session?.coachNote && (
-          <View style={s.coachNoteCard}>
-            <View style={s.coachNoteHeader}>
-              <MaterialCommunityIcons name="robot-outline" size={14} color={COLORS.accentBlue} />
-              <Text style={s.coachNoteLabel}>AI COACH · {programSession.session.sessionType?.toUpperCase()}</Text>
+        {/* ── COACH'S DIRECTIVE (condensed + expandable) ── */}
+        <View style={s.coachCard}>
+          <View style={s.coachCardHeader}>
+            <View style={s.coachIconBadge}>
+              <MaterialCommunityIcons name="brain" size={14} color={COLORS.accent} />
             </View>
-            <Text style={s.coachNoteText}>{programSession.session.coachNote}</Text>
+            <Text style={s.coachCardLabel}>COACH'S DIRECTIVE — WEEK {week}</Text>
+            {deload && (
+              <View style={s.deloadPill}>
+                <Text style={s.deloadPillText}>RECOVERY</Text>
+              </View>
+            )}
           </View>
-        )}
+          <Text style={s.coachCardText}>
+            {expandedCoach ? coachingNote : shortNote}
+          </Text>
+          {hasMoreText && (
+            <TouchableOpacity onPress={() => setExpandedCoach(v => !v)} style={s.readMoreBtn} activeOpacity={0.7}>
+              <Text style={s.readMoreText}>{expandedCoach ? '↑ Less' : 'Read more →'}</Text>
+            </TouchableOpacity>
+          )}
+          <View style={s.coachCardFooter}>
+            <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.accent} />
+            <Text style={s.coachCardTag}>Block {block} of 7</Text>
+            <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.text.muted} />
+            <Text style={s.coachCardTag}>{phase} Phase</Text>
+          </View>
+        </View>
 
-        {/* P3: Rotation Flag Card (Task 10) */}
-        {rotationStatus?.count > 0 && (
-          <View style={s.rotationCard} testID="rotation-card">
-            <View style={s.priorityCardHeader}>
-              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
-                <MaterialCommunityIcons name="rotate-3d-variant" size={14} color={COLORS.accentBlue} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>EXERCISE ROTATION DUE</Text>
-                <Text style={s.priorityCardSub}>
-                  {rotationStatus.count} exercise{rotationStatus.count > 1 ? 's' : ''} overdue for variation
-                </Text>
-              </View>
-            </View>
-            {rotationStatus.flagged?.slice(0, 2).map((item: any, i: number) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 }}>
-                <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.accentBlue} style={{ marginTop: 1 }} />
-                <Text style={[s.priorityCardSub, { flex: 1 }]}>
-                  <Text style={{ color: COLORS.text.primary }}>{item.exercise}</Text>
-                  {item.suggestion ? ` → ${item.suggestion.replacement}` : ''}
-                  {` (${item.weeksUsed}wk/${item.windowWeeks}wk window)`}
-                </Text>
-              </View>
+        {/* ── WEEKLY STATS STRIP (compact horizontal) ── */}
+        <View style={s.statsStrip}>
+          <StripStat
+            label="SESSIONS"
+            value={`${weekStats?.sessionsCompleted ?? 0}/${weekStats?.sessionsPlanned ?? 4}`}
+            accent={(weekStats?.sessionsCompleted ?? 0) >= (weekStats?.sessionsPlanned ?? 4)}
+          />
+          <View style={s.statsDivider} />
+          <StripStat
+            label="AVG EFFORT"
+            value={weekStats?.avgRPE ? weekStats.avgRPE.toFixed(1) : '—'}
+            accent={(weekStats?.avgRPE ?? 0) > 0}
+          />
+          <View style={s.statsDivider} />
+          <StripStat
+            label="COMPLETION"
+            value={weekStats?.completionRate != null ? `${weekStats.completionRate}%` : '—'}
+            accent={(weekStats?.completionRate ?? 0) >= 75}
+          />
+        </View>
+
+        {/* ── PRIORITY ALERTS (only shown when active, MAX 2 visible) ── */}
+        {alerts.length > 0 && (
+          <View style={s.alertsSection} testID="alerts-section">
+            {(expandedAlerts ? alerts : alerts.slice(0, 2)).map((alert) => (
+              <AlertCard key={alert.type} alert={alert} onAction={alert.actionRoute ? () => router.push(alert.actionRoute as any) : undefined} />
             ))}
-          </View>
-        )}
-
-        {/* P4: Deload Warning Card (Task 7) */}
-        {deloadStatus?.deloadRecommended && (
-          <View style={s.deloadWarningCard} testID="deload-warning-card">
-            <View style={s.priorityCardHeader}>
-              <View style={[s.priorityIconBadge, { backgroundColor: '#FF980025' }]}>
-                <MaterialCommunityIcons name="sleep" size={14} color='#FF9800' />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: '#FF9800' }]}>RECOVERY RECOMMENDED</Text>
-                <Text style={s.priorityCardSub}>Score {deloadStatus.deloadScore}/12 — recovery needed</Text>
-              </View>
-              <View style={[s.comingSoonPill, { backgroundColor: '#FF980020', borderColor: '#FF980040', borderWidth: 1 }]}>
-                <Text style={[s.comingSoonText, { color: '#FF9800' }]}>
-                  {deloadStatus.urgency === 'immediate' ? 'URGENT' : 'SOON'}
+            {alerts.length > 2 && (
+              <TouchableOpacity style={s.viewAllBtn} onPress={() => setExpandedAlerts(v => !v)} activeOpacity={0.7}>
+                <Text style={s.viewAllText}>
+                  {expandedAlerts ? '↑ Show less' : `View all alerts (${alerts.length})`}
                 </Text>
-              </View>
-            </View>
-            <Text style={s.priorityCardBody}>{deloadStatus.message}</Text>
-            {deloadStatus.signals?.length > 0 && (
-              <View style={{ marginTop: SPACING.sm, gap: 4 }}>
-                {deloadStatus.signals.slice(0, 2).map((sig: string, i: number) => (
-                  <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
-                    <MaterialCommunityIcons name="circle-small" size={16} color='#FF9800' style={{ marginTop: -2 }} />
-                    <Text style={[s.priorityCardSub, { flex: 1, color: COLORS.text.secondary }]}>{sig}</Text>
-                  </View>
-                ))}
-              </View>
+              </TouchableOpacity>
             )}
           </View>
         )}
 
-        {/* P4: Weekly Review Card (Task 5) */}
-        {weeklyReview?.hasReview ? (
+        {/* ── CURRENT BLOCK (compact) ── */}
+        <View style={s.compactBlockCard}>
+          <View style={s.compactBlockRow}>
+            <Text style={s.compactBlockLine}>
+              <Text style={s.compactBlockAccent}>Block {block}</Text>
+              <Text style={s.compactBlockMuted}> of 7  ·  </Text>
+              <Text style={s.compactBlockBold}>{blockName}</Text>
+              <Text style={s.compactBlockMuted}>  ·  </Text>
+              <Text style={s.compactBlockBold}>{phase} Phase</Text>
+            </Text>
+            {deload && (
+              <View style={s.deloadPill}>
+                <Text style={s.deloadPillText}>RECOVERY</Text>
+              </View>
+            )}
+          </View>
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${Math.round(blockProgress * 100)}%` as any }]} />
+          </View>
+          <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
+        </View>
+
+        {/* ── EST. MAXES ── */}
+        {bests && (
+          <>
+            <View style={s.sectionRow}>
+              <Text style={s.sectionTitle}>EST. MAXES</Text>
+              <Text style={s.sectionSub}>From training logs</Text>
+            </View>
+            <View style={s.e1rmRow}>
+              <E1RMCard label="SQUAT" data={bests.squat} units={units} />
+              <E1RMCard label="PRESS" data={bests.press} units={units} />
+              <E1RMCard label="PULL"  data={bests.pull}  units={units} />
+            </View>
+          </>
+        )}
+
+        {/* ── QUICK ACTIONS (4 in a single row) ── */}
+        <View style={s.sectionRow}>
+          <Text style={s.sectionTitle}>QUICK ACTIONS</Text>
+        </View>
+        <View style={s.actionsRow}>
+          <QuickAction icon="pencil-outline"          label="Log Session"  onPress={() => router.push('/(tabs)/log')} />
+          <QuickAction icon="brain"                   label="Coach"        onPress={() => router.push('/tools/coach')} accent />
+          <QuickAction icon="clipboard-check-outline" label="Check-In"     onPress={() => router.push('/tools/checkin')} />
+          <QuickAction icon="history"                 label="Change Log"   onPress={() => router.push('/tools/changelog')} />
+        </View>
+
+        {/* ── WEEKLY REVIEW (only if data exists) ── */}
+        {weeklyReview?.hasReview && (
           <View style={s.weeklyReviewCard} testID="weekly-review-card">
             <View style={s.priorityCardHeader}>
               <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
@@ -474,11 +458,6 @@ export default function Dashboard() {
                   {weeklyReview.stats?.prsHit > 0 ? `  ·  ${weeklyReview.stats.prsHit} PR${weeklyReview.stats.prsHit > 1 ? 's' : ''}` : ''}
                 </Text>
               </View>
-              {weeklyReview.cached && (
-                <View style={s.comingSoonPill}>
-                  <Text style={s.comingSoonText}>CACHED</Text>
-                </View>
-              )}
             </View>
             <Text style={s.priorityCardBody}>{weeklyReview.summary}</Text>
             {weeklyReview.highlights?.length > 0 && (
@@ -498,129 +477,42 @@ export default function Dashboard() {
               </View>
             )}
           </View>
-        ) : (
-          <View style={s.weeklyReviewCard} testID="weekly-review-card">
-            <View style={s.priorityCardHeader}>
-              <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
-                <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.priorityCardTitle, { color: COLORS.accentBlue }]}>WEEKLY REVIEW</Text>
-                <Text style={s.priorityCardSub}>AI-powered weekly analysis</Text>
-              </View>
-              <View style={s.comingSoonPill}>
-                <Text style={s.comingSoonText}>LOADING</Text>
-              </View>
-            </View>
-            <Text style={s.priorityCardBody}>
-              Complete your first session this week to unlock your personalised AI training review.
-            </Text>
-          </View>
         )}
-
-        {/* Week Stats */}
-        <Text style={s.sectionTitle}>THIS WEEK</Text>
-        <View style={s.statsGrid}>
-          <StatBox label="AVG PAIN" value={weekStats?.avgPain?.toFixed(1) ?? '—'} color={weekStats && weekStats.avgPain >= 3 ? COLORS.status.error : COLORS.text.primary} testID="stat-pain" />
-          <StatBox label="AVG EFFORT" value={weekStats?.avgRPE?.toFixed(1) ?? '—'} testID="stat-rpe" />
-          <StatBox label="COMPLETION" value={weekStats ? `${weekStats.completionRate}%` : '—'} testID="stat-completion" />
-          <StatBox label="BODYWEIGHT" value={profile.currentBodyweight ? `${profile.currentBodyweight} lbs` : '—'} testID="stat-bw" />
-        </View>
-
-        {/* ── CURRENT BLOCK CARD ── */}
-        <View style={s.sectionRow}>
-          <Text style={s.sectionTitle}>CURRENT BLOCK</Text>
-        </View>
-        <View style={s.blockCard}>
-          <View style={s.blockCardTop}>
-            <View style={{ flex: 1, marginRight: SPACING.md }}>
-              <Text style={s.blockNum}>
-                BLOCK {block} <Text style={s.blockNumOf}>of 7</Text>
-              </Text>
-              <Text style={s.blockName}>{blockName}</Text>
-            </View>
-            <View style={[s.phasePill, deload && s.phasePillDeload]}>
-              <Text style={[s.phasePillText, deload && s.phasePillTextDeload]}>
-                {phase.toUpperCase()}
-              </Text>
-            </View>
-          </View>
-          <View style={s.progressTrack}>
-            <View style={[s.progressFill, { width: `${Math.round(blockProgress * 100)}%` as any }]} />
-          </View>
-          <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
-        </View>
-
-        {/* ── BEST E1RMs ── */}
-        {bests && (
-          <>
-            <View style={s.sectionRow}>
-              <Text style={s.sectionTitle}>EST. MAXES</Text>
-              <Text style={s.sectionSub}>From training logs</Text>
-            </View>
-            <View style={s.e1rmRow}>
-              <E1RMCard label="SQUAT" data={bests.squat} units={units} />
-              <E1RMCard label="PRESS" data={bests.press} units={units} />
-              <E1RMCard label="PULL"  data={bests.pull}  units={units} />
-            </View>
-          </>
-        )}
-
-        {/* ── QUICK ACTIONS ── */}
-        <View style={s.sectionRow}>
-          <Text style={s.sectionTitle}>QUICK ACTIONS</Text>
-        </View>
-        <View style={s.actionsGrid}>
-          <QuickAction
-            icon="pencil-outline"
-            label="Log Session"
-            onPress={() => router.push('/(tabs)/log')}
-          />
-          <QuickAction
-            icon="brain"
-            label="Pocket Coach"
-            onPress={() => router.push('/tools/coach')}
-            accent
-          />
-          <QuickAction
-            icon="clipboard-check-outline"
-            label="Weekly Check-In"
-            onPress={() => router.push('/tools/checkin')}
-          />
-          <QuickAction
-            icon="history"
-            label="Changes"
-            onPress={() => router.push('/(tabs)/changes')}
-          />
-        </View>
 
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
-
-      {/* ── Upload FAB ── */}
-      <TouchableOpacity
-        style={s.fab}
-        onPress={() => router.push('/upload')}
-        activeOpacity={0.85}
-      >
-        <MaterialCommunityIcons name="plus" size={28} color={COLORS.primary} />
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function StatPill({ label, value, sublabel, color, icon, testID }: {
-  label: string; value: string; sublabel?: string;
-  color: string; icon: string; testID?: string;
-}) {
+function StripStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <View testID={testID} style={s.statPill}>
-      <MaterialCommunityIcons name={icon as any} size={18} color={color} style={{ marginBottom: 4 }} />
-      <Text style={[s.statPillValue, { color }]}>{value}</Text>
-      {sublabel ? <Text style={s.statPillSublabel}>{sublabel}</Text> : null}
-      <Text style={s.statPillLabel}>{label}</Text>
+    <View style={s.stripStat}>
+      <Text style={[s.stripStatValue, accent ? { color: COLORS.accent } : {}]}>{value}</Text>
+      <Text style={s.stripStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function AlertCard({ alert, onAction }: { alert: AlertData; onAction?: () => void }) {
+  return (
+    <View style={[s.alertCard, { borderLeftColor: alert.color }]}>
+      <View style={s.alertRow}>
+        <View style={[s.alertIconBadge, { backgroundColor: alert.color + '20' }]}>
+          <MaterialCommunityIcons name={alert.icon as any} size={13} color={alert.color} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[s.alertTitle, { color: alert.color }]}>{alert.title}</Text>
+          <Text style={s.alertSub} numberOfLines={2}>{alert.sub}</Text>
+        </View>
+        {onAction && (
+          <TouchableOpacity onPress={onAction} style={[s.alertBtn, { backgroundColor: alert.color + '15' }]} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="arrow-right" size={14} color={alert.color} />
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }
@@ -636,17 +528,6 @@ function E1RMCard({ label, data, units }: { label: string; data: any; units: str
   );
 }
 
-function StatBox({ label, value, color, testID }: {
-  label: string; value: string; color?: string; testID?: string;
-}) {
-  return (
-    <View testID={testID} style={s.statBox}>
-      <Text style={[s.statBoxValue, color ? { color } : {}]}>{value}</Text>
-      <Text style={s.statBoxLabel}>{label}</Text>
-    </View>
-  );
-}
-
 function QuickAction({ icon, label, onPress, accent }: {
   icon: string; label: string; onPress: () => void; accent?: boolean;
 }) {
@@ -658,10 +539,10 @@ function QuickAction({ icon, label, onPress, accent }: {
     >
       <MaterialCommunityIcons
         name={icon as any}
-        size={26}
+        size={24}
         color={accent ? COLORS.primary : COLORS.accent}
       />
-      <Text style={[s.quickActionLabel, accent && s.quickActionLabelAccent]}>
+      <Text style={[s.quickActionLabel, accent && s.quickActionLabelAccent]} numberOfLines={2}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -681,91 +562,81 @@ const s = StyleSheet.create({
 
   // Header
   header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.md },
-  greeting:     { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 30 },
+  greeting:     { fontSize: FONTS.sizes.xxl + 2, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 32 },
   date:         { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, marginTop: 3 },
   settingsBtn:  { padding: 4, marginTop: 2 },
 
-  // Coach card — gold border
-  coachCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1.5, borderColor: COLORS.accent },
-  coachCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md, gap: SPACING.sm, flexWrap: 'wrap' },
-  coachIconBadge:  { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center' },
-  coachCardLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5, flex: 1 },
-  deloadPill:      { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
-  deloadPillText:  { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-  coachCardText:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22, marginBottom: SPACING.md },
-  coachCardFooter: { flexDirection: 'row', alignItems: 'center' },
-  coachCardTag:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  // Competition slim banner (above header)
+  compSlimBanner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: 8, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border, gap: SPACING.xs },
+  compSlimText:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  compSlimPhase:  { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
 
-  // Session CTA card
-  sessionCtaCard:      { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
-  sessionCtaTop:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
+  // Today's session card (prominent)
+  sessionCard:         { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 3 },
+  sessionCardTop:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
   sessionTypeBadge:    { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1 },
   sessionTypeBadgeText:{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
-  sessionCtaDayLabel:  { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
-  sessionCtaLift:      { fontSize: FONTS.sizes.xxxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 38, marginBottom: 4 },
-  sessionCtaScheme:    { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, marginBottom: SPACING.lg, lineHeight: 22 },
-  startBtn:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm },
+  sessionCardDay:      { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
+  sessionLift:         { fontSize: FONTS.sizes.xxxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 38, marginBottom: 4 },
+  sessionScheme:       { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, marginBottom: SPACING.sm, lineHeight: 22 },
+  sessionCoachNote:    { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: SPACING.lg, lineHeight: 20 },
+  startBtn:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm, marginTop: SPACING.sm },
   startBtnText:        { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
 
-  // AI Coach note (from generated plan)
-  coachNoteCard: {
-    marginHorizontal: SPACING.lg, marginBottom: SPACING.md,
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.accentBlue,
-    borderLeftWidth: 3,
-  },
-  coachNoteHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
-    marginBottom: SPACING.sm,
-  },
-  coachNoteLabel: {
-    fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy,
-    color: COLORS.accentBlue, letterSpacing: 1.5,
-  },
-  coachNoteText: {
-    fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22,
-  },
-
-  // Rest day
+  // Rest day card
   restDayCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
   restDayIcon:  { width: 52, height: 52, borderRadius: 26, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center' },
   restDayTitle: { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, marginBottom: 4 },
   restDayText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20 },
+
+  // Coach card — gold border + expandable
+  coachCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1.5, borderColor: COLORS.accent },
+  coachCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.sm, gap: SPACING.sm, flexWrap: 'wrap' },
+  coachIconBadge:  { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.surfaceHighlight, justifyContent: 'center', alignItems: 'center' },
+  coachCardLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5, flex: 1 },
+  deloadPill:      { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  deloadPillText:  { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  coachCardText:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22, marginBottom: SPACING.sm },
+  readMoreBtn:     { alignSelf: 'flex-start', paddingVertical: 2, marginBottom: SPACING.sm },
+  readMoreText:    { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  coachCardFooter: { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.xs },
+  coachCardTag:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+
+  // Weekly stats strip (horizontal compact)
+  statsStrip:     { flexDirection: 'row', marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, paddingVertical: SPACING.md + 2, paddingHorizontal: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
+  stripStat:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  stripStatValue: { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 24 },
+  stripStatLabel: { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1, marginTop: 3 },
+  statsDivider:   { width: 1, backgroundColor: COLORS.border, marginVertical: 4 },
+
+  // Priority alerts section (compact, left-border cards)
+  alertsSection: { paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.md },
+  alertCard:     { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4 },
+  alertRow:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  alertIconBadge:{ width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
+  alertTitle:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
+  alertSub:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1, lineHeight: 17 },
+  alertBtn:      { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  viewAllBtn:    { alignSelf: 'center', paddingVertical: SPACING.xs, paddingHorizontal: SPACING.md },
+  viewAllText:   { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+
+  // Compact block card (single-line header)
+  compactBlockCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  compactBlockRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
+  compactBlockLine:  { fontSize: FONTS.sizes.sm, flex: 1 },
+  compactBlockAccent:{ fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
+  compactBlockMuted: { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+  compactBlockBold:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary },
+  progressTrack:     { height: 6, backgroundColor: COLORS.surfaceHighlight, borderRadius: 3, marginBottom: SPACING.sm, overflow: 'hidden' },
+  progressFill:      { height: 6, backgroundColor: COLORS.accent, borderRadius: 3 },
+  progressLabel:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
 
   // Section labels
   sectionRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm },
   sectionTitle: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2 },
   sectionSub:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
 
-  // Stats grid (2×2 boxes)
-  statsGrid:      { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
-  statBox:        { flex: 1, minWidth: '45%', backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
-  statBoxValue:   { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 26, marginBottom: 2 },
-  statBoxLabel:   { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-
-  // Stats pills
-  statsRow:         { flexDirection: 'row', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
-  statPill:         { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
-  statPillValue:    { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, lineHeight: 22 },
-  statPillSublabel: { fontSize: 9, color: COLORS.text.muted, lineHeight: 12 },
-  statPillLabel:    { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1, marginTop: 2 },
-
-  // Block card
-  blockCard:          { marginHorizontal: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
-  blockCardTop:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: SPACING.md },
-  blockNum:           { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 1.5, marginBottom: 4 },
-  blockNumOf:         { color: COLORS.text.muted, fontWeight: FONTS.weights.regular },
-  blockName:          { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, lineHeight: 22 },
-  phasePill:          { backgroundColor: COLORS.accent, paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full },
-  phasePillDeload:    { backgroundColor: COLORS.surfaceHighlight, borderWidth: 1, borderColor: COLORS.border },
-  phasePillText:      { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.primary, letterSpacing: 1 },
-  phasePillTextDeload:{ color: COLORS.text.muted },
-  progressTrack:      { height: 6, backgroundColor: COLORS.surfaceHighlight, borderRadius: 3, marginBottom: SPACING.sm, overflow: 'hidden' },
-  progressFill:       { height: 6, backgroundColor: COLORS.accent, borderRadius: 3 },
-  progressLabel:      { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
-
-  // E1RM cards
+  // Est. Maxes cards
   e1rmRow:      { flexDirection: 'row', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
   e1rmCard:     { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
   e1rmLabel:    { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1.5, marginBottom: 4 },
@@ -773,57 +644,20 @@ const s = StyleSheet.create({
   e1rmUnit:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginBottom: 2 },
   e1rmExercise: { fontSize: 9, color: COLORS.text.muted, lineHeight: 13, marginTop: 2 },
 
-  // FAB
-  fab: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: COLORS.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 12,
-    zIndex: 100,
-  },
-
-  // Quick actions 2x2 grid
-  actionsGrid:           { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: SPACING.lg, gap: SPACING.sm },
-  quickAction:           { flex: 1, minWidth: '45%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md, alignItems: 'center', gap: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
+  // Quick actions (4 in a single row)
+  actionsRow:            { flexDirection: 'row', paddingHorizontal: SPACING.lg, gap: SPACING.sm, marginBottom: SPACING.sm },
+  quickAction:           { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, paddingVertical: SPACING.md, paddingHorizontal: 4, alignItems: 'center', gap: 6, borderWidth: 1, borderColor: COLORS.border },
   quickActionAccent:     { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  quickActionLabel:      { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary, textAlign: 'center' },
+  quickActionLabel:      { fontSize: 10, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary, textAlign: 'center' },
   quickActionLabelAccent:{ color: COLORS.primary },
 
-  // Priority cards
-  priorityCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  // Weekly Review card + priority card shared
+  weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
   priorityCardHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
   priorityIconBadge:  { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   priorityCardTitle:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1.5 },
   priorityCardSub:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
   priorityCardBody:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20, marginBottom: SPACING.md },
-  priorityBtn:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: 9, paddingHorizontal: SPACING.md, borderRadius: RADIUS.md, alignSelf: 'flex-start' },
-  priorityBtnText:    { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy },
-
-  // Weekly Review + Deload cards
-  weeklyReviewCard:   { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, opacity: 0.95 },
-  deloadWarningCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1.5, borderColor: '#FF980040' },
-  rotationCard:       { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.accentBlue + '30' },
-  comingSoonPill:     { backgroundColor: COLORS.surfaceHighlight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
-  comingSoonText:     { fontSize: 9, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
   nextWeekBox:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
   nextWeekText:       { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.accentBlue, lineHeight: 17, fontStyle: 'italic' },
-
-  // Competition Banner (Task 9)
-  competitionBanner:      { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4 },
-  competitionBannerRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 },
-  competitionBannerTitle: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
-  competitionBannerEvent: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
-  competitionPhasePill:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
-  competitionPillText:    { fontSize: 12 },
-  competitionAdjNote:     { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, lineHeight: 17, marginTop: 4, paddingLeft: 24 },
 });
