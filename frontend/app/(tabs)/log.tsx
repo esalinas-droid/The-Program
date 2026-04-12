@@ -640,9 +640,9 @@ export default function ScheduleScreen() {
                 <Text style={s.emptySubText}>Complete your program setup to see your training schedule</Text>
               </View>
             ) : (
-              sessions.map((card) => (
+              sessions.map((card, idx) => (
                 <SessionHistoryCard
-                  key={card.date}
+                  key={`${card.date}-${idx}`}
                   card={card}
                   expanded={expandedCard === card.date}
                   onToggle={() => setExpandedCard(expandedCard === card.date ? null : card.date)}
