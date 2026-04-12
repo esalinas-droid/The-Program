@@ -82,7 +82,7 @@ const BARS = [
     shaft: 'Loadable shaft, independent per hand',
     characteristics: 'Tests grip, shoulder stability, core bracing, gait mechanics under load.',
     usedFor: 'Classic strongman carry event.',
-    inProgram: 'Strongman Event Days. Supplemental on Event Saturday.',
+    inProgram: 'Strongman Event Days. Support work on Event Saturday.',
     ytSearch: 'farmers carry strongman technique',
   },
   {

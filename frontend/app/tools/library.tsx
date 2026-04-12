@@ -7,20 +7,20 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 const TABS = ['Exercises', 'Warm-Ups', 'Rehab', 'Events'];
 
 const EXERCISES = [
-  { name: 'SSB Box Squat', type: 'ME Lower', category: 'Squat', role: 'Main', focus: 'Quad + Anterior Core', cue: 'Push knees out, drive hips through.', ytSearch: 'SSB box squat tutorial' },
-  { name: 'Cambered Bar Box Squat', type: 'ME Lower', category: 'Squat', role: 'Main', focus: 'Hip Drive + Posterior Chain', cue: 'Own the oscillation. Brace harder than with straight bar.', ytSearch: 'cambered bar box squat' },
-  { name: 'Trap Bar Deadlift (High Handles)', type: 'ME Lower', category: 'Hinge', role: 'Main', focus: 'Hinge + Glutes', cue: 'Drive floor away. Tall chest.', ytSearch: 'trap bar deadlift high handle' },
-  { name: 'Floor Press', type: 'ME Upper', category: 'Press', role: 'Main', focus: 'Tricep + Chest', cue: 'Tuck elbows 45°. Explosive off floor.', ytSearch: 'floor press barbell tutorial' },
-  { name: 'Close-Grip Bench Press', type: 'ME Upper', category: 'Press', role: 'Main', focus: 'Tricep', cue: 'Grip 2" inside shoulder width. Drive bar back over face.', ytSearch: 'close grip bench press technique' },
-  { name: 'Log Clean and Press', type: 'ME Upper', category: 'Press', role: 'Main', focus: 'Full body overhead', cue: 'Hip into log, not hands. Violent drive.', ytSearch: 'log clean and press strongman tutorial' },
-  { name: 'Axle Clean and Press', type: 'ME Upper', category: 'Press', role: 'Main', focus: 'Grip + Overhead', cue: 'No spin — brace wrists. Drive through heels.', ytSearch: 'axle clean and press tutorial' },
+  { name: 'SSB Box Squat', type: 'Heavy Lower', category: 'Squat', role: 'Main', focus: 'Quad + Anterior Core', cue: 'Push knees out, drive hips through.', ytSearch: 'SSB box squat tutorial' },
+  { name: 'Cambered Bar Box Squat', type: 'Heavy Lower', category: 'Squat', role: 'Main', focus: 'Hip Drive + Posterior Chain', cue: 'Own the oscillation. Brace harder than with straight bar.', ytSearch: 'cambered bar box squat' },
+  { name: 'Trap Bar Deadlift (High Handles)', type: 'Heavy Lower', category: 'Hinge', role: 'Main', focus: 'Hinge + Glutes', cue: 'Drive floor away. Tall chest.', ytSearch: 'trap bar deadlift high handle' },
+  { name: 'Floor Press', type: 'Heavy Upper', category: 'Press', role: 'Main', focus: 'Tricep + Chest', cue: 'Tuck elbows 45°. Explosive off floor.', ytSearch: 'floor press barbell tutorial' },
+  { name: 'Close-Grip Bench Press', type: 'Heavy Upper', category: 'Press', role: 'Main', focus: 'Tricep', cue: 'Grip 2" inside shoulder width. Drive bar back over face.', ytSearch: 'close grip bench press technique' },
+  { name: 'Log Clean and Press', type: 'Heavy Upper', category: 'Press', role: 'Main', focus: 'Full body overhead', cue: 'Hip into log, not hands. Violent drive.', ytSearch: 'log clean and press strongman tutorial' },
+  { name: 'Axle Clean and Press', type: 'Heavy Upper', category: 'Press', role: 'Main', focus: 'Grip + Overhead', cue: 'No spin — brace wrists. Drive through heels.', ytSearch: 'axle clean and press tutorial' },
   { name: 'Yoke Carry', type: 'Strongman Event', category: 'Carry', role: 'Main', focus: 'Total body stability', cue: 'Short fast steps. Eyes up. Own the pick.', ytSearch: 'yoke carry tutorial strongman' },
   { name: 'Farmers Carry', type: 'Strongman Event', category: 'Carry', role: 'Main', focus: 'Grip + Core + Gait', cue: 'Tall chest, fast walk, straps off.', ytSearch: 'farmers carry strongman tutorial' },
-  { name: 'Belt Squat', type: 'ME Lower', category: 'Squat', role: 'Supplemental', focus: 'Quad + Core', cue: 'Hip-hinge sit into squat, stay tall.', ytSearch: 'belt squat tutorial' },
+  { name: 'Belt Squat', type: 'Heavy Lower', category: 'Squat', role: 'Support', focus: 'Quad + Core', cue: 'Hip-hinge sit into squat, stay tall.', ytSearch: 'belt squat tutorial' },
   { name: 'Pallof Press', type: 'All', category: 'Core', role: 'Accessory', focus: 'Anti-Rotation Core', cue: 'Resist rotation, breathe out on press.', ytSearch: 'pallof press tutorial' },
   { name: 'Dead Bug', type: 'All', category: 'Core', role: 'Accessory', focus: 'Anterior Core', cue: 'Lower back flat to floor throughout.', ytSearch: 'dead bug exercise tutorial' },
   { name: 'McGill Curl-Up', type: 'All', category: 'Core', role: 'Accessory', focus: 'Core Stability', cue: 'Neck long, slight chin tuck. 8-sec hold.', ytSearch: 'McGill curl up tutorial' },
-  { name: 'GHD Hip Extension', type: 'ME Lower', category: 'Posterior Chain', role: 'Supplemental', focus: 'Glute + Hamstring', cue: 'Hip crease at pad, not belly. Full hip extension.', ytSearch: 'GHD hip extension tutorial' },
+  { name: 'GHD Hip Extension', type: 'Heavy Lower', category: 'Posterior Chain', role: 'Support', focus: 'Glute + Hamstring', cue: 'Hip crease at pad, not belly. Full hip extension.', ytSearch: 'GHD hip extension tutorial' },
   { name: 'Backward Sled Drag', type: 'GPP', category: 'Conditioning', role: 'GPP', focus: 'Knee + Aerobic Capacity', cue: 'Upright posture, heel-to-toe pull, controlled speed.', ytSearch: 'backward sled drag tutorial' },
 ];
 
