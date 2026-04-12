@@ -1281,7 +1281,6 @@ export default function TodayScreen() {
       // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
       const todayStr = new Date().toISOString().split('T')[0];
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
-        await new Promise(resolve => setTimeout(resolve, 300));
         try {
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);

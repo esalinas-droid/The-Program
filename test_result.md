@@ -1130,7 +1130,41 @@ agent_communication:
 agent_communication:
   - agent: "main"
     message: >
-      CRITICAL FIX SESSION: Today → Log sync. Three fixes applied and verified in code:
+      MAJOR CHANGE: Log tab completely replaced with new read-only "Schedule" page.
+      
+      WHAT CHANGED:
+      1. _layout.tsx: "Log" tab → "Schedule" tab with calendar-month-outline icon
+      2. log.tsx: Entirely rewritten as ScheduleScreen (read-only, no log writes)
+      3. today.tsx: Removed 300ms artificial delay from re-sync path
+      
+      NEW SCHEDULE PAGE FEATURES:
+      - Header: "Schedule" title + "Week X · Block · Phase" subtitle + "Swap days" button
+      - Week navigation: left/right arrows + date range label + "THIS WEEK" gold badge
+      - Weekly calendar grid: 7 day cards (Mon-Sun) with colors:
+        RED = completed, GOLD = today, GREEN = upcoming, GRAY = rest
+      - Legend: 4 color items below grid
+      - Week summary stats: Sessions X/Y (red), Volume (white), Avg Effort (white)
+      - Session history cards: today (gold border + GO TO SESSION), completed (expandable), upcoming (green)
+      - Swap mode: tap "Swap days" → tap 2 training days → calls calendarApi.reschedule twice
+      
+      DATA SOURCES:
+      - calendarApi.getEvents(startDate, endDate) → week's sessions
+      - logApi.list() → history + stats (READ ONLY - never writes)
+      
+      Expo restarted. Test credentials: user_a@theprogram.app / StrongmanA123
+      
+      Please test:
+      1. Tab bar shows "Schedule" with calendar icon (not "Log" with "+" icon)
+      2. Schedule page loads with weekly calendar grid (7 day cards visible)
+      3. Colors correct: today = GOLD, completed = RED, upcoming = GREEN, REST = gray
+      4. "THIS WEEK" badge visible on current week
+      5. Week navigation arrows work (← and →)
+      6. Session history cards appear below stats
+      7. Today's session card has gold border + "GO TO SESSION" button
+      8. "GO TO SESSION" navigates to Today tab
+      9. Completed sessions show stats row + expandable detail
+      10. "Swap days" button activates swap mode with banner
+      11. No crashes, no sync bugs
       1. today.tsx input/repsInput styles now have minWidth: 0 to prevent LOG button overflow on web.
       2. lastLoadDate.current ref added to useFocusEffect in both today.tsx and log.tsx to prevent
          same-day double rebuilds and handle midnight rollovers.

@@ -35,9 +35,9 @@ export default function TabLayout() {
         tabBarTestID: 'tab-today',
       }} />
       <Tabs.Screen name="log" options={{
-        title: 'Log',
-        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="plus-circle" size={28} color={color} />,
-        tabBarTestID: 'tab-log',
+        title: 'Schedule',
+        tabBarIcon: ({ color }) => <MaterialCommunityIcons name="calendar-month-outline" size={24} color={color} />,
+        tabBarTestID: 'tab-schedule',
       }} />
       <Tabs.Screen name="track" options={{
         title: 'Track',
