@@ -1295,48 +1295,49 @@ export default function TodayScreen() {
           setExercises(apiExs);
           // Expand only the first exercise by default
           setExpanded(new Set([apiExs[0].id]));
+          // Clear stale logged state immediately — will repopulate from backend below
+          setLoggedSets(new Set());
+          setLogEntryIds({});
 
-          // Bug 4 fix: Reload previously logged sets from backend
+          // Reload logged state + entry IDs from backend
           try {
-            const todayStr = new Date().toISOString().split('T')[0];
-            const logsResp = await logApi.list();
-            const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+            const todayStr  = new Date().toISOString().split('T')[0];
+            const logsResp  = await logApi.list();
+            const allLogs   = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
             const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
-            if (todayLogs.length > 0) {
-              // Build a map: exerciseName → count of logged sets today
-              const logCountMap = new Map<string, number>();
-              for (const lg of todayLogs) {
-                const key = (lg.exercise || '').toLowerCase();
-                logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
-              }
-              // Mark the first N sets as logged for each exercise
-              const recovered = new Set<string>();
-              for (const ex of apiExs) {
-                const count = logCountMap.get(ex.name.toLowerCase()) || 0;
-                for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
-                  recovered.add(ex.sets[i].id);
-                }
-              }
-              if (recovered.size > 0) setLoggedSets(recovered);
 
-              // BUG 5 fix: recover log entry IDs so remove/edit can delete correct backend entry
-              const recoveredIds: Record<string, string> = {};
-              for (const ex of apiExs) {
-                const exName = ex.name.toLowerCase();
-                const matchingLogs = todayLogs
-                  .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
-                  .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
-                for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
-                  const logEntry = matchingLogs[i];
-                  const setId    = ex.sets[i].id;
-                  if (logEntry.id || logEntry._id) {
-                    recoveredIds[setId] = logEntry.id || logEntry._id;
-                  }
+            // Build logCountMap and recovered set (even if todayLogs is empty → recovered = {})
+            const logCountMap = new Map<string, number>();
+            for (const lg of todayLogs) {
+              const key = (lg.exercise || '').toLowerCase();
+              logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
+            }
+            const recovered = new Set<string>();
+            for (const ex of apiExs) {
+              const count = logCountMap.get(ex.name.toLowerCase()) || 0;
+              for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
+                recovered.add(ex.sets[i].id);
+              }
+            }
+            setLoggedSets(recovered); // Always update — clears stale state when empty
+
+            // Recover log entry IDs so remove/edit can delete correct backend entry
+            const recoveredIds: Record<string, string> = {};
+            for (const ex of apiExs) {
+              const exName = ex.name.toLowerCase();
+              const matchingLogs = todayLogs
+                .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
+                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+              for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
+                const logEntry = matchingLogs[i];
+                const setId    = ex.sets[i].id;
+                if (logEntry.id || logEntry._id) {
+                  recoveredIds[setId] = logEntry.id || logEntry._id;
                 }
               }
-              setLogEntryIds(recoveredIds);
             }
-          } catch { /* Non-blocking — keep empty set if fetch fails */ }
+            setLogEntryIds(recoveredIds); // Always update
+          } catch { /* Non-blocking — logged state stays empty if fetch fails */ }
         }
       } catch { /* No AI plan yet — keep local exercises */ }
 
