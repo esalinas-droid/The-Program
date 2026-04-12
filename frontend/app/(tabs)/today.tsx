@@ -1285,31 +1285,47 @@ export default function TodayScreen() {
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
           const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
-          const logCountMap = new Map<string, number>();
+
+          // Build per-exercise lookup: name -> list of entries; name -> setIndex->backendId
+          const logsByEx = new Map<string, any[]>();
+          const bySetIdx = new Map<string, Map<number, string>>();
           for (const lg of todayLogs) {
-            logCountMap.set((lg.exercise || '').toLowerCase(), (logCountMap.get((lg.exercise || '').toLowerCase()) || 0) + 1);
-          }
-          const currentExs = exercisesRef.current;
-          const recovered = new Set<string>();
-          for (const ex of currentExs) {
-            const count = logCountMap.get(ex.name.toLowerCase()) || 0;
-            for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
-              recovered.add(ex.sets[i].id);
+            const exName = (lg.exercise || '').toLowerCase();
+            if (!logsByEx.has(exName)) logsByEx.set(exName, []);
+            logsByEx.get(exName)!.push(lg);
+            if (lg.setIndex !== undefined && lg.setIndex !== null) {
+              if (!bySetIdx.has(exName)) bySetIdx.set(exName, new Map());
+              bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
             }
           }
-          setLoggedSets(recovered);
+
+          const currentExs = exercisesRef.current;
+          const recovered = new Set<string>();
           const recoveredIds: Record<string, string> = {};
           for (const ex of currentExs) {
             const exName = ex.name.toLowerCase();
-            const matchingLogs = todayLogs
-              .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
-              .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
-            for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
-              if (matchingLogs[i].id || matchingLogs[i]._id) {
-                recoveredIds[ex.sets[i].id] = matchingLogs[i].id || matchingLogs[i]._id;
+            const idxMap = bySetIdx.get(exName);
+            if (idxMap && idxMap.size > 0) {
+              // ── Precise: exact per-set matching via stored setIndex ──
+              ex.sets.forEach((s, i) => {
+                if (idxMap!.has(i)) {
+                  recovered.add(s.id);
+                  recoveredIds[s.id] = idxMap!.get(i)!;
+                }
+              });
+            } else {
+              // ── Fallback: count-based for legacy entries without setIndex ──
+              const sorted = (logsByEx.get(exName) || [])
+                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+              for (let i = 0; i < Math.min(sorted.length, ex.sets.length); i++) {
+                recovered.add(ex.sets[i].id);
+                if (sorted[i]?.id || sorted[i]?._id) {
+                  recoveredIds[ex.sets[i].id] = sorted[i].id || sorted[i]._id;
+                }
               }
             }
           }
+          setLoggedSets(recovered);
           setLogEntryIds(recoveredIds);
         } catch { /* Non-blocking */ }
         return; // skip full rebuild
@@ -1346,37 +1362,44 @@ export default function TodayScreen() {
             const allLogs   = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
             const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
 
-            // Build logCountMap and recovered set (even if todayLogs is empty → recovered = {})
-            const logCountMap = new Map<string, number>();
+            // Build per-exercise lookup: setIndex-based first, count-based fallback
+            const logsByEx = new Map<string, any[]>();
+            const bySetIdx = new Map<string, Map<number, string>>();
             for (const lg of todayLogs) {
-              const key = (lg.exercise || '').toLowerCase();
-              logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
-            }
-            const recovered = new Set<string>();
-            for (const ex of apiExs) {
-              const count = logCountMap.get(ex.name.toLowerCase()) || 0;
-              for (let i = 0; i < Math.min(count, ex.sets.length); i++) {
-                recovered.add(ex.sets[i].id);
+              const exName = (lg.exercise || '').toLowerCase();
+              if (!logsByEx.has(exName)) logsByEx.set(exName, []);
+              logsByEx.get(exName)!.push(lg);
+              if (lg.setIndex !== undefined && lg.setIndex !== null) {
+                if (!bySetIdx.has(exName)) bySetIdx.set(exName, new Map());
+                bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
               }
             }
-            setLoggedSets(recovered); // Always update — clears stale state when empty
 
-            // Recover log entry IDs so remove/edit can delete correct backend entry
+            const recovered = new Set<string>();
             const recoveredIds: Record<string, string> = {};
             for (const ex of apiExs) {
               const exName = ex.name.toLowerCase();
-              const matchingLogs = todayLogs
-                .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
-                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
-              for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
-                const logEntry = matchingLogs[i];
-                const setId    = ex.sets[i].id;
-                if (logEntry.id || logEntry._id) {
-                  recoveredIds[setId] = logEntry.id || logEntry._id;
+              const idxMap = bySetIdx.get(exName);
+              if (idxMap && idxMap.size > 0) {
+                ex.sets.forEach((s: any, i: number) => {
+                  if (idxMap!.has(i)) {
+                    recovered.add(s.id);
+                    recoveredIds[s.id] = idxMap!.get(i)!;
+                  }
+                });
+              } else {
+                const sorted = (logsByEx.get(exName) || [])
+                  .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+                for (let i = 0; i < Math.min(sorted.length, ex.sets.length); i++) {
+                  recovered.add(ex.sets[i].id);
+                  if (sorted[i]?.id || sorted[i]?._id) {
+                    recoveredIds[ex.sets[i].id] = sorted[i].id || sorted[i]._id;
+                  }
                 }
               }
             }
-            setLogEntryIds(recoveredIds); // Always update
+            setLoggedSets(recovered);
+            setLogEntryIds(recoveredIds);
           } catch { /* Non-blocking — logged state stays empty if fetch fails */ }
         }
       } catch { /* No AI plan yet — keep local exercises */ }
@@ -1503,6 +1526,9 @@ export default function TodayScreen() {
       try {
         const todayStr  = new Date().toISOString().split('T')[0];
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+        // Find the index of this set within its exercise so sync is exact
+        const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
+        const setIdx   = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
         const result = await logApi.create({
           date: todayStr,
           week: week || 1,
@@ -1515,6 +1541,7 @@ export default function TodayScreen() {
           rpe: 7,
           pain: 0,
           completed: 'yes',
+          setIndex: setIdx >= 0 ? setIdx : undefined,
         });
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
@@ -1587,6 +1614,7 @@ export default function TodayScreen() {
     const vals    = setValues[setId];
     const weight  = parseFloat(vals?.weight || '0') || 0;
     const reps    = parseInt(vals?.reps || '1') || 1;
+    const setIdx  = ex.sets.findIndex(s => s.id === setId);
     try {
       // BUG 3 fix: delete old entry first to prevent duplicates
       if (logEntryIds[setId]) {
@@ -1598,6 +1626,7 @@ export default function TodayScreen() {
         date: todayStr, week: week || 1, day: dayOfWeek,
         sessionType: sessionType || 'Training',
         exercise: ex.name, sets: 1, weight, reps, rpe: 7, pain: 0, completed: 'yes',
+        setIndex: setIdx >= 0 ? setIdx : undefined,
       });
       if (result?._id || result?.id) {
         setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));

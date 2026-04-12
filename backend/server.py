@@ -137,6 +137,7 @@ class WorkoutLogEntry(BaseDocument):
     notes: Optional[str] = None
     flag: Optional[str] = None
     e1rm: float = 0.0
+    setIndex: Optional[int] = None  # position of this set within the exercise (0-based)
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -154,6 +155,7 @@ class WorkoutLogCreate(BaseModel):
     bodyweight: Optional[float] = None
     notes: Optional[str] = None
     flag: Optional[str] = None
+    setIndex: Optional[int] = None  # position of this set within the exercise (0-based)
 
 class CheckIn(BaseDocument):
     week: int

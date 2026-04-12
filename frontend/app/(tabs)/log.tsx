@@ -850,24 +850,48 @@ export default function LogScreen() {
           const logsResp = await logApi.list();
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
           const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
-          const logCountMap = new Map<string, number>();
+
+          // Build per-exercise lookup: setIndex-based first, count-based fallback
+          const logsByEx = new Map<string, any[]>();
+          const bySetIdx = new Map<string, Map<number, string>>();
           for (const lg of todayLogs) {
-            logCountMap.set((lg.exercise || '').toLowerCase(), (logCountMap.get((lg.exercise || '').toLowerCase()) || 0) + 1);
+            const exName = (lg.exercise || '').toLowerCase();
+            if (!logsByEx.has(exName)) logsByEx.set(exName, []);
+            logsByEx.get(exName)!.push(lg);
+            if (lg.setIndex !== undefined && lg.setIndex !== null) {
+              if (!bySetIdx.has(exName)) bySetIdx.set(exName, new Map());
+              bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
+            }
           }
-          setExercises(prev => prev.map(ex => {
-            const count = logCountMap.get(ex.name.toLowerCase()) || 0;
-            return { ...ex, sets: ex.sets.map((s, i) => ({ ...s, logged: i < count })) };
-          }));
+
           const currentExs = exercisesRef.current;
           const recoveredIds: Record<string, string> = {};
+          setExercises(prev => prev.map(ex => {
+            const exName = ex.name.toLowerCase();
+            const idxMap = bySetIdx.get(exName);
+            if (idxMap && idxMap.size > 0) {
+              // ── Precise: exact per-set matching via stored setIndex ──
+              return { ...ex, sets: ex.sets.map((s, i) => ({ ...s, logged: idxMap!.has(i) })) };
+            } else {
+              // ── Fallback: count-based for legacy entries without setIndex ──
+              const count = (logsByEx.get(exName) || []).length;
+              return { ...ex, sets: ex.sets.map((s, i) => ({ ...s, logged: i < count })) };
+            }
+          }));
           for (const ex of currentExs) {
             const exName = ex.name.toLowerCase();
-            const matchingLogs = todayLogs
-              .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
-              .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
-            for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
-              if (matchingLogs[i].id || matchingLogs[i]._id) {
-                recoveredIds[ex.sets[i].id] = matchingLogs[i].id || matchingLogs[i]._id;
+            const idxMap = bySetIdx.get(exName);
+            if (idxMap && idxMap.size > 0) {
+              ex.sets.forEach((s, i) => {
+                if (idxMap!.has(i)) recoveredIds[s.id] = idxMap!.get(i)!;
+              });
+            } else {
+              const sorted = (logsByEx.get(exName) || [])
+                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+              for (let i = 0; i < Math.min(sorted.length, ex.sets.length); i++) {
+                if (sorted[i]?.id || sorted[i]?._id) {
+                  recoveredIds[ex.sets[i].id] = sorted[i].id || sorted[i]._id;
+                }
               }
             }
           }
@@ -895,32 +919,44 @@ export default function LogScreen() {
             const logsResp   = await logApi.list();
             const allLogs    = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
             const todayLogs  = allLogs.filter((l: any) => l.date === todayStr);
-            const logCountMap = new Map<string, number>();
-            for (const lg of todayLogs) {
-              const key = (lg.exercise || '').toLowerCase();
-              logCountMap.set(key, (logCountMap.get(key) || 0) + 1);
-            }
-            const synced = apiExs.map(ex => {
-              const count = logCountMap.get(ex.name.toLowerCase()) || 0;
-              return { ...ex, sets: ex.sets.map((s: any, i: number) => ({ ...s, logged: i < count })) };
-            });
-            setExercises(synced);
 
-            // BUG 5 fix: recover log entry IDs so remove/edit can delete correct backend entry
-            const recoveredIds: Record<string, string> = {};
-            for (const ex of apiExs) {
-              const exName = ex.name.toLowerCase();
-              const matchingLogs = todayLogs
-                .filter((l: any) => (l.exercise || '').toLowerCase() === exName)
-                .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
-              for (let i = 0; i < Math.min(matchingLogs.length, ex.sets.length); i++) {
-                const logEntry = matchingLogs[i];
-                const setId    = ex.sets[i].id;
-                if (logEntry.id || logEntry._id) {
-                  recoveredIds[setId] = logEntry.id || logEntry._id;
-                }
+            // Build per-exercise lookup: setIndex-based first, count-based fallback
+            const logsByEx = new Map<string, any[]>();
+            const bySetIdx = new Map<string, Map<number, string>>();
+            for (const lg of todayLogs) {
+              const exName = (lg.exercise || '').toLowerCase();
+              if (!logsByEx.has(exName)) logsByEx.set(exName, []);
+              logsByEx.get(exName)!.push(lg);
+              if (lg.setIndex !== undefined && lg.setIndex !== null) {
+                if (!bySetIdx.has(exName)) bySetIdx.set(exName, new Map());
+                bySetIdx.get(exName)!.set(lg.setIndex as number, lg.id || lg._id);
               }
             }
+            const recoveredIds: Record<string, string> = {};
+            const synced = apiExs.map((ex: any) => {
+              const exName = ex.name.toLowerCase();
+              const idxMap = bySetIdx.get(exName);
+              if (idxMap && idxMap.size > 0) {
+                const sets = ex.sets.map((s: any, i: number) => {
+                  const logged = idxMap!.has(i);
+                  if (logged) recoveredIds[s.id] = idxMap!.get(i)!;
+                  return { ...s, logged };
+                });
+                return { ...ex, sets };
+              } else {
+                const sorted = (logsByEx.get(exName) || [])
+                  .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
+                const sets = ex.sets.map((s: any, i: number) => {
+                  const logged = i < sorted.length;
+                  if (logged && (sorted[i]?.id || sorted[i]?._id)) {
+                    recoveredIds[s.id] = sorted[i].id || sorted[i]._id;
+                  }
+                  return { ...s, logged };
+                });
+                return { ...ex, sets };
+              }
+            });
+            setExercises(synced);
             setLogEntryIds(recoveredIds);
           } catch { setExercises(apiExs); }
         }
@@ -1006,7 +1042,8 @@ export default function LogScreen() {
     setTimerActive(true);
 
     try {
-      const today = getTodayDayName();
+      const today   = getTodayDayName();
+      const setIdx  = ex.sets.findIndex(s => s.id === setId);
       const result = await logApi.create({
         date: new Date().toISOString().slice(0, 10),
         week, day: today === 'Sunday' ? 'Monday' : today,
@@ -1018,6 +1055,7 @@ export default function LogScreen() {
         rpe:    ex.effortRating || 7,
         pain:   0,
         completed: 'yes',
+        setIndex: setIdx >= 0 ? setIdx : undefined,
       });
       if (result?.id || result?._id) {
         setLogEntryIds(prev => ({ ...prev, [setId]: result.id || result._id }));
@@ -1071,6 +1109,7 @@ export default function LogScreen() {
     if (!ex || !set) return;
     // Re-mark as logged (values already updated via onUpdate)
     mutateSet(exId, setId, { logged: true });
+    const setIdx = ex.sets.findIndex(s => s.id === setId);
     try {
       // BUG 3 fix: delete old entry before creating new one to avoid duplicates
       if (logEntryIds[setId]) {
@@ -1085,6 +1124,7 @@ export default function LogScreen() {
         weight: parseFloat(set.actualWeight) || set.targetWeight,
         reps:   parseInt(set.actualReps) || parseTargetReps(set.targetReps),
         rpe:    ex.effortRating || 7, pain: 0, completed: 'yes',
+        setIndex: setIdx >= 0 ? setIdx : undefined,
       });
       if (result?.id || result?._id) {
         setLogEntryIds(prev => ({ ...prev, [setId]: result.id || result._id }));
