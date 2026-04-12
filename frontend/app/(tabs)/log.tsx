@@ -969,6 +969,7 @@ export default function LogScreen() {
       } catch { /* not critical */ }
 
       initialLoadDone.current = true;
+      lastLoadDate.current = todayStr;
       setLoading(false);
     })();
     return () => {
