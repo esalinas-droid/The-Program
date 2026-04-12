@@ -4,13 +4,14 @@
     "slug": "the-program-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/logo-icon.png",
     "scheme": "theprogram",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.theprogram.app",
+      "icon": "./assets/logo-icon.png",
       "infoPlist": {
         "NSUserNotificationUsageDescription": "Get training reminders and PR alerts",
         "UIBackgroundModes": [
@@ -20,8 +21,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#1A1A2E"
+        "foregroundImage": "./assets/logo-icon.png",
+        "backgroundColor": "#0A0A0C"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.theprogram.app",
@@ -41,10 +42,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/logo-full.png",
+          "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#1A1A2E"
+          "backgroundColor": "#0A0A0C"
         }
       ],
       [
