@@ -476,41 +476,40 @@ function ExerciseCard({ ex, onToggleExpand, onUpdateSet, onLogSet,
             />
           ))}
 
-          {/* ── Effort + Action pills row ── */}
-          <View style={ec.bottomRow}>
-            <View style={ec.effortSection}>
-              <Text style={ec.effortLabel}>EFFORT</Text>
-              <View style={ec.effortCircles}>
-                {RPE_VALUES.map(v => {
-                  const sel = ex.effortRating === v;
-                  return (
-                    <TouchableOpacity
-                      key={v}
-                      style={[ec.effortCircle, sel && ec.effortCircleOn]}
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortChange(v); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[ec.effortNum, sel && ec.effortNumOn]}>{v}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+          {/* ── Effort selector ── */}
+          <View style={ec.effortRow}>
+            <Text style={ec.effortLabel}>EFFORT</Text>
+            <View style={ec.effortCircles}>
+              {RPE_VALUES.map(v => {
+                const sel = ex.effortRating === v;
+                return (
+                  <TouchableOpacity
+                    key={v}
+                    style={[ec.effortCircle, sel && ec.effortCircleOn]}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortChange(v); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[ec.effortNum, sel && ec.effortNumOn]}>{v}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+          </View>
 
-            <View style={ec.actionPills}>
-              <TouchableOpacity style={ec.pill} onPress={onAddSet} activeOpacity={0.75}>
-                <MaterialCommunityIcons name="plus" size={11} color={COLORS.accent} />
-                <Text style={[ec.pillText, { color: COLORS.accent }]}>Set</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={ec.pill} onPress={onToggleNotes} activeOpacity={0.75}>
-                <MaterialCommunityIcons name="pencil-outline" size={11} color={COLORS.text.muted} />
-                <Text style={ec.pillText}>Notes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={ec.pill} onPress={onOpenHistory} activeOpacity={0.75}>
-                <MaterialCommunityIcons name="chart-line" size={11} color={COLORS.text.muted} />
-                <Text style={ec.pillText}>History</Text>
-              </TouchableOpacity>
-            </View>
+          {/* ── Action pills (own row below effort) ── */}
+          <View style={ec.actionPills}>
+            <TouchableOpacity style={ec.pill} onPress={onAddSet} activeOpacity={0.75}>
+              <MaterialCommunityIcons name="plus" size={11} color={COLORS.accent} />
+              <Text style={[ec.pillText, { color: COLORS.accent }]}>Set</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={ec.pill} onPress={onToggleNotes} activeOpacity={0.75}>
+              <MaterialCommunityIcons name="pencil-outline" size={11} color={COLORS.text.muted} />
+              <Text style={ec.pillText}>Notes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={ec.pill} onPress={onOpenHistory} activeOpacity={0.75}>
+              <MaterialCommunityIcons name="chart-line" size={11} color={COLORS.text.muted} />
+              <Text style={ec.pillText}>History</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Notes input */}
@@ -543,8 +542,8 @@ const ec = StyleSheet.create({
   // Column headers
   colHeaders:     { flexDirection: 'row', alignItems: 'center', paddingTop: SPACING.sm, paddingBottom: 4, gap: 6 },
   colHdr:         { fontSize: 9, fontWeight: FONTS.weights.heavy, color: '#444', letterSpacing: 1 },
-  // Effort + actions bottom row
-  bottomRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: '#1E1E22' },
+  // Effort + actions (two separate rows now)
+  effortRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: '#1E1E22' },
   effortSection:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
   effortLabel:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.2 },
   effortCircles:  { flexDirection: 'row', gap: 5 },
@@ -552,8 +551,8 @@ const ec = StyleSheet.create({
   effortCircleOn: { backgroundColor: '#C9A84C', borderColor: '#C9A84C' },
   effortNum:      { fontSize: 12, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
   effortNumOn:    { color: '#0A0A0C' },
-  // Action pills
-  actionPills:    { flexDirection: 'row', gap: 5 },
+  // Action pills (separate row)
+  actionPills:    { flexDirection: 'row', gap: 5, marginTop: SPACING.sm },
   pill:           { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#2A2A2E', backgroundColor: COLORS.primary },
   pillText:       { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
   // Notes
