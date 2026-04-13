@@ -452,7 +452,7 @@ def _build_de_lower(lifts: CurrentLifts, unit: str,
             main_sets = [TargetSet(setNumber=i, targetLoad=str(int(squat_max * 0.7)), targetReps="20m", setType="work") for i in range(1, 7)]
         else:
             main_name = "Sandbag Carry" if _has_equip(equipment, "sandbag") else "Sled Push"
-            main_prx = f"6×30m — strongman conditioning"
+            main_prx = "6×30m — strongman conditioning"
             main_sets = [TargetSet(setNumber=i, targetReps="30m", setType="work") for i in range(1, 7)]
 
         exercises = [
@@ -544,6 +544,249 @@ def _build_gpp() -> List[SessionExercise]:
     ]
 
 
+def _build_re_upper(lifts: CurrentLifts, unit: str,
+                    goal: str = "hypertrophy",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    """Repetition Effort Upper — volume pressing for Hypertrophy / General / Athletic."""
+    injuries = injuries or []
+    equipment = equipment or []
+    bench_max = lifts.bench or 135
+
+    blocked: set = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+
+    candidates = ["Incline Bench", "Floor Press", "Close-Grip Bench"]
+    main_name = next((c for c in candidates if c not in blocked), "Close-Grip Bench")
+
+    if goal in ("hypertrophy", "bodybuilding"):
+        load_pct = 0.65
+        main_prx = f"4×10-12 @ {int(bench_max * load_pct)}{unit} — controlled eccentric, feel the chest"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="15", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.50)), targetReps="12", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(bench_max * load_pct)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(bench_max * load_pct)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.70)), targetReps="8-10", setType="work", targetRPE=8.0),
+            TargetSet(setNumber=6, targetLoad=str(int(bench_max * 0.75)), targetReps="8", setType="work", targetRPE=8.5),
+        ]
+    else:
+        load_pct = 0.70
+        main_prx = f"4×8-10 @ {int(bench_max * load_pct)}{unit} — building upper body base"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="12", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.55)), targetReps="8", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(bench_max * load_pct)), targetReps="8-10", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(bench_max * load_pct)), targetReps="8-10", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.75)), targetReps="6-8", setType="work", targetRPE=8.0),
+        ]
+
+    exercises = [
+        SessionExercise(
+            sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+            prescription=main_prx,
+            cues=EXERCISE_DB.get(main_name, {}).get("cues", []),
+            targetSets=main_sets,
+            notes="Control the eccentric — feel the chest stretch at the bottom of each rep",
+            lastPerformance=f"{int(bench_max * load_pct)} × 10-12"
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(),
+            name="Weighted Pull-Up" if "Weighted Pull-Up" not in blocked else "Pendlay Row",
+            category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×8-10 — full ROM, dead-hang start",
+            targetSets=[TargetSet(setNumber=i, targetReps="8-10", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="DB Lateral Raise",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="4×15-20 — squeeze at top, lead with elbows",
+            targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="Hammer Curl",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="3×12-15 — neutral grip, control both phases",
+            targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 4)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="Tricep Pushdown",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="3×15-20 — pump work, elbows pinned at sides",
+            targetSets=[TargetSet(setNumber=i, targetReps="15-20", setType="work") for i in range(1, 4)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="Face Pull",
+            category=ExerciseCategory.PREHAB,
+            prescription="3×20 — shoulder health, don't skip this one",
+            cues=EXERCISE_DB["Face Pull"]["cues"],
+            targetSets=[TargetSet(setNumber=i, targetReps="20", setType="work") for i in range(1, 4)],
+        ),
+    ]
+    return _filter_injured(exercises, injuries)
+
+
+def _build_re_lower(lifts: CurrentLifts, unit: str,
+                    goal: str = "hypertrophy",
+                    injuries: List[str] = None,
+                    equipment: List[str] = None) -> List[SessionExercise]:
+    """Repetition Effort Lower — volume squatting/hinging for Hypertrophy / General."""
+    injuries = injuries or []
+    equipment = equipment or []
+    squat_max = lifts.squat or 185
+    dl_max = lifts.deadlift or 225
+
+    blocked: set = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+
+    if goal in ("hypertrophy", "bodybuilding"):
+        candidates = ["Romanian Deadlift", "Bulgarian Split Squat", "Box Squat"]
+        main_name = next((c for c in candidates if c not in blocked), "Romanian Deadlift")
+        load_val = int(dl_max * 0.55)
+        main_prx = f"4×10-12 @ {load_val}{unit} — slow eccentric, full hamstring stretch"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="15", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(dl_max * 0.40)), targetReps="12", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(dl_max * 0.55)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(dl_max * 0.60)), targetReps="10-12", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(dl_max * 0.65)), targetReps="8-10", setType="work", targetRPE=8.0),
+        ]
+    else:
+        candidates = ["Romanian Deadlift", "Box Squat", "Bulgarian Split Squat"]
+        main_name = next((c for c in candidates if c not in blocked), "Romanian Deadlift")
+        load_val = int(squat_max * 0.65)
+        main_prx = f"4×8-10 @ {load_val}{unit} — building lower body base"
+        main_sets = [
+            TargetSet(setNumber=1, targetLoad="Light", targetReps="12", setType="warmup"),
+            TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.50)), targetReps="8", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.65)), targetReps="8-10", setType="work"),
+            TargetSet(setNumber=4, targetLoad=str(int(squat_max * 0.65)), targetReps="8-10", setType="work"),
+            TargetSet(setNumber=5, targetLoad=str(int(squat_max * 0.70)), targetReps="6-8", setType="work", targetRPE=8.0),
+        ]
+
+    if "Hip Thrust" not in EXERCISE_DB:
+        EXERCISE_DB["Hip Thrust"] = {
+            "pattern": "Hinge", "muscles": ["Glutes", "Hamstrings"], "equipment": "Barbell",
+            "cues": ["Drive through heels", "Full hip extension at top", "Pause and squeeze at top"],
+        }
+
+    exercises = [
+        SessionExercise(
+            sessionExerciseId=_id(), name=main_name, category=ExerciseCategory.MAIN,
+            prescription=main_prx,
+            cues=EXERCISE_DB.get(main_name, {}).get("cues", []),
+            targetSets=main_sets,
+            notes="Build the posterior chain — hamstrings and glutes are the foundation of lower body strength",
+            lastPerformance=f"{load_val} × 10-12"
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(),
+            name="Hip Thrust" if "Hip Thrust" not in blocked else "GHR",
+            category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×12-15 — glute focus, pause and squeeze at the top",
+            cues=EXERCISE_DB.get("Hip Thrust", {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="12-15", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(),
+            name="Bulgarian Split Squat" if "Bulgarian Split Squat" not in blocked else "Belt Squat",
+            category=ExerciseCategory.ACCESSORY,
+            prescription="3×10-12/side — control the descent, knees track over toes",
+            targetSets=[TargetSet(setNumber=i, targetReps="10-12/side", setType="work") for i in range(1, 4)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="GHR",
+            category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="3×8-12 — hamstring focus, control the eccentric",
+            cues=EXERCISE_DB.get("GHR", {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="8-12", setType="work") for i in range(1, 4)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="Ab Wheel",
+            category=ExerciseCategory.PREHAB,
+            prescription="3×10-15 — brace hard, don't hyperextend at the bottom",
+            targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)],
+        ),
+    ]
+    return _filter_injured(exercises, injuries)
+
+
+def _build_full_body(lifts: CurrentLifts, unit: str,
+                     goal: str = "athletic",
+                     injuries: List[str] = None,
+                     equipment: List[str] = None) -> List[SessionExercise]:
+    """Full Body — compound push + pull + hinge + carry for Athletic / General."""
+    injuries = injuries or []
+    equipment = equipment or []
+    bench_max = lifts.bench or 135
+    squat_max = lifts.squat or 185
+    dl_max = lifts.deadlift or 225
+
+    blocked: set = set()
+    for inj in injuries:
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+
+    press_candidates = ["Incline Bench", "Floor Press", "Close-Grip Bench"]
+    press_name = next((c for c in press_candidates if c not in blocked), "Close-Grip Bench")
+    press_load = int(bench_max * 0.70)
+
+    pull_name = "Weighted Pull-Up" if "Weighted Pull-Up" not in blocked else "Pendlay Row"
+
+    lower_candidates = ["Romanian Deadlift", "Box Squat", "Bulgarian Split Squat"]
+    lower_name = next((c for c in lower_candidates if c not in blocked), "Romanian Deadlift")
+    lower_load = int(squat_max * 0.65) if ("Squat" in lower_name or "Split" in lower_name) else int(dl_max * 0.60)
+
+    carry_name = "Farmer Carry" if _has_equip(equipment, "farmer") else "Sled Push"
+
+    exercises = [
+        SessionExercise(
+            sessionExerciseId=_id(), name=press_name, category=ExerciseCategory.MAIN,
+            prescription=f"4×8 @ {press_load}{unit} — explosive intent, full body power",
+            cues=EXERCISE_DB.get(press_name, {}).get("cues", []),
+            targetSets=[
+                TargetSet(setNumber=1, targetLoad="Light", targetReps="12", setType="warmup"),
+                TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.55)), targetReps="8", setType="warmup"),
+                TargetSet(setNumber=3, targetLoad=str(press_load), targetReps="8", setType="work"),
+                TargetSet(setNumber=4, targetLoad=str(press_load), targetReps="8", setType="work"),
+                TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.75)), targetReps="6-8", setType="work", targetRPE=8.0),
+            ],
+            notes="Athletic pressing — strength meets speed. Every rep with explosive intent."
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name=lower_name, category=ExerciseCategory.SUPPLEMENTAL,
+            prescription=f"4×8 @ {lower_load}{unit} — posterior chain drive",
+            cues=EXERCISE_DB.get(lower_name, {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetLoad=str(lower_load), targetReps="8", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name=pull_name, category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="4×8-10 — back work to balance the press volume",
+            targetSets=[TargetSet(setNumber=i, targetReps="8-10", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name=carry_name,
+            category=ExerciseCategory.ACCESSORY,
+            prescription="4×30m — conditioning and total body stability",
+            cues=EXERCISE_DB.get(carry_name, {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="30m", setType="work") for i in range(1, 5)],
+        ),
+        SessionExercise(
+            sessionExerciseId=_id(), name="Ab Wheel", category=ExerciseCategory.PREHAB,
+            prescription="3×10-12 — brace hard throughout, protect the lower back",
+            targetSets=[TargetSet(setNumber=i, targetReps="10-12", setType="work") for i in range(1, 4)],
+        ),
+    ]
+    return _filter_injured(exercises, injuries)
+
+
 
 
 # ─── Warmup Templates ────────────────────────────────────────────────────────
@@ -573,11 +816,15 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
         SessionType.DE_UPPER: ("Speed upper day. Bar-speed work with accommodating resistance — explosive every rep.", _build_de_upper, "upper"),
         SessionType.DE_LOWER: ("Speed lower day. Speed squats and pulls for power and rate-of-force development.", _build_de_lower, "lower"),
         SessionType.GPP: ("Recovery and conditioning session. Low-intensity work to promote blood flow and movement quality.", _build_gpp, "gpp"),
+        SessionType.RE_UPPER: ("Volume upper day. Multiple working sets at moderate intensity for muscle growth and strength endurance.", _build_re_upper, "upper"),
+        SessionType.RE_LOWER: ("Volume lower day. Multiple working sets targeting posterior chain and quad development.", _build_re_lower, "lower"),
+        SessionType.FULL_BODY: ("Full body session. Compound push, pull, and hinge movements for total athletic development.", _build_full_body, "gpp"),
+        SessionType.EVENT_TRAINING: ("Event training day. Competition-specific event practice at heavy loads.", _build_de_lower, "lower"),
     }
 
     objective, builder, warmup_key = type_map.get(session_type, type_map[SessionType.ME_UPPER])
 
-    if session_type == SessionType.GPP:
+    if session_type in (SessionType.GPP,):
         exercises = builder()
     else:
         exercises = builder(lifts, unit, goal=goal, injuries=injuries, equipment=equipment)
@@ -603,6 +850,10 @@ def _generate_coach_note(session_type: SessionType, week: int) -> str:
         SessionType.DE_UPPER: f"Week {week} — speed is the priority. Every rep should be explosive. If speed drops, lower the weight.",
         SessionType.DE_LOWER: f"Week {week} — fast and violent. Reset each rep on speed pulls. Compensatory acceleration on squats.",
         SessionType.GPP: f"Week {week} — recovery session. Keep intensity low. Focus on blood flow and movement quality.",
+        SessionType.RE_UPPER: f"Week {week} — quality reps, controlled tempo. Build the pump. Leave 2 reps in the tank on each set.",
+        SessionType.RE_LOWER: f"Week {week} — feel every rep in the target muscle. Progressive overload through better reps, not just more weight.",
+        SessionType.FULL_BODY: f"Week {week} — full body day. Hit it all: push, pull, hinge, carry. No weak links allowed.",
+        SessionType.EVENT_TRAINING: f"Week {week} — event day. Competition-specific loads. Focus on technique and confidence.",
     }
     return notes.get(session_type, f"Week {week} — train hard, recover harder.")
 
@@ -647,6 +898,35 @@ SPLIT_TEMPLATES = {
     4: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.DE_LOWER, SessionType.DE_UPPER],
     5: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.GPP, SessionType.DE_LOWER, SessionType.DE_UPPER],
     6: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.GPP, SessionType.DE_LOWER, SessionType.DE_UPPER, SessionType.GPP],
+}
+
+# Goal-specific day maps: route different training goals to appropriate session types
+GOAL_DAY_MAPS: Dict[str, dict] = {
+    # Strength / Powerlifting / Strongman → Max Effort + Dynamic Effort (Conjugate model)
+    "strength":     DAY_MAPS,
+    "powerlifting": DAY_MAPS,
+    "strongman":    DAY_MAPS,
+    # Hypertrophy → Repetition Effort Upper/Lower (4×8-12 volume work)
+    "hypertrophy": {
+        3: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 3), (SessionType.RE_LOWER, 5)],
+        4: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.RE_LOWER, 4), (SessionType.RE_UPPER, 5)],
+        5: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.GPP, 3), (SessionType.RE_LOWER, 4), (SessionType.RE_UPPER, 5)],
+        6: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.GPP, 3), (SessionType.RE_LOWER, 4), (SessionType.RE_UPPER, 5), (SessionType.GPP, 6)],
+    },
+    # Athletic Performance → Full Body sessions
+    "athletic performance": {
+        3: [(SessionType.FULL_BODY, 1), (SessionType.FULL_BODY, 3), (SessionType.FULL_BODY, 5)],
+        4: [(SessionType.FULL_BODY, 1), (SessionType.FULL_BODY, 2), (SessionType.FULL_BODY, 4), (SessionType.FULL_BODY, 5)],
+        5: [(SessionType.FULL_BODY, 1), (SessionType.FULL_BODY, 2), (SessionType.GPP, 3), (SessionType.FULL_BODY, 4), (SessionType.FULL_BODY, 5)],
+        6: [(SessionType.FULL_BODY, 1), (SessionType.FULL_BODY, 2), (SessionType.GPP, 3), (SessionType.FULL_BODY, 4), (SessionType.FULL_BODY, 5), (SessionType.GPP, 6)],
+    },
+    # General Fitness → Mix of RE Upper/Lower + Full Body
+    "general fitness": {
+        3: [(SessionType.RE_LOWER, 1), (SessionType.FULL_BODY, 3), (SessionType.RE_UPPER, 5)],
+        4: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.FULL_BODY, 4), (SessionType.RE_LOWER, 5)],
+        5: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.GPP, 3), (SessionType.FULL_BODY, 4), (SessionType.RE_UPPER, 5)],
+        6: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 2), (SessionType.GPP, 3), (SessionType.FULL_BODY, 4), (SessionType.RE_UPPER, 5), (SessionType.GPP, 6)],
+    },
 }
 
 
@@ -715,16 +995,15 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
     plan_id = _id()
     start_date = datetime.now()
     frequency = intake.frequency or 4
-    split = SPLIT_TEMPLATES.get(frequency, SPLIT_TEMPLATES[4])
 
     # Choose phase template based on whether the user competes
     has_competition = getattr(intake, 'hasCompetition', False) or bool(getattr(intake, 'competitionDate', None))
     if has_competition:
         phase_templates = PHASE_TEMPLATES.get(goal, PHASE_TEMPLATES[GoalType.STRENGTH])
-        print(f"[PLANGEN] User competes — using competition phase template")
+        print("[PLANGEN] User competes — using competition phase template")
     else:
         phase_templates = PHASE_TEMPLATES_NO_COMP.get(goal, PHASE_TEMPLATES_NO_COMP[GoalType.STRENGTH])
-        print(f"[PLANGEN] User does NOT compete — using non-competition phase template")
+        print("[PLANGEN] User does NOT compete — using non-competition phase template")
 
     # Build goal-specific plan name
     plan_names = {
@@ -742,8 +1021,11 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
     deload_weeks = []
     testing_weeks = []
 
-    # Get the correct day map with real calendar day numbers
-    day_map = DAY_MAPS.get(frequency, DAY_MAPS[4])
+    # Get the correct day map based on goal (goal-specific session types)
+    goal_lower = goal.value.lower()
+    goal_day_maps = GOAL_DAY_MAPS.get(goal_lower, DAY_MAPS)
+    day_map = goal_day_maps.get(frequency, goal_day_maps.get(4, DAY_MAPS.get(4)))
+    print(f"[PLANGEN] Using day map for goal='{goal_lower}', frequency={frequency}: {[st.value for st, _ in day_map]}")
 
     for i, tmpl in enumerate(phase_templates):
         phase_id = _id()

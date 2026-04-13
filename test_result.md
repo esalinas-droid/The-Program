@@ -103,15 +103,49 @@
 #====================================================================================================
 
 user_problem_statement: >
-  Build a mobile-first strength training app "The Program" for advanced athletes using the conjugate method.
-  React Native/Expo frontend, FastAPI+MongoDB backend.
-  Current session focus: Set Edit & Remove functionality on Today + Log pages.
-  Add Remove set mode (red X circles, TAP TO DELETE, DONE REMOVING button) and Edit logged mode
-  (blue pencil, editable inputs, SAVE button, DONE EDITING button) to exercise cards on both tabs.
-  Also completed logo branding rollout (logo-full.png in auth.tsx, logo-icon-tight.png in program-reveal.tsx and settings.tsx).
+  Build a mobile-first strength training app "The Program" for advanced athletes.
+  CURRENT SESSION: 4-part Major Update:
+  1. PRE-WORKOUT READINESS AUTO-ADJUST: Backend POST /api/readiness now returns loadMultiplier (0.85/0.90/1.0) and adjustmentPercent (15/10/0) based on 1-5 score. Frontend today.tsx shows colored readiness banner with override button, and applies load multiplier to work set weights with strikethrough display.
+  2. RESET PROGRAM BUG FIX: Backend POST /api/profile/reset now deletes 8 collections (saved_plans, profile, tracked_lifts, readiness_checks, pain_reports, calendar_overrides, weekly_reviews, log). Frontend settings.tsx clears AsyncStorage on reset with saveProfile({}).
+  3. PROGRAM REVEAL REDESIGN: program-reveal.tsx fetches user goal and shows goal-specific split days and "Your Program Explained" section with timeline. Also adds plan retry logic.
+  4. PROGRAM QUALITY UPGRADE: plan_generator.py adds _build_re_upper, _build_re_lower, _build_full_body builders and GOAL_DAY_MAPS routing Hypertrophy->RE, Athletic->FULL_BODY, General->RE+Full mix.
 
 backend:
-  - task: "Clean server.py — remove duplicate program_router import and include_router calls"
+  - task: "TASK1 - POST /api/readiness returns loadMultiplier and adjustmentPercent"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Updated readiness endpoint. Changed thresholds from 2.5/3.5 to 3.0/4.0 for 1-5 scale. Added loadMultiplier (0.85/0.90/1.0) and adjustmentPercent (15/10/0) to response. Also updated GET /api/readiness/today to return these fields from DB."
+
+  - task: "TASK2 - POST /api/profile/reset clears all 8 collections"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added delete_many for tracked_lifts, readiness_checks, pain_reports, calendar_overrides, weekly_reviews, log collections in addition to existing saved_plans and profile."
+
+  - task: "TASK4 - Goal-specific session builders in plan_generator.py"
+    implemented: true
+    working: "NA"
+    file: "backend/services/plan_generator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added _build_re_upper (4x8-12 hypertrophy pressing), _build_re_lower (posterior chain volume), _build_full_body (compound push+pull+hinge+carry). Added GOAL_DAY_MAPS routing Hypertrophy to RE_, Athletic to FULL_BODY, General to RE_+FULL_BODY mix. Updated _build_session type_map and _generate_coach_note."
     implemented: true
     working: true
     file: "backend/server.py"

@@ -8,6 +8,7 @@ import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { programApi } from '../src/utils/api';
+import { getProfile } from '../src/utils/storage';
 import { AnnualPlan, ProgramPhase } from '../src/types';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -47,13 +48,100 @@ function formatDate(iso: string): string {
   } catch { return iso; }
 }
 
-// ── Static training split ────────────────────────────────────────────────────
-const SPLIT_DAYS = [
-  { type: 'HEAVY UPPER', color: GOLD,  icon: 'arm-flex-outline' as const, focus: 'Build to a top set on a pressing variation — floor press, board press, or comp bench' },
-  { type: 'HEAVY LOWER', color: BLUE,  icon: 'weight-lifter'    as const, focus: 'Heavy squat or pull variation — top set, then supplemental volume' },
-  { type: 'SPEED UPPER', color: GOLD,  icon: 'flash'            as const, focus: 'Speed bench 8×3 @ 50–60% + accommodating resistance — bar speed wins' },
-  { type: 'SPEED LOWER', color: BLUE,  icon: 'run-fast'         as const, focus: 'Speed squat 10×2 + speed pull 8×1 — reset each rep, explosive intent' },
-];
+// ── Goal-specific training split descriptions ────────────────────────────────
+function getSplitDays(goal: string) {
+  const g = (goal ?? '').toLowerCase();
+  if (g.includes('hypertrophy') || g.includes('bodybuilding')) {
+    return [
+      { type: 'UPPER VOLUME', color: GOLD, icon: 'arm-flex-outline' as const, focus: 'Press + Row: 4-6 sets × 10-12 reps — controlled eccentric, feel the target muscle' },
+      { type: 'LOWER VOLUME', color: BLUE, icon: 'weight-lifter' as const, focus: 'RDL/Squat variation: 4-6 sets × 10-12 reps — posterior chain + quad development' },
+      { type: 'UPPER ACCESSORY', color: GOLD, icon: 'dumbbell' as const, focus: 'Lateral raises, curls, triceps: 3-4 × 15-20 — complete upper body development' },
+      { type: 'ACTIVE RECOVERY', color: GREEN, icon: 'battery-charging-outline' as const, focus: 'Low-intensity movement, mobility work — blood flow and recovery, not optional' },
+    ];
+  }
+  if (g.includes('athletic') || g.includes('performance')) {
+    return [
+      { type: 'FULL BODY A', color: GOLD, icon: 'arm-flex-outline' as const, focus: 'Compound push + pull + hinge — 4×8 each, total body power with loaded carries' },
+      { type: 'FULL BODY B', color: BLUE, icon: 'run-fast' as const, focus: 'Power variations + carries — rate of force development and work capacity' },
+      { type: 'CONDITIONING', color: GREEN, icon: 'lightning-bolt' as const, focus: 'Sled, metabolic work — builds work capacity that transfers directly to sport' },
+      { type: 'RECOVERY', color: RED, icon: 'battery-charging-outline' as const, focus: 'Mobility + prehab — keeps joints healthy under demanding athletic training' },
+    ];
+  }
+  if (g.includes('general') || g.includes('fitness')) {
+    return [
+      { type: 'LOWER BODY', color: BLUE, icon: 'weight-lifter' as const, focus: 'Deadlift/squat variation 4×8-10 — building the posterior chain foundation' },
+      { type: 'UPPER BODY', color: GOLD, icon: 'arm-flex-outline' as const, focus: 'Press + row 4×8-10 — balanced upper body strength development' },
+      { type: 'FULL BODY', color: GREEN, icon: 'dumbbell' as const, focus: 'Compound movements + carries — efficient full body training stimulus' },
+      { type: 'RECOVERY', color: RED, icon: 'battery-charging-outline' as const, focus: 'Easy movement, flexibility work — active rest to come back stronger' },
+    ];
+  }
+  // Default: Strength / Powerlifting / Strongman — Conjugate model
+  return [
+    { type: 'HEAVY UPPER', color: GOLD, icon: 'arm-flex-outline' as const, focus: 'Build to a top set on a pressing variation — floor press, board press, or comp bench' },
+    { type: 'HEAVY LOWER', color: BLUE, icon: 'weight-lifter' as const, focus: 'Heavy squat or pull variation — top set, then supplemental volume' },
+    { type: 'SPEED UPPER', color: GOLD, icon: 'flash' as const, focus: 'Speed bench 8×3 @ 50–60% + accommodating resistance — bar speed wins' },
+    { type: 'SPEED LOWER', color: BLUE, icon: 'run-fast' as const, focus: 'Speed squat 10×2 + speed pull 8×1 — reset each rep, explosive intent' },
+  ];
+}
+
+// ── Goal-specific program explanation content ────────────────────────────────
+const GOAL_PROGRAM_CONTENT: Record<string, {
+  title: string; subtitle: string; description: string;
+  timeline: Array<{ period: string; note: string }>;
+}> = {
+  default: {
+    title: 'The Method: Heavy + Speed',
+    subtitle: 'Why Conjugate works for advanced athletes',
+    description: 'The Program avoids accommodation by rotating exercises every session. Heavy days drive absolute strength by building to a top set. Speed days build speed-strength through compensatory acceleration at sub-maximal loads. Running both simultaneously creates a strength athlete who is both strong and explosive — the combination that separates competitive lifters from everyone else.',
+    timeline: [
+      { period: 'Weeks 1–4',   note: 'Tendons adapt. Top sets may feel awkward — that\'s normal neurological adaptation.' },
+      { period: 'Weeks 5–12',  note: 'Consistent PRs on variation lifts. Volume tolerance builds fast.' },
+      { period: 'Weeks 13–26', note: 'Real strength gains compound. Competition lifts benefit from variation strength.' },
+      { period: 'Weeks 27–52', note: 'Elite territory. Small gains, big numbers. Annual planning becomes essential.' },
+    ],
+  },
+  hypertrophy: {
+    title: 'Progressive Volume Overload',
+    subtitle: 'The science behind building muscle year-round',
+    description: 'Your program drives muscle growth through controlled progressive tension over weeks and months. Each session targets specific muscle groups with 4-6 working sets at 60-75% intensity. The key metric is total weekly volume per muscle group — we build it systematically. Progression is reps before weight: hit the top rep range first, then increase load.',
+    timeline: [
+      { period: 'Weeks 1–4',   note: 'Muscle memory re-establishes. You\'ll see pump and tightness before visible size.' },
+      { period: 'Weeks 5–12',  note: 'Visible muscle fullness starts. Progressive overload kicks in. Nutrition is the multiplier.' },
+      { period: 'Weeks 13–26', note: 'Clear body composition changes. Strength numbers climbing steadily.' },
+      { period: 'Weeks 27–52', note: 'Muscle maturity and density develop. Stage-ready physique changes possible.' },
+    ],
+  },
+  athletic: {
+    title: 'Integrated Performance Training',
+    subtitle: 'Building the complete athlete from the ground up',
+    description: 'Your program develops the athletic qualities needed for sport: power, strength, and work capacity simultaneously. Full body sessions maximize hormonal response and train the body as a unit. Carries and conditioning build the base that transfers to any sport. Nothing is isolated — every session trains the complete athlete.',
+    timeline: [
+      { period: 'Weeks 1–4',   note: 'Work capacity adaptation. May feel demanding at first — stick with it.' },
+      { period: 'Weeks 5–12',  note: 'Power output increases noticeably. Sport performance improvements start.' },
+      { period: 'Weeks 13–26', note: 'Athletic transfer becomes clear. Speed, power, and strength all elevated.' },
+      { period: 'Weeks 27–52', note: 'Peak athletic performance. Every session builds on a massive foundation.' },
+    ],
+  },
+  general: {
+    title: 'Sustainable Strength Building',
+    subtitle: 'The most effective long-term approach for fitness',
+    description: 'Your program builds real, lasting strength and fitness through the most sustainable approach available. Repetition effort work at 65-75% is safe on joints and connective tissue, builds muscle and strength, and doesn\'t require a competition deadline. Every few weeks the loads will start feeling lighter — that\'s the strength responding.',
+    timeline: [
+      { period: 'Weeks 1–4',   note: 'Initial adaptation. Movement quality improves rapidly with each session.' },
+      { period: 'Weeks 5–12',  note: 'Consistent strength gains. Energy levels improve. Body composition shifting.' },
+      { period: 'Weeks 13–26', note: 'Significant lifestyle impact. Strong foundation for any future specialization.' },
+      { period: 'Weeks 27–52', note: 'Long-term habits built. Strength and fitness that last a lifetime.' },
+    ],
+  },
+};
+
+function getProgramContent(goal: string) {
+  const g = (goal ?? '').toLowerCase();
+  if (g.includes('hypertrophy') || g.includes('bodybuilding')) return GOAL_PROGRAM_CONTENT.hypertrophy;
+  if (g.includes('athletic') || g.includes('performance')) return GOAL_PROGRAM_CONTENT.athletic;
+  if (g.includes('general') || g.includes('fitness')) return GOAL_PROGRAM_CONTENT.general;
+  return GOAL_PROGRAM_CONTENT.default;
+}
 
 // ── BuildPhaseRow ─────────────────────────────────────────────────────────────
 function BuildPhaseRow({ label, isActive, isDone }: {
@@ -201,6 +289,7 @@ export default function ProgramRevealScreen() {
   const [activePhase,      setActivePhase]      = useState(-1);
   const [completedPhases,  setCompletedPhases]  = useState<number[]>([]);
   const [showReveal,       setShowReveal]       = useState(false);
+  const [userGoal,         setUserGoal]         = useState('');
 
   // ── Animations ──────────────────────────────────────────────────────────────
   const spinAnim      = useRef(new Animated.Value(0)).current;
@@ -222,13 +311,14 @@ export default function ProgramRevealScreen() {
 
   const spinDeg = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
-  // Build phases + fetch plan in parallel
+  // Build phases + fetch plan + fetch goal in parallel
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
 
-      // Start fetching plan immediately in background
+      // Fetch goal from local storage and plan from API concurrently
+      const goalPromise = getProfile().then(p => (p as any)?.goal ?? '').catch(() => '');
       const planPromise = programApi.getYearPlan().catch(() => null);
 
       await sleep(600);
@@ -241,10 +331,19 @@ export default function ProgramRevealScreen() {
       }
       await sleep(500);
 
-      // Await real plan (already resolving in background)
-      const planData = await planPromise;
+      // Await plan with retry (handles post-reset where plan may not be ready yet)
+      let planData = await planPromise;
+      if (!planData && !cancelled) {
+        for (let retry = 0; retry < 3 && !planData && !cancelled; retry++) {
+          await sleep(2000);
+          planData = await programApi.getYearPlan().catch(() => null);
+        }
+      }
+
+      const goalData = await goalPromise;
       if (cancelled) return;
       setPlan(planData);
+      setUserGoal(goalData ?? '');
       crossfadeToReveal(planData?.phases?.length ?? 7);
     };
     run();
@@ -425,10 +524,12 @@ export default function ProgramRevealScreen() {
           {/* ── Training split summary ── */}
           <View style={s.sectionWrap}>
             <Text style={s.sectionTitle}>Weekly Training Split</Text>
-            <Text style={s.sectionSub}>The Program — {plan?.trainingDays ?? 4} sessions / week</Text>
+            <Text style={s.sectionSub}>
+              {plan?.trainingDays ?? 4} sessions / week — {getSplitDays(userGoal).length} session types
+            </Text>
           </View>
           <View style={s.splitGrid}>
-            {SPLIT_DAYS.map((d, i) => (
+            {getSplitDays(userGoal).map((d, i) => (
               <View key={i} style={[s.splitCard, { borderLeftColor: d.color }]}>
                 <MaterialCommunityIcons name={d.icon} size={16} color={d.color} style={{ marginBottom: 6 }} />
                 <Text style={[s.splitType, { color: d.color }]}>{d.type}</Text>
@@ -437,26 +538,32 @@ export default function ProgramRevealScreen() {
             ))}
           </View>
 
-          {/* ── Training method note ── */}
-          <View style={s.coachCard}>
-            <View style={s.coachHeader}>
-              <View style={s.coachAvatarWrap}>
-                <MaterialCommunityIcons name="brain" size={15} color={GOLD} />
+          {/* ── Your Program Explained ── */}
+          {(() => {
+            const content = getProgramContent(userGoal);
+            return (
+              <View style={s.coachCard}>
+                <View style={s.coachHeader}>
+                  <View style={s.coachAvatarWrap}>
+                    <MaterialCommunityIcons name="brain" size={15} color={GOLD} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.coachLabel}>Your Program Explained</Text>
+                    <Text style={s.coachSub}>{content.subtitle}</Text>
+                  </View>
+                </View>
+                <Text style={s.coachText}>{content.description}</Text>
+                <View style={s.timelineWrap}>
+                  {content.timeline.map((item, i) => (
+                    <View key={i} style={s.timelineRow}>
+                      <Text style={s.timelinePeriod}>{item.period}</Text>
+                      <Text style={s.timelineNote}>{item.note}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
-              <View>
-                <Text style={s.coachLabel}>The Method</Text>
-                <Text style={s.coachSub}>Why this approach works for advanced athletes</Text>
-              </View>
-            </View>
-            <Text style={s.coachText}>
-              The Program avoids accommodation by rotating exercises every session. Heavy days
-              drive absolute strength by building to a top set. Speed days build speed-strength
-              through compensatory acceleration at sub-maximal loads. Running both simultaneously creates
-              through compensatory acceleration at sub-maximal loads. Running both simultaneously creates
-              a strength athlete who is both strong and explosive — the combination that separates
-              competitive lifters from everyone else.
-            </Text>
-          </View>
+            );
+          })()}
 
           <View style={{ height: 120 }} />
         </ScrollView>
@@ -678,6 +785,12 @@ const s = StyleSheet.create({
   coachLabel: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: GOLD, letterSpacing: 0.5 },
   coachSub:   { fontSize: 10, color: COLORS.text.muted, marginTop: 1 },
   coachText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 22 },
+
+  // Timeline rows inside coach card
+  timelineWrap: { marginTop: SPACING.md, borderTopWidth: 1, borderTopColor: BORDER, paddingTop: SPACING.md, gap: SPACING.sm },
+  timelineRow:  { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
+  timelinePeriod: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: GOLD, width: 88, flexShrink: 0 },
+  timelineNote:   { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.text.muted, lineHeight: 17 },
 
   // CTA
   ctaBar: {

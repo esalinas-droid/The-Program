@@ -1002,7 +1002,7 @@ const rt = StyleSheet.create({
 
 // ── SetRow ────────────────────────────────────────────────────────────────────
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
-  removeMode, editMode, onRemove, onEditSave }: {
+  removeMode, editMode, onRemove, onEditSave, adjustActive }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
@@ -1016,6 +1016,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   editMode?: boolean;
   onRemove?: () => void;
   onEditSave?: () => void;
+  adjustActive?: boolean;
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
@@ -1096,18 +1097,35 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
       {/* Set type tag */}
       <Text style={sr.typeTag}>{typeTag}</Text>
 
-      {/* Weight input */}
-      <TextInput
-        style={[sr.input, logged && sr.inputDone]}
-        value={weight}
-        onChangeText={onWeightChange}
-        keyboardType="numeric"
-        editable={!logged}
-        placeholder="lbs"
-        placeholderTextColor={COLORS.text.muted}
-        selectTextOnFocus
-        returnKeyType="done"
-      />
+      {/* Weight input with optional strikethrough when load is adjusted */}
+      {adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
+        <View style={sr.weightCol}>
+          <Text style={sr.strikeWeight}>{set.weight}</Text>
+          <TextInput
+            style={[sr.input, sr.inputFull, logged && sr.inputDone]}
+            value={weight}
+            onChangeText={onWeightChange}
+            keyboardType="numeric"
+            editable={!logged}
+            placeholder="lbs"
+            placeholderTextColor={COLORS.text.muted}
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        </View>
+      ) : (
+        <TextInput
+          style={[sr.input, logged && sr.inputDone]}
+          value={weight}
+          onChangeText={onWeightChange}
+          keyboardType="numeric"
+          editable={!logged}
+          placeholder="lbs"
+          placeholderTextColor={COLORS.text.muted}
+          selectTextOnFocus
+          returnKeyType="done"
+        />
+      )}
 
       <Text style={sr.sep}>×</Text>
 
@@ -1149,6 +1167,10 @@ const sr = StyleSheet.create({
   logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
   logBtnText:{ color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
   doneWrap:  { width: 52, alignItems: 'center' },
+  // Adjustment styles
+  weightCol:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  inputFull:    { alignSelf: 'stretch', flex: 0 },
+  strikeWeight: { fontSize: 9, color: '#EF5350', textDecorationLine: 'line-through', fontWeight: '600', marginBottom: 2, textAlign: 'center' },
 });
 
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
@@ -1156,7 +1178,7 @@ function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
-  restConfig,
+  restConfig, adjustActive,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1183,6 +1205,7 @@ function ExerciseCard({
     onSelect: (seconds: number) => void;
     onCustom: () => void;
   };
+  adjustActive?: boolean;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1287,6 +1310,7 @@ function ExerciseCard({
                 editMode={inEditMode}
                 onRemove={() => onRemoveSet(set.id)}
                 onEditSave={() => onEditSave(set.id)}
+                adjustActive={adjustActive}
               />
             ))}
           </View>
@@ -1507,6 +1531,9 @@ export default function TodayScreen() {
   const [showReadiness, setShowReadiness]       = useState(false);
   const [readinessAdjustment, setReadinessAdjustment] = useState<string | null>(null);
   const [readinessScore, setReadinessScore]     = useState<number | null>(null);
+  const [loadMultiplier, setLoadMultiplier]     = useState(1.0);
+  const [adjustmentPercent, setAdjustmentPercent] = useState(0);
+  const [autoAdjustOverride, setAutoAdjustOverride] = useState(false);
 
   // ── Pain report state ────────────────────────────────────────────────────────
   const [showPainModal, setShowPainModal]   = useState(false);
@@ -1652,6 +1679,10 @@ export default function TodayScreen() {
           setTimeout(() => setShowReadiness(true), 600);
         } else if (rResult.readiness) {
           setReadinessScore(rResult.readiness.totalScore);
+          const lm = rResult.readiness.loadMultiplier ?? 1.0;
+          const ap = rResult.readiness.adjustmentPercent ?? 0;
+          setLoadMultiplier(lm);
+          setAdjustmentPercent(ap);
           if (rResult.readiness.adjustmentApplied) {
             setReadinessAdjustment(rResult.readiness.adjustmentNote);
           }
@@ -1688,6 +1719,41 @@ export default function TodayScreen() {
     });
   }, [exercises]);
 
+  // ── Apply load multiplier to unlogged work sets ──────────────────────────────
+  useEffect(() => {
+    if (loadMultiplier >= 1.0 || autoAdjustOverride || exercises.length === 0) return;
+    setSetValues(prev => {
+      const updated = { ...prev };
+      exercises.forEach(ex => {
+        ex.sets.forEach(s => {
+          if (s.type === 'work' && s.weight > 0) {
+            const adjusted = Math.round((s.weight * loadMultiplier) / 5) * 5;
+            if (adjusted > 0) {
+              updated[s.id] = { ...(prev[s.id] || { reps: s.reps || '' }), weight: String(adjusted) };
+            }
+          }
+        });
+      });
+      return updated;
+    });
+  }, [loadMultiplier, autoAdjustOverride, exercises]);
+
+  // ── Restore original weights when override is activated ──────────────────────
+  useEffect(() => {
+    if (!autoAdjustOverride || exercises.length === 0) return;
+    setSetValues(prev => {
+      const restored = { ...prev };
+      exercises.forEach(ex => {
+        ex.sets.forEach(s => {
+          if (s.type === 'work' && s.weight > 0) {
+            restored[s.id] = { ...(prev[s.id] || { reps: s.reps || '' }), weight: String(s.weight) };
+          }
+        });
+      });
+      return restored;
+    });
+  }, [autoAdjustOverride]);
+
   // ── Keep exercisesRef in sync with latest exercises state ────────────────────
   useEffect(() => { exercisesRef.current = exercises; }, [exercises]);
 
@@ -1697,6 +1763,11 @@ export default function TodayScreen() {
     try {
       const result = await readinessApi.submit(data);
       setReadinessScore(result.readinessScore);
+      const lm = result.loadMultiplier ?? 1.0;
+      const ap = result.adjustmentPercent ?? 0;
+      setLoadMultiplier(lm);
+      setAdjustmentPercent(ap);
+      setAutoAdjustOverride(false); // reset override on new readiness check
       if (result.adjustmentApplied) {
         setReadinessAdjustment(result.adjustmentNote);
       }
@@ -2011,14 +2082,14 @@ export default function TodayScreen() {
             <MaterialCommunityIcons
               name="lightning-bolt"
               size={12}
-              color={readinessScore >= 70 ? TEAL : readinessScore >= 50 ? COLORS.accent : '#EF5350'}
+              color={readinessScore >= 4.0 ? TEAL : readinessScore >= 3.0 ? COLORS.accent : '#EF5350'}
             />
             <Text style={[s.readinessStripStatus, {
-              color: readinessScore >= 70 ? TEAL : readinessScore >= 50 ? COLORS.accent : '#EF5350',
+              color: readinessScore >= 4.0 ? TEAL : readinessScore >= 3.0 ? COLORS.accent : '#EF5350',
             }]}>
-              {readinessScore >= 70 ? 'GOOD TO GO' : readinessScore >= 50 ? 'MODERATE READINESS' : 'LOW READINESS'}
+              {readinessScore >= 4.0 ? 'GOOD TO GO' : readinessScore >= 3.0 ? 'MODERATE' : 'LOW READINESS'}
             </Text>
-            <Text style={s.readinessStripScore}>{readinessScore}%</Text>
+            <Text style={s.readinessStripScore}>{readinessScore.toFixed(1)}/5</Text>
           </View>
         )}
 
@@ -2031,11 +2102,40 @@ export default function TodayScreen() {
         ))}
 
         {/* ── READINESS ADJUSTMENT BANNER ── */}
-        {readinessAdjustment && (
-          <View style={s.readinessBanner}>
-            <MaterialCommunityIcons name="lightning-bolt" size={15} color={COLORS.accent} />
-            <Text style={s.readinessBannerText}>{readinessAdjustment}</Text>
-            <TouchableOpacity onPress={() => setReadinessAdjustment(null)} style={{ padding: 4 }}>
+        {readinessScore !== null && loadMultiplier < 1.0 && !autoAdjustOverride && (
+          <View style={[
+            s.readinessBanner,
+            {
+              backgroundColor: readinessScore >= 3.0 ? '#F5A62312' : '#EF535012',
+              borderLeftColor: readinessScore >= 3.0 ? '#F5A623' : '#EF5350',
+              borderColor: readinessScore >= 3.0 ? '#F5A62340' : '#EF535040',
+            }
+          ]}>
+            <MaterialCommunityIcons
+              name={readinessScore >= 3.0 ? 'lightning-bolt' : 'alert-circle-outline'}
+              size={15}
+              color={readinessScore >= 3.0 ? '#F5A623' : '#EF5350'}
+            />
+            <Text style={[s.readinessBannerText, {
+              color: readinessScore >= 3.0 ? '#F5A623' : '#EF5350',
+              flex: 1,
+            }]}>
+              {readinessScore >= 3.0 ? 'MODERATE READINESS' : 'LOW READINESS'} — Loads auto-adjusted -{adjustmentPercent}%
+            </Text>
+            <TouchableOpacity
+              onPress={() => setAutoAdjustOverride(true)}
+              style={s.overrideBtnWrap}
+              activeOpacity={0.7}
+            >
+              <Text style={s.overrideBtnText}>OVERRIDE</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {readinessScore !== null && loadMultiplier < 1.0 && autoAdjustOverride && (
+          <View style={[s.readinessBanner, { backgroundColor: '#4DCEA612', borderLeftColor: TEAL, borderColor: '#4DCEA640' }]}>
+            <MaterialCommunityIcons name="check-circle-outline" size={15} color={TEAL} />
+            <Text style={[s.readinessBannerText, { color: TEAL, flex: 1 }]}>OVERRIDE ACTIVE — Using original prescribed loads</Text>
+            <TouchableOpacity onPress={() => setAutoAdjustOverride(false)} style={{ padding: 4 }}>
               <MaterialCommunityIcons name="close" size={14} color={COLORS.text.muted} />
             </TouchableOpacity>
           </View>
@@ -2139,6 +2239,7 @@ export default function TodayScreen() {
             onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
             onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
             onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+            adjustActive={loadMultiplier < 1.0 && !autoAdjustOverride}
             restConfig={{
               selectedSeconds: exerciseRestDurations[ex.id],
               onSelect: (secs) => {
@@ -2260,8 +2361,10 @@ const s = StyleSheet.create({
   injuryBannerText: { color: '#FFF', fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, flex: 1, lineHeight: 18 },
 
   // Readiness & pain banners
-  readinessBanner:    { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.accent + '18', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: COLORS.accent },
-  readinessBannerText:{ flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold, lineHeight: 18 },
+  readinessBanner:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.accent + '18', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: COLORS.accent, borderWidth: 1, borderColor: COLORS.accent + '30' },
+  readinessBannerText:{ fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold, lineHeight: 17 },
+  overrideBtnWrap:    { backgroundColor: COLORS.primary, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm, paddingHorizontal: 8, paddingVertical: 4 },
+  overrideBtnText:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary, letterSpacing: 0.5 },
   painAlertBanner:    { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#EF535022', borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 3, borderLeftColor: '#EF5350' },
   painAlertText:      { flex: 1, fontSize: FONTS.sizes.sm, color: '#EF5350', fontWeight: FONTS.weights.semibold, lineHeight: 18 },
 

@@ -231,12 +231,13 @@ export default function SettingsScreen() {
   function confirmReset() {
     Alert.alert(
       'Reset Program?',
-      'This will clear your training program and profile. You will be taken back to the setup flow.',
+      'This will clear your training program, all logged sessions, and profile data. You will start fresh.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Reset', style: 'destructive', onPress: async () => {
+        { text: 'Reset Everything', style: 'destructive', onPress: async () => {
           try { await profileApi.reset(); } catch {}
-          await saveProfile({ onboardingComplete: false });
+          // Clear all local AsyncStorage profile data for a true clean slate
+          await saveProfile({});
           router.replace('/onboarding-intake');
         }},
       ]

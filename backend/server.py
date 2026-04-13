@@ -1211,21 +1211,28 @@ async def create_readiness(body: ReadinessCreate, userId: str = Depends(get_curr
     # Score: average of three 1-5 metrics (higher = better readiness)
     total_score = (body.sleepQuality + body.soreness + body.moodEnergy) / 3.0
 
-    # Determine adjustment
+    # Determine adjustment based on 1-5 scale
     adjustment_applied = False
     adjustment_note = ""
     recommendation = "normal"
-    if total_score < 2.5:
+    load_multiplier = 1.0
+    adjustment_percent = 0
+
+    if total_score < 3.0:
         adjustment_applied = True
+        load_multiplier = 0.85
+        adjustment_percent = 15
         adjustment_note = (
-            f"Low readiness ({total_score:.1f}/5) — Reduce work set loads by 15% today. "
+            f"Low readiness ({total_score:.1f}/5) — Work set loads reduced 15% today. "
             "Focus on movement quality. Consider dropping one accessory block."
         )
         recommendation = "easy"
-    elif total_score < 3.5:
+    elif total_score < 4.0:
         adjustment_applied = True
+        load_multiplier = 0.90
+        adjustment_percent = 10
         adjustment_note = (
-            f"Moderate readiness ({total_score:.1f}/5) — Reduce work set loads by 10% today. "
+            f"Moderate readiness ({total_score:.1f}/5) — Work set loads reduced 10% today. "
             "Extend warm-up by 5 minutes. Full session is on the menu."
         )
         recommendation = "moderate"
@@ -1241,16 +1248,20 @@ async def create_readiness(body: ReadinessCreate, userId: str = Depends(get_curr
         "totalScore": round(total_score, 2),
         "adjustmentApplied": adjustment_applied,
         "adjustmentNote": adjustment_note,
+        "loadMultiplier": load_multiplier,
+        "adjustmentPercent": adjustment_percent,
         "createdAt": now,
     }
     result = await db.readiness_checks.insert_one(doc)
-    logger.info(f"[Readiness] User {userId}: score {total_score:.1f}/5 → {recommendation}")
+    logger.info(f"[Readiness] User {userId}: score {total_score:.1f}/5 → {recommendation} (×{load_multiplier})")
 
     return {
         "id": str(result.inserted_id),
         "readinessScore": round(total_score, 2),
         "adjustmentApplied": adjustment_applied,
         "adjustmentNote": adjustment_note,
+        "loadMultiplier": load_multiplier,
+        "adjustmentPercent": adjustment_percent,
         "recommendation": recommendation,
     }
 
@@ -1271,6 +1282,8 @@ async def get_today_readiness(userId: str = Depends(get_current_user)):
             "totalScore": doc.get("totalScore"),
             "adjustmentApplied": doc.get("adjustmentApplied"),
             "adjustmentNote": doc.get("adjustmentNote"),
+            "loadMultiplier": doc.get("loadMultiplier", 1.0),
+            "adjustmentPercent": doc.get("adjustmentPercent", 0),
         },
     }
 
@@ -2339,15 +2352,21 @@ async def reset_profile_data(userId: str = Depends(get_current_user)):
     try:
         deleted_plans = await db.saved_plans.delete_many({"userId": user_id})
         deleted_profile = await db.profile.delete_many({"userId": user_id})
+        await db.tracked_lifts.delete_many({"userId": user_id})
+        await db.readiness_checks.delete_many({"userId": user_id})
+        await db.pain_reports.delete_many({"userId": user_id})
+        await db.calendar_overrides.delete_many({"userId": user_id})
+        await db.weekly_reviews.delete_many({"userId": user_id})
+        await db.log.delete_many({"userId": user_id})
         _prog_store["plans"].pop(user_id, None)
         _prog_store["profiles"].pop(user_id, None)
         logger.info(
-            f"[RESET] Cleared data for user: {user_id} | "
-            f"plans deleted: {deleted_plans.deleted_count} | "
-            f"profiles deleted: {deleted_profile.deleted_count}"
+            f"[RESET] Full wipe for user: {user_id} | "
+            f"plans: {deleted_plans.deleted_count} | "
+            f"profiles: {deleted_profile.deleted_count} | 6 additional collections cleared"
         )
-        print(f"[RESET] User {user_id} — all plan/profile data wiped")
-        return {"success": True, "message": "Profile reset complete"}
+        print(f"[RESET] User {user_id} — full wipe complete (8 collections cleared)")
+        return {"success": True, "message": "Profile reset complete. All data cleared."}
     except Exception as e:
         logger.error(f"[RESET] Failed to reset profile for {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Reset failed")
