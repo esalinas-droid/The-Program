@@ -4,11 +4,11 @@ import {
   ActivityIndicator, Animated, useWindowDimensions, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { prApi, bwApi, analyticsApi, profileApi, programApi } from '../../src/utils/api';
+import { prApi, bwApi, analyticsApi, profileApi, programApi, liftsApi } from '../../src/utils/api';
 
 // ── Palette ────────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -262,6 +262,7 @@ export default function TrackScreen() {
   // Data state
   const [overview,     setOverview]     = useState<any>(null);
   const [prs,          setPrs]          = useState<any[]>([]);
+  const [trackedLifts, setTrackedLifts] = useState<any[]>([]);
   const [prSort,       setPrSort]       = useState<'recent' | 'heaviest' | 'exercise'>('recent');
   const [selectedLift, setSelectedLift] = useState('Back Squat');
   const [liftHistory,  setLiftHistory]  = useState<any[]>([]);
@@ -275,6 +276,8 @@ export default function TrackScreen() {
   const [profile,      setProfile]      = useState<any>(null);
   const [yearPlan,     setYearPlan]     = useState<any>(null);
   const [loading,      setLoading]      = useState(true);
+
+  const router = useRouter();
 
   const anims = useRef(Array.from({ length: SECTION_COUNT }, () => new Animated.Value(0))).current;
 
@@ -296,12 +299,14 @@ export default function TrackScreen() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [prData, bwHistory, profileData] = await Promise.all([
+      const [prData, bwHistory, profileData, liftsData] = await Promise.all([
         prApi.getAll().catch(() => []),
         bwApi.getHistory().catch(() => []),
         profileApi.get().catch(() => null),
+        liftsApi.list().catch(() => ({ lifts: [] })),
       ]);
       setPrs(prData); setBwData(bwHistory); setProfile(profileData);
+      setTrackedLifts(liftsData.lifts || []);
       const [ov, vol, pain, comp] = await Promise.all([
         analyticsApi.overview().catch(() => null),
         analyticsApi.volume().catch(() => []),
@@ -361,8 +366,16 @@ export default function TrackScreen() {
   }, [painData]);
   const overallCompliance = overview?.compliance ?? 0;
 
-  // Est. Maxes for 3-card row
+  // Est. Maxes for 3-card row — use featured lifts if available, else fallback to hardcoded
+  const featuredLifts = useMemo(() => trackedLifts.filter(l => l.isFeatured), [trackedLifts]);
   const estMaxCards = useMemo(() => {
+    if (featuredLifts.length >= 3) {
+      return featuredLifts.slice(0, 3).map(l => ({
+        key: l.exercise.split(' ').slice(0, 2).join(' ').toUpperCase(),
+        pr: { exercise: l.exercise, bestE1rm: l.bestE1rm, bestWeight: l.bestWeight, bestReps: l.bestReps, lastDate: l.lastDate },
+      }));
+    }
+    // Fallback: hardcoded categories
     const targets = [
       { key: 'SQUAT', exercises: ['Back Squat', 'Front Squat', 'SSB Squat'] },
       { key: 'PRESS', exercises: ['Bench Press', 'Close-Grip Bench Press', 'Floor Press'] },
@@ -372,7 +385,18 @@ export default function TrackScreen() {
       const pr = prs.find(p => t.exercises.some(e => p.exercise?.toLowerCase().includes(e.toLowerCase().split(' ')[0])));
       return { key: t.key, pr };
     });
-  }, [prs]);
+  }, [prs, featuredLifts]);
+
+  // PR board source: use ALL tracked lifts if available, else fall back to log-based sortedPRs
+  const prBoardLifts = useMemo(() => {
+    if (trackedLifts.length > 0) {
+      const sorted = [...trackedLifts];
+      if (prSort === 'recent')   return sorted.sort((a, b) => (b.lastDate ?? '') > (a.lastDate ?? '') ? 1 : -1);
+      if (prSort === 'heaviest') return sorted.sort((a, b) => b.bestE1rm - a.bestE1rm);
+      return sorted.sort((a, b) => a.exercise.localeCompare(b.exercise));
+    }
+    return sortedPRs;
+  }, [trackedLifts, sortedPRs, prSort]);
 
   // Header subtitle
   const headerSub = useMemo(() => {
@@ -607,7 +631,17 @@ export default function TrackScreen() {
     <>
       {/* PR Board */}
       <Animated.View style={[s.section, fade(2)]}>
-        <SectionHeader icon="trophy-outline" title="Personal Records" subtitle="ALL-TIME BESTS" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm }}>
+          <SectionHeader icon="trophy-outline" title="Personal Records" subtitle="ALL-TIME BESTS" />
+          <TouchableOpacity
+            style={s.manageLiftBtn}
+            onPress={() => router.push('/manage-lifts')}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons name="dumbbell" size={13} color={GOLD} />
+            <Text style={s.manageLiftBtnTxt}>Manage lifts</Text>
+          </TouchableOpacity>
+        </View>
         <View style={s.sortRow}>
           {([['recent', 'Most Recent'], ['heaviest', 'Heaviest'], ['exercise', 'A–Z']] as const).map(([k, label]) => (
             <TouchableOpacity key={k} style={[s.sortPill, prSort === k && s.sortPillOn]} onPress={() => setPrSort(k)}>
@@ -615,13 +649,13 @@ export default function TrackScreen() {
             </TouchableOpacity>
           ))}
         </View>
-        {sortedPRs.length === 0 ? (
+        {prBoardLifts.length === 0 ? (
           <View style={s.empty}><MaterialCommunityIcons name="dumbbell" size={30} color={COLORS.text.muted} /><Text style={s.emptyTxt}>Start logging to build your PR board</Text></View>
-        ) : sortedPRs.map((pr, i) => (
-          <View key={pr.exercise} style={[s.prRow, i > 0 && s.prRowBorder]}>
+        ) : prBoardLifts.map((pr, i) => (
+          <View key={pr.exercise || pr.id || i} style={[s.prRow, i > 0 && s.prRowBorder]}>
             <View style={s.prLeft}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <MaterialCommunityIcons name="star" size={12} color={GOLD} />
+                {pr.isFeatured && <MaterialCommunityIcons name="star" size={12} color={GOLD} />}
                 <Text style={s.prName} numberOfLines={1}>{pr.exercise}</Text>
               </View>
               <Text style={s.prDate}>{pr.lastDate ? fmtDate(pr.lastDate) : '—'}</Text>
@@ -898,7 +932,9 @@ const s = StyleSheet.create({
   compFill:  { height: '100%', borderRadius: RADIUS.full },
 
   // PR Board
-  sortRow:       { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md, flexWrap: 'wrap' },
+  sortRow:          { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md, flexWrap: 'wrap' },
+  manageLiftBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#C9A84C20', borderRadius: RADIUS.lg, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#C9A84C40' },
+  manageLiftBtnTxt: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: '#C9A84C', letterSpacing: 0.3 },
   sortPill:      { paddingVertical: 5, paddingHorizontal: 11, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
   sortPillOn:    { backgroundColor: GOLD, borderColor: GOLD },
   sortPillTxt:   { fontSize: 11, fontWeight: FONTS.weights.bold, color: COLORS.text.muted },

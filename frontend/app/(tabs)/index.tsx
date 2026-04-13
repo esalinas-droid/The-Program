@@ -8,7 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
-import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -116,7 +116,8 @@ export default function Dashboard() {
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
   const [programSession, setProgramSession] = useState<TodaySessionResponse | null>(null);
   const [weekStats, setWeekStats] = useState<WeekStats | null>(null);
-  const [bests, setBests] = useState<any>(null);
+  const [bests, setBests]               = useState<any>(null);
+  const [featuredLifts, setFeaturedLifts] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedCoach, setExpandedCoach] = useState(false);
@@ -154,6 +155,13 @@ export default function Dashboard() {
       setWeekStats(stats);
       setBests(bestsData);
     } catch {}
+
+    // Fetch featured lifts (non-critical)
+    try {
+      const liftsData = await liftsApi.list();
+      const featured = (liftsData.lifts || []).filter((l: any) => l.isFeatured);
+      setFeaturedLifts(featured);
+    } catch { /* Not critical — falls back to bests.squat/press/pull */ }
 
     // ── Fetch priority card data ─────────────────────────────────────────────
     try {
@@ -425,9 +433,22 @@ export default function Dashboard() {
               <Text style={s.sectionSub}>From training logs</Text>
             </View>
             <View style={s.e1rmRow}>
-              <E1RMCard label="SQUAT" data={bests.squat} units={units} />
-              <E1RMCard label="PRESS" data={bests.press} units={units} />
-              <E1RMCard label="PULL"  data={bests.pull}  units={units} />
+              {featuredLifts.length >= 3 ? (
+                featuredLifts.slice(0, 3).map(lift => (
+                  <E1RMCard
+                    key={lift.id}
+                    label={lift.exercise.split(' ').slice(0, 2).join(' ').toUpperCase()}
+                    data={{ e1rm: lift.bestE1rm, exercise: lift.exercise }}
+                    units={units}
+                  />
+                ))
+              ) : (
+                <>
+                  <E1RMCard label="SQUAT" data={bests.squat} units={units} />
+                  <E1RMCard label="PRESS" data={bests.press} units={units} />
+                  <E1RMCard label="PULL"  data={bests.pull}  units={units} />
+                </>
+              )}
             </View>
           </>
         )}

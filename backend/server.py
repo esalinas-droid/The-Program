@@ -186,6 +186,24 @@ class CheckInCreate(BaseModel):
     personalNotes: str = ""
     recommendations: List[str] = []
 
+# ── Tracked Lifts Models ───────────────────────────────────────────────────────
+class TrackedLiftCreate(BaseModel):
+    exercise: str
+    category: str = "Powerlifting"
+    bestWeight: Optional[float] = None
+    bestReps: Optional[int] = None
+    lastDate: Optional[str] = None
+
+class TrackedLiftUpdate(BaseModel):
+    bestWeight: Optional[float] = None
+    bestReps: Optional[int] = None
+    lastDate: Optional[str] = None
+    isFeatured: Optional[bool] = None
+    category: Optional[str] = None
+
+class FeaturedLiftsUpdate(BaseModel):
+    featuredIds: List[str] = []
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def epley_e1rm(weight: float, reps: int) -> float:
     if reps <= 0 or weight <= 0: return 0.0
@@ -874,6 +892,140 @@ async def get_pr_history(exercise: str):
             "rpe": d.get("rpe", 0)
         })
     return history
+
+# ── Lift Catalog ────────────────────────────────────────────────────────────────
+LIFT_CATALOG = [
+    {"name": "Powerlifting", "color": "#EF5350", "exercises": ["Back Squat", "Bench Press", "Conventional Deadlift", "Overhead Press"]},
+    {"name": "Strongman",    "color": "#C9A84C", "exercises": ["Yoke", "Axle Deadlift", "Axle Clean & Press", "Log Press", "Farmers Walk", "Atlas Stone", "Circus Dumbbell", "Car Deadlift", "Husafell Stone"]},
+    {"name": "Olympic",      "color": "#5B9CF5", "exercises": ["Clean & Jerk", "Snatch", "Clean", "Power Clean", "Push Press", "Push Jerk"]},
+    {"name": "Squat Variations", "color": "#888888", "exercises": ["SSB Squat", "Front Squat", "Box Squat", "Zercher Squat", "Goblet Squat"]},
+    {"name": "Press Variations", "color": "#888888", "exercises": ["Floor Press", "Incline Bench", "Close Grip Bench", "Z-Press", "Dumbbell Bench"]},
+    {"name": "Pull Variations",  "color": "#888888", "exercises": ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Sumo Deadlift", "Rack Pull", "Trap Bar Deadlift"]},
+]
+
+@api_router.get("/lifts/catalog")
+async def get_lift_catalog():
+    return {"categories": LIFT_CATALOG}
+
+@api_router.get("/lifts")
+async def get_tracked_lifts(userId: str = Depends(get_current_user)):
+    tracked = await db.tracked_lifts.find({"userId": userId}).to_list(500)
+    if not tracked:
+        return {"lifts": []}
+    result = []
+    for doc in tracked:
+        exercise = doc.get("exercise", "")
+        best_weight = doc.get("bestWeight", 0)
+        best_reps   = doc.get("bestReps", 1)
+        best_e1rm   = doc.get("bestE1rm", 0)
+        last_date   = doc.get("lastDate")
+        # Merge with log-based PRs — always use the higher value
+        log_docs = await db.log.find({"exercise": exercise}).sort("e1rm", -1).to_list(100)
+        if log_docs:
+            log_best   = max(log_docs, key=lambda d: d.get("e1rm", 0))
+            log_latest = max(log_docs, key=lambda d: d.get("date", ""))
+            if log_best.get("e1rm", 0) > best_e1rm:
+                best_weight = log_best.get("weight", best_weight)
+                best_reps   = log_best.get("reps",   best_reps)
+                best_e1rm   = log_best.get("e1rm",   best_e1rm)
+            if not last_date or (log_latest.get("date", "") > last_date):
+                last_date = log_latest.get("date")
+        result.append({
+            "id":          str(doc["_id"]),
+            "exercise":    exercise,
+            "category":    doc.get("category", "Powerlifting"),
+            "bestWeight":  best_weight,
+            "bestReps":    best_reps,
+            "bestE1rm":    best_e1rm,
+            "lastDate":    last_date,
+            "isFeatured":  doc.get("isFeatured", False),
+            "source":      doc.get("source", "manual"),
+        })
+    return {"lifts": result}
+
+@api_router.post("/lifts")
+async def add_tracked_lift(data: TrackedLiftCreate, userId: str = Depends(get_current_user)):
+    existing = await db.tracked_lifts.find_one({"userId": userId, "exercise": data.exercise})
+    if existing:
+        raise HTTPException(status_code=400, detail="Lift already tracked")
+    best_e1rm = epley_e1rm(data.bestWeight or 0, data.bestReps or 1) if data.bestWeight else 0.0
+    now = datetime.now(timezone.utc)
+    doc = {
+        "userId":      userId,
+        "exercise":    data.exercise,
+        "category":    data.category,
+        "bestWeight":  data.bestWeight or 0.0,
+        "bestReps":    data.bestReps or 1,
+        "bestE1rm":    best_e1rm,
+        "lastDate":    data.lastDate,
+        "isFeatured":  False,
+        "source":      "manual",
+        "createdAt":   now,
+        "updatedAt":   now,
+    }
+    result = await db.tracked_lifts.insert_one(doc)
+    return {"id": str(result.inserted_id), "exercise": data.exercise, "category": data.category,
+            "bestWeight": data.bestWeight or 0.0, "bestReps": data.bestReps or 1,
+            "bestE1rm": best_e1rm, "lastDate": data.lastDate, "isFeatured": False}
+
+# ── PUT /lifts/featured MUST be defined before /lifts/{lift_id} ─────────────────
+@api_router.put("/lifts/featured")
+async def set_featured_lifts(body: FeaturedLiftsUpdate, userId: str = Depends(get_current_user)):
+    if len(body.featuredIds) > 3:
+        raise HTTPException(status_code=400, detail="Maximum 3 featured lifts allowed")
+    await db.tracked_lifts.update_many({"userId": userId}, {"$set": {"isFeatured": False}})
+    for fid in body.featuredIds:
+        try:
+            await db.tracked_lifts.update_one(
+                {"_id": ObjectId(fid), "userId": userId},
+                {"$set": {"isFeatured": True, "updatedAt": datetime.now(timezone.utc)}}
+            )
+        except Exception:
+            pass
+    return {"success": True, "featuredCount": len(body.featuredIds)}
+
+@api_router.put("/lifts/{lift_id}")
+async def update_tracked_lift(lift_id: str, data: TrackedLiftUpdate, userId: str = Depends(get_current_user)):
+    try:
+        oid = ObjectId(lift_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lift ID")
+    doc = await db.tracked_lifts.find_one({"_id": oid, "userId": userId})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Lift not found")
+    if data.isFeatured is True and not doc.get("isFeatured", False):
+        count = await db.tracked_lifts.count_documents({"userId": userId, "isFeatured": True})
+        if count >= 3:
+            raise HTTPException(status_code=400, detail="Maximum 3 featured lifts. Unfeature one first.")
+    update: dict = {"updatedAt": datetime.now(timezone.utc)}
+    if data.bestWeight is not None: update["bestWeight"] = data.bestWeight
+    if data.bestReps   is not None: update["bestReps"]   = data.bestReps
+    if data.lastDate   is not None: update["lastDate"]   = data.lastDate
+    if data.isFeatured is not None: update["isFeatured"] = data.isFeatured
+    if data.category   is not None: update["category"]   = data.category
+    w = data.bestWeight if data.bestWeight is not None else doc.get("bestWeight", 0)
+    r = data.bestReps   if data.bestReps   is not None else doc.get("bestReps",   1)
+    if w > 0 and r > 0:
+        update["bestE1rm"] = epley_e1rm(w, r)
+    await db.tracked_lifts.update_one({"_id": oid}, {"$set": update})
+    updated = await db.tracked_lifts.find_one({"_id": oid})
+    return {
+        "id": str(updated["_id"]), "exercise": updated.get("exercise"),
+        "category": updated.get("category"), "bestWeight": updated.get("bestWeight"),
+        "bestReps": updated.get("bestReps"), "bestE1rm": updated.get("bestE1rm"),
+        "lastDate": updated.get("lastDate"), "isFeatured": updated.get("isFeatured"),
+    }
+
+@api_router.delete("/lifts/{lift_id}")
+async def delete_tracked_lift(lift_id: str, userId: str = Depends(get_current_user)):
+    try:
+        oid = ObjectId(lift_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lift ID")
+    result = await db.tracked_lifts.delete_one({"_id": oid, "userId": userId})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Lift not found")
+    return {"success": True}
 
 # ── Bodyweight Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/bodyweight")
@@ -2201,6 +2353,87 @@ async def reset_profile_data(userId: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Reset failed")
 
 
+# ─── Goal-Based Default Tracked Lifts ────────────────────────────────────────
+async def _create_default_tracked_lifts(user_id: str, goal: str, database) -> None:
+    """Create default tracked lifts based on user goal during onboarding. Idempotent."""
+    existing = await database.tracked_lifts.count_documents({"userId": user_id})
+    if existing > 0:
+        return  # Already has lifts — do not overwrite
+    GOAL_DEFAULTS = {
+        "strongman": {
+            "featured": [
+                {"exercise": "SSB Squat",      "category": "Squat Variations"},
+                {"exercise": "Axle Deadlift",  "category": "Strongman"},
+                {"exercise": "Log Press",       "category": "Strongman"},
+            ],
+            "also_track": [
+                {"exercise": "Yoke",            "category": "Strongman"},
+                {"exercise": "Atlas Stone",     "category": "Strongman"},
+                {"exercise": "Farmers Walk",    "category": "Strongman"},
+            ],
+        },
+        "powerlifting": {
+            "featured": [
+                {"exercise": "Back Squat",            "category": "Powerlifting"},
+                {"exercise": "Bench Press",           "category": "Powerlifting"},
+                {"exercise": "Conventional Deadlift", "category": "Powerlifting"},
+            ],
+            "also_track": [
+                {"exercise": "Overhead Press", "category": "Powerlifting"},
+            ],
+        },
+        "olympic": {
+            "featured": [
+                {"exercise": "Clean & Jerk", "category": "Olympic"},
+                {"exercise": "Snatch",       "category": "Olympic"},
+                {"exercise": "Back Squat",   "category": "Powerlifting"},
+            ],
+            "also_track": [
+                {"exercise": "Power Clean",  "category": "Olympic"},
+                {"exercise": "Push Press",   "category": "Olympic"},
+            ],
+        },
+        "athletic": {
+            "featured": [
+                {"exercise": "Clean & Jerk", "category": "Olympic"},
+                {"exercise": "Snatch",       "category": "Olympic"},
+                {"exercise": "Back Squat",   "category": "Powerlifting"},
+            ],
+            "also_track": [
+                {"exercise": "Power Clean",  "category": "Olympic"},
+                {"exercise": "Push Press",   "category": "Olympic"},
+            ],
+        },
+    }
+    goal_lower = (goal or "").lower()
+    config = GOAL_DEFAULTS.get(goal_lower) or {
+        "featured": [
+            {"exercise": "Back Squat",            "category": "Powerlifting"},
+            {"exercise": "Bench Press",           "category": "Powerlifting"},
+            {"exercise": "Conventional Deadlift", "category": "Powerlifting"},
+        ],
+        "also_track": [
+            {"exercise": "Overhead Press", "category": "Powerlifting"},
+        ],
+    }
+    now = datetime.now(timezone.utc)
+    lifts_to_insert = []
+    for lift in config.get("featured", []):
+        lifts_to_insert.append({
+            "userId": user_id, "exercise": lift["exercise"], "category": lift["category"],
+            "bestWeight": 0.0, "bestReps": 1, "bestE1rm": 0.0, "lastDate": None,
+            "isFeatured": True, "source": "auto", "createdAt": now, "updatedAt": now,
+        })
+    for lift in config.get("also_track", []):
+        lifts_to_insert.append({
+            "userId": user_id, "exercise": lift["exercise"], "category": lift["category"],
+            "bestWeight": 0.0, "bestReps": 1, "bestE1rm": 0.0, "lastDate": None,
+            "isFeatured": False, "source": "auto", "createdAt": now, "updatedAt": now,
+        })
+    if lifts_to_insert:
+        await database.tracked_lifts.insert_many(lifts_to_insert)
+        logger.info(f"[LIFTS] Created {len(lifts_to_insert)} default tracked lifts for {user_id} (goal: {goal_lower})")
+
 # ─── Task 2: RAG-Enhanced Plan Generation ─────────────────────────────────────
 # This route shadows the one in program_router because api_router is included
 # first, so every POST /api/profile/intake comes here.
@@ -2301,6 +2534,12 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
         profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
     # Always upsert — creates profile for new users, updates existing users
     await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
+
+    # Create default tracked lifts based on goal (idempotent — skips if already exists)
+    try:
+        await _create_default_tracked_lifts(user_id, intake.goal or "strength", db)
+    except Exception as _tl_err:
+        logger.warning(f"[INTAKE] Could not create default tracked lifts: {_tl_err}")
 
     # Log initial program change
     _prog_store["changes"].append(ProgramChange(

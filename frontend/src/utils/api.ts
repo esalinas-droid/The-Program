@@ -406,3 +406,14 @@ export const changeLogApi = {
   undo: (changeId: string) =>
     api(`/coach/undo/${changeId}`, { method: 'POST' }),
 };
+
+// Tracked Lifts
+export const liftsApi = {
+  list:        ()                                             => api('/lifts'),
+  add:         (data: { exercise: string; category: string; bestWeight?: number; bestReps?: number; lastDate?: string }) =>
+                 api('/lifts', { method: 'POST', body: JSON.stringify(data) }),
+  update:      (id: string, data: any)                       => api(`/lifts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete:      (id: string)                                  => api(`/lifts/${id}`, { method: 'DELETE' }),
+  setFeatured: (featuredIds: string[])                       => api('/lifts/featured', { method: 'PUT', body: JSON.stringify({ featuredIds }) }),
+  catalog:     ()                                            => api('/lifts/catalog'),
+};

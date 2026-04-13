@@ -1777,6 +1777,35 @@ export default function TodayScreen() {
     setTimerExerciseName(logName);
     setTimerRunning(true);
 
+    // ── Auto-advance: collapse current exercise + expand next when all sets done ──
+    const currentEx = exForSet;
+    if (currentEx) {
+      const updatedLoggedSets = new Set([...loggedSets, setId]);
+      const allDone = currentEx.sets.every(s => updatedLoggedSets.has(s.id));
+      if (allDone) {
+        const currentIdx = exercises.findIndex(e => e.id === currentEx.id);
+        const nextEx = exercises.slice(currentIdx + 1).find(ex =>
+          ex.sets.some(s => !updatedLoggedSets.has(s.id))
+        );
+        if (nextEx) {
+          const nextRestDur = exerciseRestDurations[nextEx.id] ?? REST_CONFIG[nextEx.category].default;
+          // Short delay so user can see the "logged" check before card collapses
+          setTimeout(() => {
+            setExpanded(prev => {
+              const next = new Set(prev);
+              next.delete(currentEx.id);
+              next.add(nextEx.id);
+              return next;
+            });
+            setTimerSeconds(nextRestDur);
+            setTimerTarget(nextRestDur);
+            setTimerExerciseName(nextEx.name);
+            setTimerRunning(true);
+          }, 600);
+        }
+      }
+    }
+
     // Use edited input values if available, fall back to set defaults
     const currentVals = setValues[setId];
     const weight = currentVals ? (parseFloat(currentVals.weight) || 0) : (set?.weight || 0);

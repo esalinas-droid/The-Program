@@ -265,7 +265,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Rest Period Selector — Smart per-exercise rest timer on Today page"
+    - "Manage Lifts — Custom PR tracking + Featured Lifts on Progress page"
+    - "Auto-advance exercise on Today page after all sets complete"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
