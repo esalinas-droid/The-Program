@@ -211,6 +211,25 @@ frontend:
         agent: "main"
         comment: "Built review.tsx — full-screen post-workout review with animated hero (checkered flag + session badge), 4-stat grid, Wins card, Coach Wrap card, What's Next card, and fixed bottom CTA. today.tsx now navigates here on FINISH SESSION with setsLogged/totalSets/sessionType/week params. Screen registered in _layout.tsx."
 
+  - task: "Rest Period Selector — Smart per-exercise rest timer on Today page"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Implemented full REST_CONFIG (primary/speed/supplemental/accessory/prehab with correct
+          options and defaults per user spec). RestSelector component added to ExerciseCard
+          (between header and set rows, only when expanded). CustomRestModal bottom sheet with
+          animated slide-up and min/sec inputs. RestTimerBar updated to count-DOWN (not up)
+          showing exerciseName + 4:32 / 5:00 format + thin progress bar. Auto-stop + haptic
+          when countdown reaches 0. Reset resets to full duration. Timer uses timerTarget +
+          timerExerciseName state vars. handleLog computes exercise-specific rest duration.
+
   - task: "today.tsx FINISH SESSION navigates to review screen"
     implemented: true
     working: "NA"
@@ -246,11 +265,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Add analyticsApi and substitutionApi to api.ts"
-    - "StatBox component and statsGrid style in index.tsx"
-    - "Post-Workout Review screen (review.tsx)"
-    - "today.tsx FINISH SESSION navigates to review screen"
-    - "Fix track.tsx double loadAll + safety timer"
+    - "Rest Period Selector — Smart per-exercise rest timer on Today page"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1189,6 +1204,31 @@ agent_communication:
       ALSO TEST: all 9 cross-tab sync scenarios below.
       
       Expo restarted. Please test now.
+
+  - agent: "main"
+    message: >
+      REST PERIOD SELECTOR feature fully implemented in today.tsx. Changes made:
+      1. Added REST_CONFIG with exact per-category options (primary/speed/supplemental/accessory/prehab)
+      2. Added RestSelector component — horizontal chip row inside each ExerciseCard (between header and sets)
+      3. Added CustomRestModal — animated bottom sheet with minute/second inputs
+      4. Updated RestTimerBar — now shows exercise name + countdown (4:32 / 5:00) + progress bar
+      5. Timer changed from COUNT-UP to COUNT-DOWN with auto-stop haptic when reaching 0
+      6. handleLog now computes exercise-specific rest duration and starts the countdown
+      7. Added timerTarget + timerExerciseName state
+      8. CustomRestModal added to JSX for custom rest entry
+      
+      Test credentials: user_a@theprogram.app / StrongmanA123
+      
+      Navigate to Today tab and verify:
+      - Each exercise card shows REST chip row when expanded (3:00, 5:00✓, 7:00, 10:00 for Primary)
+      - Default chip is highlighted in category accent color (gold for Primary)
+      - Tapping a chip changes the selection
+      - Custom chip opens the bottom sheet modal with min/sec inputs
+      - After logging a set, RestTimerBar shows exercise name + countdown from selected duration
+      - Timer auto-stops + haptic when countdown reaches 0
+      - Reset button resets back to full duration
+      - DONE ✓ appears in green when timer completes
+      - Progress bar fills from left to right as time elapses
 
   - agent: "main"
     message: >

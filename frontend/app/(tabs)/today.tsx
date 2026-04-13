@@ -265,6 +265,15 @@ function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: s
   } as Record<ExCategory, { bg: string; text: string; label: string }>)[cat] || { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: cat };
 }
 
+// ── REST Period Configuration ─────────────────────────────────────────────────
+const REST_CONFIG: Record<ExCategory, { options: number[]; default: number; color: string }> = {
+  primary:      { options: [180, 300, 420, 600], default: 300, color: '#C9A84C' },
+  speed:        { options: [30, 45, 60, 90],     default: 45,  color: '#5B9CF5' },
+  supplemental: { options: [60, 120, 180, 300],  default: 120, color: '#888888' },
+  accessory:    { options: [45, 60, 75, 90],     default: 60,  color: '#888888' },
+  prehab:       { options: [30, 45, 60],         default: 45,  color: '#4DCEA6' },
+};
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -746,42 +755,249 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
   );
 }
 
-// ── RestTimerBar ──────────────────────────────────────────────────────────────
-function RestTimerBar({ running, seconds, onToggle, onReset }: {
-  running: boolean; seconds: number; onToggle: () => void; onReset: () => void;
+// ── RestSelector ──────────────────────────────────────────────────────────────
+function RestSelector({
+  category, selectedSeconds, onSelect, onCustom,
+}: {
+  category: ExCategory;
+  selectedSeconds: number | undefined;
+  onSelect: (seconds: number) => void;
+  onCustom: () => void;
 }) {
-  const restWarning = seconds > 180; // over 3 mins = too long
-  const timeColor   = restWarning ? '#EF5350' : running ? COLORS.accent : COLORS.text.muted;
+  const cfg = REST_CONFIG[category];
+  const activeSecs = selectedSeconds !== undefined ? selectedSeconds : cfg.default;
+  return (
+    <View style={rs.row}>
+      <MaterialCommunityIcons name="timer-sand" size={12} color={COLORS.text.muted} />
+      <Text style={rs.label}>REST</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={rs.optionsContainer}>
+        {cfg.options.map(secs => {
+          const isActive = activeSecs === secs;
+          return (
+            <TouchableOpacity
+              key={secs}
+              style={[rs.chip, isActive && { backgroundColor: cfg.color + '20', borderColor: cfg.color }]}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(secs); }}
+              activeOpacity={0.75}
+            >
+              <Text style={[rs.chipText, isActive && { color: cfg.color }]}>{formatTime(secs)}</Text>
+              {secs === cfg.default && selectedSeconds === undefined && (
+                <View style={[rs.defaultDot, { backgroundColor: cfg.color }]} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+        <TouchableOpacity style={[rs.chip, rs.customChip]} onPress={onCustom} activeOpacity={0.75}>
+          <MaterialCommunityIcons name="pencil-outline" size={11} color={COLORS.text.muted} />
+          <Text style={rs.customText}>Custom</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+const rs = StyleSheet.create({
+  row:              { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.border + '60', gap: SPACING.sm },
+  label:            { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
+  optionsContainer: { flexDirection: 'row', gap: SPACING.xs, alignItems: 'center', paddingRight: 4 },
+  chip:             { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  chipText:         { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, fontVariant: ['tabular-nums'] as any },
+  defaultDot:       { width: 5, height: 5, borderRadius: 2.5, marginLeft: 1 },
+  customChip:       { borderStyle: 'dashed' as any },
+  customText:       { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+});
+
+// ── CustomRestModal ───────────────────────────────────────────────────────────
+function CustomRestModal({
+  visible, currentSeconds, onConfirm, onClose,
+}: {
+  visible: boolean;
+  currentSeconds: number;
+  onConfirm: (seconds: number) => void;
+  onClose: () => void;
+}) {
+  const [mins, setMins]       = useState('');
+  const [secs, setSecsVal]    = useState('');
+  const slideAnim = useRef(new Animated.Value(600)).current;
+
+  const handleShow = () => {
+    const m = Math.floor(currentSeconds / 60);
+    const sc = currentSeconds % 60;
+    setMins(String(m));
+    setSecsVal(String(sc).padStart(2, '0'));
+    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
+  };
+  const handleHide = (cb?: () => void) =>
+    Animated.timing(slideAnim, { toValue: 600, duration: 220, useNativeDriver: true }).start(() => cb?.());
+
+  const handleConfirm = () => {
+    const total = (parseInt(mins) || 0) * 60 + (parseInt(secs) || 0);
+    if (total > 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      handleHide(() => onConfirm(total));
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow} onRequestClose={() => handleHide(onClose)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <Pressable style={crm.overlay} onPress={() => handleHide(onClose)}>
+          <Animated.View style={[crm.sheet, { transform: [{ translateY: slideAnim }] }]}>
+            <Pressable onPress={e => e.stopPropagation()}>
+              <View style={crm.handleWrap}><View style={crm.handle} /></View>
+              <View style={crm.header}>
+                <MaterialCommunityIcons name="timer-cog-outline" size={20} color={COLORS.accent} />
+                <Text style={crm.title}>Custom Rest Period</Text>
+              </View>
+              <View style={crm.body}>
+                <View style={crm.inputRow}>
+                  <View style={crm.inputGroup}>
+                    <TextInput
+                      style={crm.input}
+                      value={mins}
+                      onChangeText={setMins}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      selectTextOnFocus
+                      placeholder="0"
+                      placeholderTextColor={COLORS.text.muted}
+                    />
+                    <Text style={crm.inputLabel}>min</Text>
+                  </View>
+                  <Text style={crm.colon}>:</Text>
+                  <View style={crm.inputGroup}>
+                    <TextInput
+                      style={crm.input}
+                      value={secs}
+                      onChangeText={v => setSecsVal(v.replace(/[^0-9]/g, '').slice(0, 2))}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      selectTextOnFocus
+                      placeholder="00"
+                      placeholderTextColor={COLORS.text.muted}
+                    />
+                    <Text style={crm.inputLabel}>sec</Text>
+                  </View>
+                </View>
+                <TouchableOpacity style={crm.confirmBtn} onPress={handleConfirm} activeOpacity={0.85}>
+                  <Text style={crm.confirmBtnText}>SET REST PERIOD</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={crm.cancelBtn} onPress={() => handleHide(onClose)} activeOpacity={0.85}>
+                  <Text style={crm.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+const crm = StyleSheet.create({
+  overlay:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' },
+  sheet:         { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  handleWrap:    { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
+  handle:        { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+  header:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  title:         { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  body:          { paddingHorizontal: SPACING.xl, paddingTop: SPACING.xl, paddingBottom: 40 },
+  inputRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.md, marginBottom: SPACING.xl },
+  inputGroup:    { alignItems: 'center', gap: SPACING.xs },
+  input:         { width: 80, height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 28, fontWeight: FONTS.weights.heavy },
+  inputLabel:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, letterSpacing: 0.5 },
+  colon:         { fontSize: 32, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, marginBottom: 16 },
+  confirmBtn:    { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, alignItems: 'center', marginBottom: SPACING.sm },
+  confirmBtnText:{ color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+  cancelBtn:     { alignItems: 'center', paddingVertical: SPACING.md },
+  cancelBtnText: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
+});
+
+// ── RestTimerBar ──────────────────────────────────────────────────────────────
+function RestTimerBar({
+  running, seconds, targetSeconds, exerciseName, onToggle, onReset,
+}: {
+  running: boolean;
+  seconds: number;
+  targetSeconds: number;
+  exerciseName: string;
+  onToggle: () => void;
+  onReset: () => void;
+}) {
+  const isIdle   = targetSeconds === 0;
+  const isDone   = !running && !isIdle && seconds === 0;
+  const progress = targetSeconds > 0 ? Math.max(0, (targetSeconds - seconds) / targetSeconds) : 0;
+
+  const timeColor = isDone            ? TEAL
+    : (running && seconds <= 10)      ? RED
+    : running                         ? COLORS.accent
+    : COLORS.text.muted;
+
+  const totalTime = targetSeconds > 0 ? formatTime(targetSeconds) : '';
 
   return (
     <View style={rt.bar}>
-      <View style={rt.left}>
-        <MaterialCommunityIcons name="timer-outline" size={18} color={timeColor} />
-        <Text style={rt.label}>REST</Text>
-        <Text style={[rt.time, { color: timeColor }]}>{formatTime(seconds)}</Text>
-        {running && (
-          <View style={rt.activeDot} />
-        )}
-      </View>
-      <View style={rt.controls}>
-        <TouchableOpacity onPress={onToggle} style={rt.controlBtn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name={running ? 'pause-circle' : 'play-circle'} size={28} color={COLORS.accent} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onReset} style={rt.controlBtn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name="refresh" size={22} color={COLORS.text.muted} />
-        </TouchableOpacity>
+      {/* Progress track */}
+      {!isIdle && (
+        <View style={rt.progressTrack}>
+          <View style={[rt.progressFill, {
+            width: `${Math.round(progress * 100)}%` as any,
+            backgroundColor: isDone ? TEAL : (running && seconds <= 10) ? RED : COLORS.accent,
+          }]} />
+        </View>
+      )}
+      <View style={rt.content}>
+        <View style={rt.left}>
+          <MaterialCommunityIcons
+            name={isDone ? 'check-circle' : 'timer-outline'}
+            size={18}
+            color={timeColor}
+          />
+          <View style={rt.textStack}>
+            {exerciseName && !isIdle ? (
+              <Text style={rt.exerciseName} numberOfLines={1}>{exerciseName}</Text>
+            ) : null}
+            <View style={rt.timeRow}>
+              <Text style={rt.label}>REST</Text>
+              <Text style={[rt.time, { color: timeColor }]}>
+                {isIdle ? '—  —' : formatTime(seconds)}
+              </Text>
+              {totalTime ? <Text style={rt.totalTime}> / {totalTime}</Text> : null}
+              {isDone ? <Text style={rt.doneText}>DONE ✓</Text> : null}
+              {running ? <View style={rt.activeDot} /> : null}
+            </View>
+          </View>
+        </View>
+        <View style={rt.controls}>
+          <TouchableOpacity onPress={onToggle} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
+            <MaterialCommunityIcons
+              name={running ? 'pause-circle' : 'play-circle'}
+              size={28}
+              color={isIdle ? COLORS.border : COLORS.accent}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onReset} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
+            <MaterialCommunityIcons name="refresh" size={22} color={isIdle ? COLORS.border : COLORS.text.muted} />
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
 }
 const rt = StyleSheet.create({
-  bar:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
-  left:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  label:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2 },
-  time:       { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, fontVariant: ['tabular-nums'] as any, letterSpacing: -0.5 },
-  activeDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: TEAL, marginLeft: 4 },
-  controls:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  controlBtn: { padding: 4 },
+  bar:          { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  progressTrack:{ height: 2, backgroundColor: COLORS.border },
+  progressFill: { height: 2 },
+  content:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
+  left:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  textStack:    { flex: 1 },
+  exerciseName: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, fontWeight: FONTS.weights.semibold, marginBottom: 1 },
+  timeRow:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
+  label:        { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2 },
+  time:         { fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, fontVariant: ['tabular-nums'] as any, letterSpacing: -0.5 },
+  totalTime:    { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, fontVariant: ['tabular-nums'] as any },
+  doneText:     { fontSize: FONTS.sizes.xs, color: TEAL, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
+  activeDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: TEAL, marginLeft: 2 },
+  controls:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  controlBtn:   { padding: 4 },
 });
 
 // ── SetRow ────────────────────────────────────────────────────────────────────
@@ -940,6 +1156,7 @@ function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
+  restConfig,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -961,6 +1178,11 @@ function ExerciseCard({
   onEnterRemoveMode: () => void;
   onEnterEditMode: () => void;
   onExitMode: () => void;
+  restConfig?: {
+    selectedSeconds: number | undefined;
+    onSelect: (seconds: number) => void;
+    onCustom: () => void;
+  };
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1015,7 +1237,17 @@ function ExerciseCard({
 
       {/* ── Expanded body ── */}
       {expanded && (
-        <View style={ec.body}>
+        <>
+          {/* ── Rest Period Selector (between header and set rows) ── */}
+          {restConfig && (
+            <RestSelector
+              category={exercise.category}
+              selectedSeconds={restConfig.selectedSeconds}
+              onSelect={restConfig.onSelect}
+              onCustom={restConfig.onCustom}
+            />
+          )}
+          <View style={ec.body}>
           {/* Last session reference */}
           {exercise.lastSession !== '—' && (
             <View style={ec.lastRow}>
@@ -1151,6 +1383,7 @@ function ExerciseCard({
             <Text style={ec.notes}>{exercise.notes}</Text>
           ) : null}
         </View>
+        </>
       )}
     </View>
   );
@@ -1253,7 +1486,14 @@ export default function TodayScreen() {
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+  const [timerTarget, setTimerTarget]   = useState(0);     // total rest duration (for progress bar)
+  const [timerExerciseName, setTimerExerciseName] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Rest period selector state
+  const [exerciseRestDurations, setExerciseRestDurations] = useState<Record<string, number>>({});
+  const [customRestExerciseId, setCustomRestExerciseId]   = useState('');
+  const [customRestVisible, setCustomRestVisible]         = useState(false);
   const initialLoadDone = useRef(false);
   const exercisesRef = useRef<Exercise[]>([]);
   const lastLoadDate = useRef('');
@@ -1486,15 +1726,23 @@ export default function TodayScreen() {
     setShowPainModal(true);
   };
 
-  // ── Rest timer effect ────────────────────────────────────────────────────────
+  // ── Rest timer effect (COUNT-DOWN) ──────────────────────────────────────────
   useEffect(() => {
     if (timerRunning) {
-      timerRef.current = setInterval(() => setTimerSeconds(s => s + 1), 1000);
+      timerRef.current = setInterval(() => setTimerSeconds(s => Math.max(0, s - 1)), 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [timerRunning]);
+
+  // ── Auto-stop and haptic when countdown reaches 0 ───────────────────────────
+  useEffect(() => {
+    if (timerSeconds === 0 && timerRunning) {
+      setTimerRunning(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  }, [timerSeconds]);
 
   // ── Computed values ──────────────────────────────────────────────────────────
   const totalSets   = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
@@ -1515,7 +1763,18 @@ export default function TodayScreen() {
   const handleLog = async (setId: string, exerciseName?: string, set?: ExSet) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoggedSets(prev => new Set([...prev, setId]));
-    setTimerSeconds(0);
+
+    // Determine rest duration: user selection > category default
+    const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
+    const restDuration = exForSet
+      ? (exerciseRestDurations[exForSet.id] ?? REST_CONFIG[exForSet.category].default)
+      : 120;
+    const logName = exForSet?.name ?? exerciseName ?? '';
+
+    // Start count-DOWN timer from rest duration
+    setTimerSeconds(restDuration);
+    setTimerTarget(restDuration);
+    setTimerExerciseName(logName);
     setTimerRunning(true);
 
     // Use edited input values if available, fall back to set defaults
@@ -1851,6 +2110,16 @@ export default function TodayScreen() {
             onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
             onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
             onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+            restConfig={{
+              selectedSeconds: exerciseRestDurations[ex.id],
+              onSelect: (secs) => {
+                setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs }));
+              },
+              onCustom: () => {
+                setCustomRestExerciseId(ex.id);
+                setCustomRestVisible(true);
+              },
+            }}
           />
         ))}
 
@@ -1861,8 +2130,10 @@ export default function TodayScreen() {
       <RestTimerBar
         running={timerRunning}
         seconds={timerSeconds}
+        targetSeconds={timerTarget}
+        exerciseName={timerExerciseName}
         onToggle={() => setTimerRunning(r => !r)}
-        onReset={() => { setTimerRunning(false); setTimerSeconds(0); }}
+        onReset={() => { setTimerRunning(false); setTimerSeconds(timerTarget); }}
       />
 
       {/* ── FIXED BOTTOM BAR ── */}
@@ -1913,6 +2184,21 @@ export default function TodayScreen() {
         sessionType={sessionType}
         onClose={() => setShowPainModal(false)}
         onSubmit={handlePainSubmit}
+      />
+
+      {/* ── CUSTOM REST MODAL ── */}
+      <CustomRestModal
+        visible={customRestVisible}
+        currentSeconds={(() => {
+          const ex = exercises.find(e => e.id === customRestExerciseId);
+          if (!ex) return 120;
+          return exerciseRestDurations[customRestExerciseId] ?? REST_CONFIG[ex.category].default;
+        })()}
+        onConfirm={(secs) => {
+          setExerciseRestDurations(prev => ({ ...prev, [customRestExerciseId]: secs }));
+          setCustomRestVisible(false);
+        }}
+        onClose={() => setCustomRestVisible(false)}
       />
     </SafeAreaView>
   );
