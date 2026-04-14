@@ -171,6 +171,7 @@ class CheckIn(BaseDocument):
     avgFat: Optional[float] = None
     personalNotes: str = ""
     recommendations: List[str] = []
+    userId: Optional[str] = None
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CheckInCreate(BaseModel):
@@ -1094,6 +1095,7 @@ class SubstitutionLog(BaseDocument):
     originalExercise: str
     replacementExercise: str
     reason: str
+    userId: Optional[str] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SubstitutionLogCreate(BaseModel):
