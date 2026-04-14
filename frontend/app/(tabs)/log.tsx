@@ -1,13 +1,14 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator,
+  ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { calendarApi, logApi } from '../../src/utils/api';
+import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -68,7 +69,7 @@ function getWeekDates(offset: number): string[] {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    return d.toISOString().split('T')[0];
+    return toLocalDateString(d);
   });
 }
 
@@ -87,7 +88,10 @@ function getDayStatus(
   hasEvent: boolean
 ): DayStatus {
   if (!hasEvent) return 'rest';
-  if (dateStr === todayStr) return 'today';
+  if (dateStr === todayStr) {
+    // Show completed if user has already logged sets today
+    return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'today';
+  }
   if (dateStr < todayStr) {
     return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'missed';
   }
@@ -189,27 +193,30 @@ function DayCard({
 
 // ── SessionHistoryCard ────────────────────────────────────────────────────────
 function SessionHistoryCard({
-  card, expanded, onToggle, onGoToSession,
+  card, expanded, onToggle, onGoToSession, todayStr,
 }: {
   card: SessionCard;
   expanded: boolean;
   onToggle: () => void;
   onGoToSession: () => void;
+  todayStr: string;
 }) {
   const style = getSessionStyle(card.sessionType);
   const stats = computeStats(card.logEntries);
   const grouped = groupByExercise(card.logEntries);
   const hasLogs = card.logEntries.length > 0;
+  const isToday = card.date === todayStr;
   const isExpandable = card.status === 'completed' || card.status === 'missed';
   const exerciseList = card.exerciseNames.length > 0
     ? card.exerciseNames.join(' · ')
     : Object.keys(grouped).join(' · ') || 'Session planned';
 
+  // Today keeps gold border regardless of logged status
   const borderColor =
-    card.status === 'today'    ? GOLD :
+    isToday                    ? GOLD :
     card.status === 'upcoming' ? GREEN + '50' :
     card.status === 'missed'   ? AMBER + '40' : BORDER;
-  const borderWidth = card.status === 'today' ? 1.5 : 1;
+  const borderWidth = isToday ? 1.5 : 1;
 
   return (
     <View style={[s.sessCard, { borderColor, borderWidth }]}>
@@ -225,10 +232,11 @@ function SessionHistoryCard({
               {card.sessionType}
             </Text>
           </View>
-          {card.status === 'today' && (
+          {/* Always show "Today" label when it's today's date */}
+          {isToday && (
             <Text style={[s.statusPill, { color: GOLD }]}>Today</Text>
           )}
-          {card.status === 'completed' && (
+          {card.status === 'completed' && !isToday && (
             <MaterialCommunityIcons name="check-circle" size={14} color={RED} style={{ marginLeft: 6 }} />
           )}
           {card.status === 'missed' && (
@@ -277,11 +285,19 @@ function SessionHistoryCard({
         </View>
       )}
 
-      {/* GO TO SESSION — today only */}
+      {/* GO TO SESSION — today with no logs yet */}
       {card.status === 'today' && (
         <TouchableOpacity style={s.goBtn} onPress={onGoToSession} activeOpacity={0.8}>
           <Text style={s.goBtnText}>GO TO SESSION</Text>
           <MaterialCommunityIcons name="arrow-right" size={14} color={BG} />
+        </TouchableOpacity>
+      )}
+
+      {/* CONTINUE SESSION — today has logs but may not be done */}
+      {card.status === 'completed' && isToday && (
+        <TouchableOpacity style={s.continueBtnSmall} onPress={onGoToSession} activeOpacity={0.8}>
+          <Text style={s.continueBtnText}>CONTINUE SESSION</Text>
+          <MaterialCommunityIcons name="arrow-right" size={12} color={BG} />
         </TouchableOpacity>
       )}
 
@@ -365,13 +381,14 @@ export default function ScheduleScreen() {
 
   const weekOffsetRef = useRef(0);
   const [weekOffset, _setWeekOffset]   = useState(0);
+  const [refreshing, setRefreshing]    = useState(false);
 
   const setWeekOffset = (n: number) => {
     weekOffsetRef.current = n;
     _setWeekOffset(n);
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString();
 
   // ── Load data ────────────────────────────────────────────────────────────────
   const loadData = useCallback(async (offset = weekOffsetRef.current) => {
@@ -383,7 +400,7 @@ export default function ScheduleScreen() {
 
       const [evResp, logsResp] = await Promise.all([
         calendarApi.getEvents(startDate, endDate).catch(() => ({ events: [] })),
-        logApi.list().catch(() => []),
+        logApi.list({ startDate, endDate }).catch(() => []),
       ]);
 
       const events: any[] = evResp?.events || [];
@@ -430,8 +447,9 @@ export default function ScheduleScreen() {
           blockName:     ev.blockName  || '',
         };
       }).sort((a: SessionCard, b: SessionCard) => {
-        if (a.status === 'today') return -1;
-        if (b.status === 'today') return 1;
+        // Today's date always first, regardless of logged status
+        if (a.date === todayStr && b.date !== todayStr) return -1;
+        if (b.date === todayStr && a.date !== todayStr) return 1;
         if (a.status === 'completed' && b.status === 'upcoming') return -1;
         if (a.status === 'upcoming' && b.status === 'completed') return 1;
         if (a.status === 'missed'    && b.status === 'upcoming') return -1;
@@ -467,6 +485,12 @@ export default function ScheduleScreen() {
       setLoading(false);
     }
   }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData(weekOffsetRef.current);
+    setRefreshing(false);
+  }, [loadData]);
 
   useFocusEffect(useCallback(() => {
     loadData(weekOffsetRef.current);
@@ -585,6 +609,14 @@ export default function ScheduleScreen() {
         style={s.scroll}
         contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 80 }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={GOLD}
+            colors={[GOLD]}
+          />
+        }
       >
         {/* ── Week navigation ── */}
         <View style={s.weekNav}>
@@ -688,6 +720,7 @@ export default function ScheduleScreen() {
                   expanded={expandedCard === card.date}
                   onToggle={() => setExpandedCard(expandedCard === card.date ? null : card.date)}
                   onGoToSession={() => router.push('/(tabs)/today')}
+                  todayStr={todayStr}
                 />
               ))
             )}
@@ -770,6 +803,9 @@ const s = StyleSheet.create({
 
   goBtn:     { backgroundColor: GOLD, marginHorizontal: 12, marginBottom: 12, borderRadius: RADIUS.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 6 },
   goBtnText: { fontSize: 12, fontWeight: FONTS.weights.heavy, color: BG, letterSpacing: 0.8 },
+
+  continueBtnSmall: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: GOLD, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 12, marginHorizontal: 12, marginBottom: 10, alignSelf: 'flex-start' },
+  continueBtnText:  { fontSize: 10, fontWeight: FONTS.weights.heavy, color: BG, letterSpacing: 0.6 },
 
   expandDetail:  { borderTopWidth: 1, borderTopColor: BORDER, backgroundColor: '#0D0D0F', padding: 12, gap: 10 },
   exDetailRow:   { gap: 6 },

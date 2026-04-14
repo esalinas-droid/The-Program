@@ -8,6 +8,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
+import { toLocalDateString } from '../../src/utils/dateHelpers';
 import { calendarApi } from '../../src/utils/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ function sessionDot(type: string) {
   return SESSION_DOTS[type] ?? SESSION_DOTS.default;
 }
 function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0];
+  return toLocalDateString(d);
 }
 function todayStr() { return formatDate(new Date()); }
 function addDays(dateStr: string, n: number): string {

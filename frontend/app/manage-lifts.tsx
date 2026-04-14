@@ -8,6 +8,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
+import { getLocalDateString } from '../src/utils/dateHelpers';
 import { liftsApi } from '../src/utils/api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -312,7 +313,7 @@ function EditPRModal({
       setReps(lift.bestReps || 1);
       setOtherReps('');
       setShowOther(false);
-      setDate(lift.lastDate || new Date().toISOString().split('T')[0]);
+      setDate(lift.lastDate || getLocalDateString());
       setIsFeatured(lift.isFeatured);
       Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
     } else {

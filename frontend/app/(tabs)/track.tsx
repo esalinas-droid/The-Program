@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Animated, useWindowDimensions, Platform,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -295,6 +296,13 @@ export default function TrackScreen() {
   }
 
   useFocusEffect(useCallback(() => { loadAll(); }, []));
+
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadAll();
+    setRefreshing(false);
+  }, []);
 
   async function loadAll() {
     setLoading(true);
@@ -852,7 +860,18 @@ export default function TrackScreen() {
         <SegmentControl value={activeTab} onChange={setActiveTab} />
       </Animated.View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + 80 }]}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + 80 }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.accent}
+            colors={[COLORS.accent]}
+          />
+        }
+      >
         {activeTab === 'overview'  && <OverviewTab />}
         {activeTab === 'strength'  && <StrengthTab />}
         {activeTab === 'body'      && <BodyTab />}

@@ -7,6 +7,7 @@ import { logApi, checkinApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
 import { getBlock, getBlockName, getPhase, DELOAD_WEEKS } from '../../src/utils/calculations';
 import { CheckInData } from '../../src/types';
+import { getLocalDateString } from '../../src/utils/dateHelpers';
 
 export default function CheckInScreen() {
   const router = useRouter();
@@ -50,7 +51,7 @@ export default function CheckInScreen() {
     const recs = generateRecommendations(weekStats, profile);
     const checkIn: CheckInData = {
       week,
-      date: new Date().toISOString().slice(0, 10),
+      date: getLocalDateString(),
       avgPain: weekStats?.avgPain || 0,
       avgRPE: weekStats?.avgRPE || 0,
       completionRate: weekStats?.completionRate || 0,

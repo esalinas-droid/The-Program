@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
+  RefreshControl,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,6 +11,7 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
+import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
 import {
   ADJUST_REASONS, REASON_ICONS, AdjustReason, Alternative,
@@ -1474,6 +1476,7 @@ export default function TodayScreen() {
   const [apiSession, setApiSession]   = useState<TodaySessionResponse | null>(null);
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
+  const [refreshing, setRefreshing]   = useState(false);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -1542,16 +1545,24 @@ export default function TodayScreen() {
 
   const todayName = getTodayDayName();
 
+  // Pull-to-refresh handler — force a full session reload
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    initialLoadDone.current = false;
+    lastLoadDate.current = '';
+    setRefreshing(false);
+  }, []);
+
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
       // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getLocalDateString();
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         try {
-          const logsResp = await logApi.list();
+          const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
-          const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+          const todayLogs = allLogs;
 
           // Build per-exercise lookup: name -> list of entries; name -> setIndex->backendId
           const logsByEx = new Map<string, any[]>();
@@ -1624,10 +1635,10 @@ export default function TodayScreen() {
 
           // Reload logged state + entry IDs from backend
           try {
-            const todayStr  = new Date().toISOString().split('T')[0];
-            const logsResp  = await logApi.list();
+            const todayStr  = getLocalDateString();
+            const logsResp  = await logApi.list({ startDate: todayStr, endDate: todayStr });
             const allLogs   = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
-            const todayLogs = allLogs.filter((l: any) => l.date === todayStr);
+            const todayLogs = allLogs;
 
             // Build per-exercise lookup: setIndex-based first, count-based fallback
             const logsByEx = new Map<string, any[]>();
@@ -1884,7 +1895,7 @@ export default function TodayScreen() {
 
     if (exerciseName) {
       try {
-        const todayStr  = new Date().toISOString().split('T')[0];
+        const todayStr  = getLocalDateString();
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
         // Find the index of this set within its exercise so sync is exact
         const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
@@ -1981,7 +1992,7 @@ export default function TodayScreen() {
       if (logEntryIds[setId]) {
         await logApi.delete(logEntryIds[setId]).catch(() => {});
       }
-      const todayStr  = new Date().toISOString().split('T')[0];
+      const todayStr  = getLocalDateString();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
       const result = await logApi.create({
         date: todayStr, week: week || 1, day: dayOfWeek,
@@ -2017,7 +2028,7 @@ export default function TodayScreen() {
     try {
       const day = todayName === 'Sunday' ? 'Monday' : todayName;
       await substitutionApi.log({
-        date: new Date().toISOString().slice(0, 10),
+        date: getLocalDateString(),
         week, day, sessionType,
         originalExercise: extractExerciseName(original),
         replacementExercise: replacement,
@@ -2065,6 +2076,14 @@ export default function TodayScreen() {
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.accent}
+            colors={[COLORS.accent]}
+          />
+        }
       >
 
         {/* ── SESSION HEADER ── */}

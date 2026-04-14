@@ -34,8 +34,15 @@ export const profileApi = {
 
 // Log
 export const logApi = {
-  list: (params?: { week?: number; exercise?: string }) => {
-    const qs = params ? '?' + new URLSearchParams(Object.entries(params).filter(([,v]) => v != null).map(([k,v]) => [k, String(v)])).toString() : '';
+  list: (params?: { week?: number; exercise?: string; startDate?: string; endDate?: string }) => {
+    if (!params) return api('/log');
+    const entries = Object.entries(params)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => {
+        const key = k === 'startDate' ? 'start_date' : k === 'endDate' ? 'end_date' : k;
+        return [key, String(v)] as [string, string];
+      });
+    const qs = entries.length > 0 ? '?' + new URLSearchParams(entries).toString() : '';
     return api(`/log${qs}`);
   },
   create: (entry: any) => api('/log', { method: 'POST', body: JSON.stringify(entry) }),

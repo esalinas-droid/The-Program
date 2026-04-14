@@ -780,12 +780,21 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
 # ── Workout Log Endpoints ─────────────────────────────────────────────────────
 @api_router.get("/log")
 async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = None,
-                           session_type: Optional[str] = None, limit: int = 200,
+                           session_type: Optional[str] = None,
+                           start_date: Optional[str] = None,
+                           end_date: Optional[str] = None,
+                           limit: int = 200,
                            userId: str = Depends(get_current_user)):
     query: dict = {"userId": userId}
     if week is not None: query["week"] = week
     if exercise: query["exercise"] = exercise
     if session_type: query["sessionType"] = session_type
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
     docs = await db.log.find(query).sort("date", -1).limit(limit).to_list(limit)
     return [WorkoutLogEntry.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
 
