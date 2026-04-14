@@ -1052,8 +1052,8 @@ async def delete_tracked_lift(lift_id: str, userId: str = Depends(get_current_us
 
 # ── Bodyweight Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/bodyweight")
-async def get_bodyweight_history():
-    docs = await db.log.find({"bodyweight": {"$ne": None}}).sort("date", 1).to_list(200)
+async def get_bodyweight_history(userId: str = Depends(get_current_user)):
+    docs = await db.log.find({"userId": userId, "bodyweight": {"$ne": None}}).sort("date", 1).to_list(200)
     seen = set()
     bw_list = []
     for d in docs:
@@ -1064,20 +1064,22 @@ async def get_bodyweight_history():
 
 # ── Check-In Endpoints ────────────────────────────────────────────────────────
 @api_router.get("/checkin")
-async def get_checkins():
-    docs = await db.checkins.find({}).sort("week", -1).to_list(100)
+async def get_checkins(userId: str = Depends(get_current_user)):
+    docs = await db.checkins.find({"userId": userId}).sort("week", -1).to_list(100)
     return [CheckIn.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
 
 @api_router.post("/checkin")
-async def create_checkin(checkin: CheckInCreate):
+async def create_checkin(checkin: CheckInCreate, userId: str = Depends(get_current_user)):
     obj = CheckIn(**checkin.model_dump())
-    result = await db.checkins.insert_one(obj.to_mongo())
+    data = obj.to_mongo()
+    data["userId"] = userId
+    result = await db.checkins.insert_one(data)
     doc = await db.checkins.find_one({"_id": result.inserted_id})
     return CheckIn.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
 @api_router.get("/checkin/week/{week_num}")
-async def get_checkin_by_week(week_num: int):
-    doc = await db.checkins.find_one({"week": week_num})
+async def get_checkin_by_week(week_num: int, userId: str = Depends(get_current_user)):
+    doc = await db.checkins.find_one({"userId": userId, "week": week_num})
     if not doc:
         return None
     return CheckIn.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(doc["_id"])}
@@ -1104,15 +1106,17 @@ class SubstitutionLogCreate(BaseModel):
     reason: str
 
 @api_router.post("/substitutions")
-async def log_substitution(entry: SubstitutionLogCreate):
+async def log_substitution(entry: SubstitutionLogCreate, userId: str = Depends(get_current_user)):
     obj = SubstitutionLog(**entry.model_dump())
-    result = await db.substitutions.insert_one(obj.to_mongo())
+    data = obj.to_mongo()
+    data["userId"] = userId
+    result = await db.substitutions.insert_one(data)
     doc = await db.substitutions.find_one({"_id": result.inserted_id})
     return SubstitutionLog.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
 @api_router.get("/substitutions")
-async def get_substitutions(week: Optional[int] = None):
-    query = {}
+async def get_substitutions(week: Optional[int] = None, userId: str = Depends(get_current_user)):
+    query = {"userId": userId}
     if week is not None:
         query["week"] = week
     docs = await db.substitutions.find(query).sort("timestamp", -1).to_list(200)
@@ -1458,6 +1462,40 @@ import uuid
 _openai_client = None
 _supabase_client = None
 
+async def _migrate_log_entries_add_userid():
+    """One-time migration: add userId to existing log entries that don't have one."""
+    orphan_count = await db.log.count_documents({"userId": {"$exists": False}})
+    if orphan_count == 0:
+        logger.info("[MIGRATION] No orphan log entries found. Migration not needed.")
+        return
+
+    users = await db.users.find({}).to_list(100)
+    if len(users) == 1:
+        user_id = users[0].get("userId", "")
+        if user_id:
+            result = await db.log.update_many(
+                {"userId": {"$exists": False}},
+                {"$set": {"userId": user_id}}
+            )
+            logger.info(f"[MIGRATION] Backfilled {result.modified_count} log entries with userId: {user_id}")
+
+            # Also backfill checkins
+            checkin_result = await db.checkins.update_many(
+                {"userId": {"$exists": False}},
+                {"$set": {"userId": user_id}}
+            )
+            logger.info(f"[MIGRATION] Backfilled {checkin_result.modified_count} checkins with userId: {user_id}")
+
+            # Also backfill substitutions
+            sub_result = await db.substitutions.update_many(
+                {"userId": {"$exists": False}},
+                {"$set": {"userId": user_id}}
+            )
+            logger.info(f"[MIGRATION] Backfilled {sub_result.modified_count} substitutions with userId: {user_id}")
+    else:
+        logger.warning(f"[MIGRATION] {orphan_count} log entries have no userId and multiple users exist. Manual migration needed.")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -1469,6 +1507,8 @@ async def load_models():
         os.environ.get('SUPABASE_KEY', '')
     )
     logger.info("Supabase client initialized.")
+    # Run one-time migration to backfill orphan log entries with userId
+    await _migrate_log_entries_add_userid()
     # Pre-load plan from MongoDB into memory so all plan endpoints work immediately
     await _ensure_plan_loaded()
     logger.info("Startup complete — plan preloaded.")

@@ -1,0 +1,54 @@
+{
+  "summary": "Tested userId sync Fixes 6-8: bodyweight, checkin, substitution endpoints. 14/16 tests passed. 2 failures: POST /api/checkin and POST /api/substitutions return responses without userId field (stripped by response model serialization). GET endpoints correctly scope data per user. Migration confirmed via startup log and data counts.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/checkin",
+        "issue": "Response does not include userId field. CheckIn model lacks userId field, so it's stripped from the serialized response even though userId IS saved in MongoDB. Affects verifying user ownership from client-side.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/substitutions",
+        "issue": "Response does not include userId field. SubstitutionLog model lacks userId field, stripped from serialized response. Same root cause as checkin.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/substitutions",
+        "issue": "Hard-coded to_list(200) limit — user_a has 234 backfilled substitutions but API only returns 200. Not a breaking bug but the full dataset is not accessible in a single call."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_userid_sync_fix6_8.py",
+    "/app/test_reports/pytest/userid_sync_fix6_8_results.xml"
+  ],
+  "action_items": [
+    "Add userId field to CheckIn model (and CheckInCreate or response) so POST /api/checkin returns userId in response",
+    "Add userId field to SubstitutionLog model so POST /api/substitutions returns userId in response",
+    "Consider increasing or paginating the to_list(200) limit on GET /api/substitutions — 234 entries exist but only 200 are returned"
+  ],
+  "critical_code_review_comments": [
+    "CheckIn and SubstitutionLog Pydantic models don't include userId — the field is stored in MongoDB but excluded from from_mongo() serialization. Fix: add userId: Optional[str] = None to both models and include it in the response.",
+    "GET /api/substitutions has .to_list(200) hardcoded limit — migration backfilled 234 entries but only 200 are visible via the API"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_userid_sync_fix6_8.py"
+  ],
+  "success_rate": {
+    "backend": "87.5% (14/16 tests)",
+    "frontend": "N/A"
+  },
+  "seed_data_creation": "TEST checkin (week 9999) and TEST substitution (week 9999) were created for user_a during testing",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Fixes 1-5 (log/PR/analytics/stats) were done in prior sessions. Fixes 6-8 (bodyweight/checkin/substitution) tested here. GET scoping all works correctly. Only issue: POST responses don't expose userId. Migration log confirms: '[MIGRATION] No orphan log entries found. Migration not needed.' User_a has 128+ logs, 7+ checkins, 200+ (of 234) substitutions. User_b has 0 substitutions (isolation confirmed).",
+  "rca_of_issue": "Root cause: CheckIn and SubstitutionLog extend BaseDocument which maps MongoDB documents via from_mongo(). The userId field is stored in the raw MongoDB doc but is not declared in the Pydantic model, so model_dump() silently drops it. Fix: add `userId: Optional[str] = None` to both CheckIn and SubstitutionLog models. The save logic (data['userId'] = userId) is correct — only the response serialization is broken."
+}

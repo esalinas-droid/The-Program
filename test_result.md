@@ -1301,3 +1301,101 @@ agent_communication:
       - Rest timer is sticky (visible while scrolling)
       - FINISH SESSION is grayed out initially, activates after 50% sets logged
 
+
+
+backend:
+  - task: "CRITICAL SYNC FIX — Fix 6: GET /api/bodyweight scoped by userId"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added userId: str = Depends(get_current_user) to get_bodyweight_history. Now filters db.log by userId AND bodyweight != null."
+
+  - task: "CRITICAL SYNC FIX — Fix 7: Check-in endpoints scoped by userId"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/checkin filters by userId. POST /api/checkin saves userId to document. GET /api/checkin/week/{week_num} filters by userId AND week."
+
+  - task: "CRITICAL SYNC FIX — Fix 8: Substitution endpoints scoped by userId"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/substitutions saves userId to document. GET /api/substitutions filters by userId (plus optional week filter)."
+
+  - task: "CRITICAL SYNC FIX — DB Migration: Backfill orphan log/checkin/substitution entries"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added _migrate_log_entries_add_userid() async function. Called on startup. When multiple users exist, skips auto-migration. Manual migration script run_migration.py was executed: backfilled 128 log entries, 7 checkins, 234 substitutions to user_a@theprogram.app (userId=5e5f0dd7-1fe7-4df4-b813-4b02d5e9e902). Verified: 0 orphan entries remain. Startup now logs: [MIGRATION] No orphan log entries found."
+
+metadata:
+  created_by: "main_agent"
+  version: "5.0"
+  test_sequence: 27
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "CRITICAL SYNC FIX — Fix 6: GET /api/bodyweight scoped by userId"
+    - "CRITICAL SYNC FIX — Fix 7: Check-in endpoints scoped by userId"
+    - "CRITICAL SYNC FIX — Fix 8: Substitution endpoints scoped by userId"
+    - "CRITICAL SYNC FIX — DB Migration: Backfill orphan log/checkin/substitution entries"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: >
+      CRITICAL SYNC FIX — Fixes 6-8 + DB Migration complete.
+
+      WHAT WAS DONE:
+      1. Fix 6 (Bodyweight): GET /api/bodyweight now requires auth + filters by userId.
+      2. Fix 7 (Check-ins): GET /api/checkin, POST /api/checkin, GET /api/checkin/week/{week_num}
+         all scoped by userId. POST now saves userId to the document before inserting.
+      3. Fix 8 (Substitutions): POST /api/substitutions saves userId. GET /api/substitutions
+         filters by userId (+ optional week param).
+      4. Migration: Added _migrate_log_entries_add_userid() to startup event.
+         - Ran manual migration: backfilled 128 logs + 7 checkins + 234 substitutions
+           to user_a@theprogram.app (userId=5e5f0dd7-1fe7-4df4-b813-4b02d5e9e902).
+         - db.log.count({userId:{$exists:false}}) = 0 ✅
+         - Backend startup now shows "[MIGRATION] No orphan log entries found." ✅
+
+      HOW TO TEST:
+      1. POST /api/auth/login {email: "user_a@theprogram.app", password: "StrongmanA123"} → get JWT
+      2. GET /api/bodyweight with Authorization: Bearer <token> → should return list of {date, weight} entries
+      3. GET /api/checkin with token → should return checkin list (scoped to user_a)
+      4. POST /api/checkin with token + body {week, sessionType, setsLogged, totalSets, avgEffort, coachNote} → should save with userId
+      5. GET /api/checkin/week/1 with token → should return week 1 checkin for user_a only
+      6. POST /api/substitutions with token + body {date, week, day, sessionType, originalExercise, replacementExercise, reason} → should save with userId
+      7. GET /api/substitutions with token → should return substitutions for user_a only
+      8. Test data isolation: Login as user_b@theprogram.app (HypertrophyB123), call same endpoints → should return different (empty) results
+      9. Log a set on Today page (as user_a) → verify Home Week Review, Home stats, PR board all show data for user_a
+
+      Test credentials:
+      - user_a@theprogram.app / StrongmanA123 (has 128 backfilled log entries)
+      - user_b@theprogram.app / HypertrophyB123 (fresh, no log entries)
