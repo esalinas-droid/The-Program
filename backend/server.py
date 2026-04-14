@@ -122,6 +122,7 @@ class AthleteProfileUpdate(BaseModel):
     trainingDaysCount: Optional[int] = None
 
 class WorkoutLogEntry(BaseDocument):
+    userId: str = ""          # owner of this log entry
     date: str
     week: int
     day: str
@@ -778,8 +779,9 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
 # ── Workout Log Endpoints ─────────────────────────────────────────────────────
 @api_router.get("/log")
 async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = None,
-                           session_type: Optional[str] = None, limit: int = 200):
-    query = {}
+                           session_type: Optional[str] = None, limit: int = 200,
+                           userId: str = Depends(get_current_user)):
+    query: dict = {"userId": userId}
     if week is not None: query["week"] = week
     if exercise: query["exercise"] = exercise
     if session_type: query["sessionType"] = session_type
@@ -787,19 +789,28 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
     return [WorkoutLogEntry.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
 
 @api_router.post("/log")
-async def create_log_entry(entry: WorkoutLogCreate):
+async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     e1rm = epley_e1rm(entry.weight, entry.reps)
-    log = WorkoutLogEntry(**entry.model_dump(), e1rm=e1rm)
+    log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
     data = log.to_mongo()
     result = await db.log.insert_one(data)
     doc = await db.log.find_one({"_id": result.inserted_id})
+    # Invalidate weekly review cache so it regenerates with fresh data
+    profile = await db.profile.find_one({"userId": userId})
+    if profile:
+        current_week = profile.get("currentWeek", 1)
+        await db.weekly_reviews.delete_one({"userId": userId, "week": current_week})
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
 @api_router.put("/log/{entry_id}")
-async def update_log_entry(entry_id: str, entry: WorkoutLogCreate):
+async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
+    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    if not existing or existing.get("userId", "") not in (userId, ""):
+        raise HTTPException(status_code=404, detail="Entry not found")
     e1rm = epley_e1rm(entry.weight, entry.reps)
     data = entry.model_dump()
     data["e1rm"] = e1rm
+    data["userId"] = userId
     await db.log.update_one({"_id": ObjectId(entry_id)}, {"$set": data})
     doc = await db.log.find_one({"_id": ObjectId(entry_id)})
     if not doc:
@@ -807,26 +818,38 @@ async def update_log_entry(entry_id: str, entry: WorkoutLogCreate):
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(doc["_id"])}
 
 @api_router.delete("/log/{entry_id}")
-async def delete_log_entry(entry_id: str):
-    result = await db.log.delete_one({"_id": ObjectId(entry_id)})
-    if result.deleted_count == 0:
+async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user)):
+    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    if not existing or existing.get("userId", "") not in (userId, ""):
         raise HTTPException(status_code=404, detail="Entry not found")
+    await db.log.delete_one({"_id": ObjectId(entry_id)})
     return {"deleted": True}
 
 @api_router.get("/log/stats/week/{week_num}")
-async def get_week_stats(week_num: int):
-    docs = await db.log.find({"week": week_num}).to_list(500)
+async def get_week_stats(week_num: int, userId: str = Depends(get_current_user)):
+    docs = await db.log.find({"userId": userId, "week": week_num}).to_list(500)
     if not docs:
-        return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0}
+        return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0, "sessionsCompleted": 0, "sessionsPlanned": 4}
+
     pain_vals = [d["pain"] for d in docs if d.get("pain") is not None]
-    rpe_vals = [d["rpe"] for d in docs if d.get("rpe") is not None]
-    completed = sum(1 for d in docs if d.get("completed") in ["Completed", "Modified", "yes"])
-    total = len(docs)
+    rpe_vals  = [d["rpe"]  for d in docs if d.get("rpe")  is not None and d.get("rpe", 0) > 0]
+    total     = len(docs)
+
+    # Count unique training days (dates) as "sessions completed"
+    session_dates = set(d.get("date") for d in docs if d.get("date"))
+    sessions_completed = len(session_dates)
+
+    # Pull sessions_planned from user profile
+    profile = await db.profile.find_one({"userId": userId})
+    sessions_planned = int(profile.get("trainingDaysCount", 4)) if profile else 4
+
     return {
         "avgPain": round(sum(pain_vals) / len(pain_vals), 1) if pain_vals else 0,
-        "avgRPE": round(sum(rpe_vals) / len(rpe_vals), 1) if rpe_vals else 0,
-        "completionRate": round(completed / total * 100) if total else 0,
-        "entries": total
+        "avgRPE":  round(sum(rpe_vals)  / len(rpe_vals),  1) if rpe_vals  else 0,
+        "completionRate": round(sessions_completed / max(sessions_planned, 1) * 100),
+        "entries": total,
+        "sessionsCompleted": sessions_completed,
+        "sessionsPlanned":   sessions_planned,
     }
 
 # ── PR Endpoints ──────────────────────────────────────────────────────────────
@@ -840,56 +863,56 @@ TRACKED_EXERCISES = [
 ]
 
 @api_router.get("/prs")
-async def get_prs():
+async def get_prs(userId: str = Depends(get_current_user)):
     prs = []
     for exercise in TRACKED_EXERCISES:
-        docs = await db.log.find({"exercise": exercise}).sort("e1rm", -1).to_list(500)
+        docs = await db.log.find({"userId": userId, "exercise": exercise}).sort("e1rm", -1).to_list(500)
         if not docs:
             prs.append({"exercise": exercise, "lastDate": None, "bestWeight": 0, "bestReps": 0, "bestE1rm": 0, "latestNote": ""})
             continue
-        best = max(docs, key=lambda d: d.get("e1rm", 0))
+        best   = max(docs, key=lambda d: d.get("e1rm", 0))
         latest = max(docs, key=lambda d: d.get("date", ""))
         prs.append({
-            "exercise": exercise,
-            "lastDate": latest.get("date"),
+            "exercise":   exercise,
+            "lastDate":   latest.get("date"),
             "bestWeight": best.get("weight", 0),
-            "bestReps": best.get("reps", 0),
-            "bestE1rm": best.get("e1rm", 0),
+            "bestReps":   best.get("reps", 0),
+            "bestE1rm":   best.get("e1rm", 0),
             "latestNote": latest.get("notes", "")
         })
     return prs
 
 @api_router.get("/prs/bests/overview")
-async def get_bests_overview():
+async def get_bests_overview(userId: str = Depends(get_current_user)):
     categories = {
         "squat": ["SSB Box Squat", "Back Squat", "Belt Squat", "Cambered Bar Box Squat", "Trap Bar Deadlift (High Handle)"],
         "press": ["Floor Press", "Close-Grip Bench Press", "Bench Press", "Log Clean and Press", "Axle Clean and Press", "Log Push Press", "Axle Push Press", "Overhead Press (Barbell)"],
-        "pull": ["Conventional Deadlift", "Sumo Deadlift", "Trap Bar Deadlift (High Handle)", "Block Pull (Below Knee)"]
+        "pull":  ["Conventional Deadlift", "Sumo Deadlift", "Trap Bar Deadlift (High Handle)", "Block Pull (Below Knee)"]
     }
     result = {}
     for cat, exercises in categories.items():
-        best_e1rm = 0
+        best_e1rm    = 0
         best_exercise = None
         for ex in exercises:
-            doc = await db.log.find_one({"exercise": ex}, sort=[("e1rm", -1)])
+            doc = await db.log.find_one({"userId": userId, "exercise": ex}, sort=[("e1rm", -1)])
             if doc and doc.get("e1rm", 0) > best_e1rm:
-                best_e1rm = doc["e1rm"]
+                best_e1rm     = doc["e1rm"]
                 best_exercise = ex
         result[cat] = {"exercise": best_exercise, "e1rm": best_e1rm}
     return result
 
 @api_router.get("/prs/{exercise}")
-async def get_pr_history(exercise: str):
-    docs = await db.log.find({"exercise": exercise}).sort("date", 1).to_list(500)
+async def get_pr_history(exercise: str, userId: str = Depends(get_current_user)):
+    docs = await db.log.find({"userId": userId, "exercise": exercise}).sort("date", 1).to_list(500)
     history = []
     for d in docs:
         history.append({
-            "date": d.get("date"),
-            "week": d.get("week"),
+            "date":   d.get("date"),
+            "week":   d.get("week"),
             "weight": d.get("weight", 0),
-            "reps": d.get("reps", 0),
-            "e1rm": d.get("e1rm", 0),
-            "rpe": d.get("rpe", 0)
+            "reps":   d.get("reps", 0),
+            "e1rm":   d.get("e1rm", 0),
+            "rpe":    d.get("rpe", 0)
         })
     return history
 
@@ -2199,9 +2222,9 @@ async def apply_recommendation(body: ApplyRecommendationRequest, userId: str = D
 
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/analytics/overview")
-async def get_analytics_overview():
-    all_logs = await db.log.find({}).to_list(5000)
-    profile = await db.profile.find_one({})
+async def get_analytics_overview(userId: str = Depends(get_current_user)):
+    all_logs = await db.log.find({"userId": userId}).to_list(5000)
+    profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
 
     training_days = len(set(d.get("date", "") for d in all_logs if d.get("date")))
@@ -2254,13 +2277,13 @@ async def get_analytics_overview():
 
 
 @api_router.get("/analytics/volume")
-async def get_volume_trends():
-    profile = await db.profile.find_one({})
+async def get_volume_trends(userId: str = Depends(get_current_user)):
+    profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
     start_week = max(1, current_week - 7)
     result = []
     for w in range(start_week, current_week + 1):
-        docs = await db.log.find({"week": w}).to_list(500)
+        docs = await db.log.find({"userId": userId, "week": w}).to_list(500)
         total_sets = sum(int(d.get("sets", 1) or 1) for d in docs)
         tonnage = sum(
             float(d.get("weight", 0) or 0) * int(d.get("reps", 0) or 0) * int(d.get("sets", 1) or 1)
@@ -2271,8 +2294,8 @@ async def get_volume_trends():
 
 
 @api_router.get("/analytics/pain")
-async def get_pain_analytics():
-    docs = await db.log.find({"pain": {"$gt": 0}}).sort("date", 1).to_list(500)
+async def get_pain_analytics(userId: str = Depends(get_current_user)):
+    docs = await db.log.find({"userId": userId, "pain": {"$gt": 0}}).sort("date", 1).to_list(500)
     if not docs:
         return {"hasPain": False, "locations": [], "trend": "clean", "weeklyData": []}
     weekly: dict = {}
@@ -2287,9 +2310,9 @@ async def get_pain_analytics():
     ]
     if len(weekly_data) >= 2:
         recent = weekly_data[-3:]
-        older = weekly_data[:-3]
+        older  = weekly_data[:-3]
         recent_avg = sum(d["avgPain"] for d in recent) / len(recent)
-        older_avg = sum(d["avgPain"] for d in older) / len(older) if older else recent_avg
+        older_avg  = sum(d["avgPain"] for d in older) / len(older) if older else recent_avg
         if recent_avg < older_avg * 0.9:
             trend = "decreasing"
         elif recent_avg > older_avg * 1.1:
@@ -2312,28 +2335,37 @@ async def get_pain_analytics():
 
 
 @api_router.get("/analytics/compliance")
-async def get_compliance_breakdown():
-    profile = await db.profile.find_one({})
+async def get_compliance_breakdown(userId: str = Depends(get_current_user)):
+    profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
-    docs = await db.log.find({"week": {"$gte": max(1, current_week - 7)}}).to_list(1000)
-    session_types = ["ME Lower", "ME Upper", "DE Lower", "DE Upper"]
+    docs = await db.log.find({"userId": userId, "week": {"$gte": max(1, current_week - 7)}}).to_list(1000)
+
+    # All possible session type names (covers ME/DE and new RE/Full Body naming)
+    session_types = [
+        "Heavy Lower", "Heavy Upper", "Speed Lower", "Speed Upper",
+        "Upper Body", "Lower Body", "Full Body",
+        "Repetition Upper", "Repetition Lower",
+    ]
     by_type: dict = {st: set() for st in session_types}
     for d in docs:
-        st = d.get("sessionType", "")
+        st   = d.get("sessionType", "")
         week = d.get("week")
         if week:
             for session_type in session_types:
                 if session_type.lower() in st.lower():
                     by_type[session_type].add(week)
     weeks_count = max(len(set(d.get("week") for d in docs if d.get("week"))), 1)
+
+    # Only return types that have at least one completed session
     return [
         {
             "sessionType": st,
-            "completed": len(by_type[st]),
-            "expected": weeks_count,
-            "rate": min(100, round(len(by_type[st]) / weeks_count * 100))
+            "completed":   len(by_type[st]),
+            "expected":    weeks_count,
+            "rate":        min(100, round(len(by_type[st]) / weeks_count * 100))
         }
         for st in session_types
+        if len(by_type[st]) > 0
     ]
 
 
