@@ -10,6 +10,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
 import { programApi, profileApi } from '../src/utils/api';
+import { getLocalDateString } from '../src/utils/dateHelpers';
 import { getStoredUser, getAuthToken } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -426,7 +427,7 @@ export default function OnboardingIntake() {
         competitionType: hasCompetition ? competitionType : undefined,
         trainingDaysCount: trainingDays,
         currentWeek:     1,
-        programStartDate: new Date().toISOString(),
+        programStartDate: getLocalDateString(),
         onboardingComplete: true,
         notifications: {
           dailyReminder:     true,

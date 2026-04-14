@@ -785,7 +785,7 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
                            end_date: Optional[str] = None,
                            limit: int = 200,
                            userId: str = Depends(get_current_user)):
-    query: dict = {"userId": userId}
+    query: dict = _user_or_orphan(userId)
     if week is not None: query["week"] = week
     if exercise: query["exercise"] = exercise
     if session_type: query["sessionType"] = session_type
@@ -837,7 +837,8 @@ async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user
 
 @api_router.get("/log/stats/week/{week_num}")
 async def get_week_stats(week_num: int, userId: str = Depends(get_current_user)):
-    docs = await db.log.find({"userId": userId, "week": week_num}).to_list(500)
+    user_filter = _user_or_orphan(userId)
+    docs = await db.log.find({**user_filter, "week": week_num}).to_list(500)
     if not docs:
         return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0, "sessionsCompleted": 0, "sessionsPlanned": 4}
 
@@ -876,7 +877,7 @@ TRACKED_EXERCISES = [
 async def get_prs(userId: str = Depends(get_current_user)):
     prs = []
     for exercise in TRACKED_EXERCISES:
-        docs = await db.log.find({"userId": userId, "exercise": exercise}).sort("e1rm", -1).to_list(500)
+        docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("e1rm", -1).to_list(500)
         if not docs:
             prs.append({"exercise": exercise, "lastDate": None, "bestWeight": 0, "bestReps": 0, "bestE1rm": 0, "latestNote": ""})
             continue
@@ -904,7 +905,7 @@ async def get_bests_overview(userId: str = Depends(get_current_user)):
         best_e1rm    = 0
         best_exercise = None
         for ex in exercises:
-            doc = await db.log.find_one({"userId": userId, "exercise": ex}, sort=[("e1rm", -1)])
+            doc = await db.log.find_one({**_user_or_orphan(userId), "exercise": ex}, sort=[("e1rm", -1)])
             if doc and doc.get("e1rm", 0) > best_e1rm:
                 best_e1rm     = doc["e1rm"]
                 best_exercise = ex
@@ -913,7 +914,7 @@ async def get_bests_overview(userId: str = Depends(get_current_user)):
 
 @api_router.get("/prs/{exercise}")
 async def get_pr_history(exercise: str, userId: str = Depends(get_current_user)):
-    docs = await db.log.find({"userId": userId, "exercise": exercise}).sort("date", 1).to_list(500)
+    docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("date", 1).to_list(500)
     history = []
     for d in docs:
         history.append({
@@ -1063,7 +1064,7 @@ async def delete_tracked_lift(lift_id: str, userId: str = Depends(get_current_us
 # ── Bodyweight Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/bodyweight")
 async def get_bodyweight_history(userId: str = Depends(get_current_user)):
-    docs = await db.log.find({"userId": userId, "bodyweight": {"$ne": None}}).sort("date", 1).to_list(200)
+    docs = await db.log.find({**_user_or_orphan(userId), "bodyweight": {"$ne": None}}).sort("date", 1).to_list(200)
     seen = set()
     bw_list = []
     for d in docs:
@@ -1473,38 +1474,77 @@ import uuid
 _openai_client = None
 _supabase_client = None
 
+def _user_or_orphan(user_id: str) -> dict:
+    """Returns MongoDB $or filter matching userId OR orphan entries (no userId/empty/null).
+    Used as a safety net while migration is in progress or for legacy data."""
+    return {"$or": [
+        {"userId": user_id},
+        {"userId": {"$exists": False}},
+        {"userId": ""},
+        {"userId": None},
+    ]}
+
+
 async def _migrate_log_entries_add_userid():
-    """One-time migration: add userId to existing log entries that don't have one."""
-    orphan_count = await db.log.count_documents({"userId": {"$exists": False}})
+    """Migration: add userId to log entries that don't have one."""
+    orphan_filter = {"$or": [{"userId": {"$exists": False}}, {"userId": ""}, {"userId": None}]}
+    orphan_count = await db.log.count_documents(orphan_filter)
     if orphan_count == 0:
         logger.info("[MIGRATION] No orphan log entries found. Migration not needed.")
         return
 
+    logger.info(f"[MIGRATION] Found {orphan_count} orphan log entries — attempting backfill")
+
     users = await db.users.find({}).to_list(100)
-    if len(users) == 1:
-        user_id = users[0].get("userId", "")
-        if user_id:
-            result = await db.log.update_many(
-                {"userId": {"$exists": False}},
-                {"$set": {"userId": user_id}}
-            )
-            logger.info(f"[MIGRATION] Backfilled {result.modified_count} log entries with userId: {user_id}")
+    if len(users) == 0:
+        logger.warning("[MIGRATION] No users found — cannot backfill")
+        return
 
-            # Also backfill checkins
-            checkin_result = await db.checkins.update_many(
-                {"userId": {"$exists": False}},
-                {"$set": {"userId": user_id}}
-            )
-            logger.info(f"[MIGRATION] Backfilled {checkin_result.modified_count} checkins with userId: {user_id}")
+    # Find the real user: the one with a completed onboarding profile
+    user_id = None
+    for u in users:
+        uid = u.get("userId", "")
+        if not uid:
+            continue
+        profile = await db.profile.find_one({"userId": uid})
+        if profile and profile.get("onboardingComplete"):
+            user_id = uid
+            logger.info(f"[MIGRATION] Found active user with completed onboarding: {user_id}")
+            break
 
-            # Also backfill substitutions
-            sub_result = await db.substitutions.update_many(
-                {"userId": {"$exists": False}},
-                {"$set": {"userId": user_id}}
-            )
-            logger.info(f"[MIGRATION] Backfilled {sub_result.modified_count} substitutions with userId: {user_id}")
-    else:
-        logger.warning(f"[MIGRATION] {orphan_count} log entries have no userId and multiple users exist. Manual migration needed.")
+    if not user_id:
+        # Fallback: first user with onboardingComplete flag on the user doc itself
+        for u in users:
+            if u.get("onboardingComplete") and u.get("userId"):
+                user_id = u["userId"]
+                break
+
+    if not user_id:
+        # Last resort: first user with a userId
+        for u in users:
+            if u.get("userId"):
+                user_id = u["userId"]
+                break
+
+    if not user_id:
+        logger.warning("[MIGRATION] Could not determine a valid userId — skipping backfill")
+        return
+
+    # Backfill ALL orphan documents
+    log_result = await db.log.update_many(
+        orphan_filter, {"$set": {"userId": user_id}}
+    )
+    logger.info(f"[MIGRATION] Backfilled {log_result.modified_count} log entries → userId: {user_id}")
+
+    checkin_result = await db.checkins.update_many(
+        orphan_filter, {"$set": {"userId": user_id}}
+    )
+    logger.info(f"[MIGRATION] Backfilled {checkin_result.modified_count} checkins")
+
+    sub_result = await db.substitutions.update_many(
+        orphan_filter, {"$set": {"userId": user_id}}
+    )
+    logger.info(f"[MIGRATION] Backfilled {sub_result.modified_count} substitutions")
 
 
 @app.on_event("startup")
@@ -1857,6 +1897,22 @@ async def _ensure_plan_loaded(uid: str = None) -> bool:
             return True
     except Exception as e:
         logger.warning(f"Could not load saved plan from MongoDB: {e}")
+
+    # ── 1b. Fallback: load ANY saved plan and re-assign to current userId ──────
+    try:
+        from models.schemas import AnnualPlan as _AnnualPlan
+        any_plan_doc = await db.saved_plans.find_one({})
+        if any_plan_doc:
+            any_plan_doc.pop("_id", None)
+            any_plan_doc.pop("_saved_at", None)
+            plan = _AnnualPlan.model_validate(any_plan_doc)
+            plan.userId = user_id
+            _prog_store["plans"][user_id] = plan
+            await _save_plan_to_db(plan, user_id)
+            logger.warning(f"[PLAN] Loaded orphan plan and reassigned to user: {user_id}")
+            return True
+    except Exception as e:
+        logger.warning(f"[PLAN] Fallback orphan plan load failed: {e}")
 
     # ── 2. Fall back: regenerate from profile data ─────────────────────────────
     profile_doc = await db.profile.find_one({"userId": user_id})
@@ -2274,7 +2330,7 @@ async def apply_recommendation(body: ApplyRecommendationRequest, userId: str = D
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/analytics/overview")
 async def get_analytics_overview(userId: str = Depends(get_current_user)):
-    all_logs = await db.log.find({"userId": userId}).to_list(5000)
+    all_logs = await db.log.find(_user_or_orphan(userId)).to_list(5000)
     profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
 
@@ -2334,7 +2390,7 @@ async def get_volume_trends(userId: str = Depends(get_current_user)):
     start_week = max(1, current_week - 7)
     result = []
     for w in range(start_week, current_week + 1):
-        docs = await db.log.find({"userId": userId, "week": w}).to_list(500)
+        docs = await db.log.find({**_user_or_orphan(userId), "week": w}).to_list(500)
         total_sets = sum(int(d.get("sets", 1) or 1) for d in docs)
         tonnage = sum(
             float(d.get("weight", 0) or 0) * int(d.get("reps", 0) or 0) * int(d.get("sets", 1) or 1)
@@ -2346,7 +2402,7 @@ async def get_volume_trends(userId: str = Depends(get_current_user)):
 
 @api_router.get("/analytics/pain")
 async def get_pain_analytics(userId: str = Depends(get_current_user)):
-    docs = await db.log.find({"userId": userId, "pain": {"$gt": 0}}).sort("date", 1).to_list(500)
+    docs = await db.log.find({**_user_or_orphan(userId), "pain": {"$gt": 0}}).sort("date", 1).to_list(500)
     if not docs:
         return {"hasPain": False, "locations": [], "trend": "clean", "weeklyData": []}
     weekly: dict = {}
@@ -2389,7 +2445,7 @@ async def get_pain_analytics(userId: str = Depends(get_current_user)):
 async def get_compliance_breakdown(userId: str = Depends(get_current_user)):
     profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
-    docs = await db.log.find({"userId": userId, "week": {"$gte": max(1, current_week - 7)}}).to_list(1000)
+    docs = await db.log.find({**_user_or_orphan(userId), "week": {"$gte": max(1, current_week - 7)}}).to_list(1000)
 
     # All possible session type names (covers ME/DE and new RE/Full Body naming)
     session_types = [
@@ -2711,7 +2767,7 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
         "userId": userId, "date": {"$gte": week_ago},
     }).to_list(30)
 
-    log_docs = await db.log.find({"userId": userId, "week": current_week}).to_list(500)
+    log_docs = await db.log.find({**_user_or_orphan(userId), "week": current_week}).to_list(500)
 
     # Stats
     sessions_planned = int(profile_doc.get("trainingDaysCount", 4)) if profile_doc else 4
@@ -2728,7 +2784,7 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
     pain_regions = list(set(d.get("bodyRegion") for d in pain_docs if d.get("bodyRegion")))
 
     # PR detection (e1rm improvement vs prev week)
-    prev_logs = await db.log.find({"userId": userId, "week": current_week - 1}).to_list(500)
+    prev_logs = await db.log.find({**_user_or_orphan(userId), "week": current_week - 1}).to_list(500)
     this_best: dict = {}
     for d in log_docs:
         ex = d.get("exercise", "")
@@ -4177,6 +4233,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@api_router.get("/debug/sync-status")
+async def debug_sync_status(userId: str = Depends(get_current_user)):
+    """Debug endpoint to diagnose sync issues between log entries, plans, and calendar."""
+    from datetime import timedelta
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    total_logs   = await db.log.count_documents({})
+    user_logs    = await db.log.count_documents({"userId": userId})
+    orphan_logs  = await db.log.count_documents(
+        {"$or": [{"userId": {"$exists": False}}, {"userId": ""}, {"userId": None}]}
+    )
+    distinct_ids = await db.log.distinct("userId")
+
+    recent_docs = await db.log.find({}).sort("date", -1).limit(3).to_list(3)
+    recent_sample = [
+        {"date": d.get("date"), "exercise": d.get("exercise"),
+         "userId": d.get("userId", "MISSING"), "week": d.get("week")}
+        for d in recent_docs
+    ]
+
+    plan         = _prog_store["plans"].get(userId)
+    plan_status  = "LOADED" if plan else "NOT LOADED"
+    saved_plan   = await db.saved_plans.find_one({"userId": userId})
+    any_plan_doc = await db.saved_plans.find_one({})
+    any_plan_uid = any_plan_doc.get("userId", "NONE") if any_plan_doc else "NO PLANS"
+
+    profile      = await db.profile.find_one({"userId": userId})
+    current_week = profile.get("currentWeek", "N/A") if profile else "N/A"
+
+    monday = datetime.now() - timedelta(days=datetime.now().weekday())
+    sunday = monday + timedelta(days=6)
+    start_wk = monday.strftime("%Y-%m-%d")
+    end_wk   = sunday.strftime("%Y-%m-%d")
+
+    cal_events = []
+    if plan and profile:
+        overrides = await db.calendar_overrides.find({"userId": userId}).to_list(100)
+        all_events = _generate_calendar_events(
+            plan, profile.get("preferredDays", []) or [], overrides
+        )
+        cal_events = [e for e in all_events if start_wk <= e.get("date", "") <= end_wk]
+
+    users = await db.users.find({}).to_list(10)
+    user_list = [{"userId": u.get("userId"), "email": u.get("email")} for u in users]
+
+    return {
+        "currentJwtUserId": userId,
+        "today": today,
+        "weekRange": f"{start_wk} → {end_wk}",
+        "logEntries": {
+            "total": total_logs,
+            "forCurrentUser": user_logs,
+            "orphans": orphan_logs,
+            "distinctUserIds": distinct_ids,
+            "recentSample": recent_sample,
+        },
+        "plan": {
+            "inMemory": plan_status,
+            "savedForUser": "YES" if saved_plan else "NO",
+            "anyPlanUserId": any_plan_uid,
+        },
+        "profile": {
+            "exists": "YES" if profile else "NO",
+            "currentWeek": current_week,
+        },
+        "calendarEventsThisWeek": len(cal_events),
+        "calendarEventDates": [e.get("date") for e in cal_events[:7]],
+        "usersInDatabase": user_list,
+    }
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

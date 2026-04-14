@@ -391,6 +391,7 @@ class IntakeRequest(BaseModel):
     competitionType: Optional[str] = None
     preferredDays: List[str] = []   # e.g. ["monday", "wednesday", "friday"]
     name: Optional[str] = None
+    programStartDate: Optional[str] = None  # Local date "YYYY-MM-DD" from frontend
 
 class LogSetRequest(BaseModel):
     sessionExerciseId: str

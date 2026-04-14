@@ -993,7 +993,15 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         GoalType.STRENGTH,
     )
     plan_id = _id()
-    start_date = datetime.now()
+    # Use programStartDate from intake (local date from device) if provided
+    _start_str = getattr(intake, 'programStartDate', None) or getattr(intake, 'startDate', None)
+    if _start_str and len(str(_start_str)) >= 10:
+        try:
+            start_date = datetime.strptime(str(_start_str)[:10], "%Y-%m-%d")
+        except Exception:
+            start_date = datetime.now()
+    else:
+        start_date = datetime.now()
     frequency = intake.frequency or 4
 
     # Choose phase template based on whether the user competes

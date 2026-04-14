@@ -399,12 +399,23 @@ export default function ScheduleScreen() {
       const endDate    = weekDates[6];
 
       const [evResp, logsResp] = await Promise.all([
-        calendarApi.getEvents(startDate, endDate).catch(() => ({ events: [] })),
-        logApi.list({ startDate, endDate }).catch(() => []),
+        calendarApi.getEvents(startDate, endDate).catch((err: any) => {
+          console.warn('[Schedule] Calendar fetch FAILED:', err?.message || err);
+          return { events: [] };
+        }),
+        logApi.list({ startDate, endDate }).catch((err: any) => {
+          console.warn('[Schedule] Log fetch FAILED:', err?.message || err);
+          return [];
+        }),
       ]);
 
       const events: any[] = evResp?.events || [];
       const allLogs: any[] = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
+
+      console.log(`[Schedule] Loaded: ${events.length} events, ${allLogs.length} logs for ${startDate} → ${endDate}`);
+      if (events.length > 0 && allLogs.length === 0) {
+        console.warn('[Schedule] WARNING: Calendar has events but NO log entries found. Possible userId mismatch or date issue.');
+      }
 
       // Build logs-by-date map (all history)
       const logsByDate: Record<string, any[]> = {};
