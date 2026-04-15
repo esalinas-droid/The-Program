@@ -9,7 +9,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { prApi, bwApi, analyticsApi, profileApi, programApi, liftsApi } from '../../src/utils/api';
+import { prApi, bwApi, analyticsApi, profileApi, programApi, liftsApi, streakApi, badgesApi, questApi } from '../../src/utils/api';
 
 // ── Palette ────────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -278,6 +278,11 @@ export default function TrackScreen() {
   const [yearPlan,     setYearPlan]     = useState<any>(null);
   const [loading,      setLoading]      = useState(true);
 
+  // Gamification
+  const [streak,  setStreak]  = useState<any>(null);
+  const [badges,  setBadges]  = useState<any>(null);
+  const [quest,   setQuest]   = useState<any>(null);
+
   const router = useRouter();
 
   const anims = useRef(Array.from({ length: SECTION_COUNT }, () => new Animated.Value(0))).current;
@@ -323,6 +328,14 @@ export default function TrackScreen() {
       ]);
       setOverview(ov); setVolumeData(vol); setPainData(pain); setCompliance(comp);
       programApi.getYearPlan().then(p => setYearPlan(p)).catch(() => {});
+      // Load gamification data (non-blocking)
+      Promise.all([
+        streakApi.get().catch(() => null),
+        badgesApi.get().catch(() => null),
+        questApi.get().catch(() => null),
+      ]).then(([s, b, q]) => {
+        setStreak(s); setBadges(b); setQuest(q);
+      }).catch(() => {});
     } catch (e) {
       console.warn('[TrackScreen] loadAll error:', e);
     } finally {
@@ -628,6 +641,84 @@ export default function TrackScreen() {
                 </View>
               );
             })}
+          </View>
+        </View>
+      </Animated.View>
+
+      {/* Achievements & Gamification */}
+      <Animated.View style={[{ marginHorizontal: SPACING.lg, marginBottom: SPACING.md }, fade(9)]}>
+        <SectionLbl
+          title="Achievements"
+          right={
+            <TouchableOpacity onPress={() => router.push('/achievements' as any)} activeOpacity={0.7}>
+              <Text style={{ fontSize: 11, color: GOLD, fontWeight: '700' }}>View all →</Text>
+            </TouchableOpacity>
+          }
+        />
+        <View style={s.card}>
+          {/* Streak + Badge + Quest quick stats */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14 }}>
+            {/* Streak */}
+            <View style={{ alignItems: 'center', gap: 3, minWidth: 66 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons name="fire" size={15} color="#FF6B35" />
+                <Text style={{ fontSize: 22, fontWeight: '900', color: '#FF6B35' }}>{streak?.currentStreak ?? 0}</Text>
+              </View>
+              <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>WK STREAK</Text>
+            </View>
+            {/* Divider */}
+            <View style={{ width: 1, backgroundColor: BORDER, marginHorizontal: 10, alignSelf: 'stretch' }} />
+            {/* Badges */}
+            <View style={{ alignItems: 'center', gap: 3, minWidth: 60 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons name="trophy-outline" size={14} color={GOLD} />
+                <Text style={{ fontSize: 22, fontWeight: '900', color: GOLD }}>{badges?.totalEarned ?? 0}</Text>
+              </View>
+              <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>BADGES</Text>
+            </View>
+            {/* Divider */}
+            <View style={{ width: 1, backgroundColor: BORDER, marginHorizontal: 10, alignSelf: 'stretch' }} />
+            {/* Quest */}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8, marginBottom: 4 }}>WEEKLY QUEST</Text>
+              {quest ? (
+                <>
+                  <Text style={{ fontSize: 11, color: COLORS.text.secondary, marginBottom: 5 }} numberOfLines={1}>
+                    {quest.title}
+                  </Text>
+                  <View style={{ height: 5, backgroundColor: '#1A1A1E', borderRadius: 3, overflow: 'hidden' }}>
+                    <View style={{
+                      width: `${Math.min(100, ((quest.progress?.current ?? 0) / Math.max(quest.progress?.target ?? 1, 1)) * 100)}%` as any,
+                      height: '100%', backgroundColor: GOLD, borderRadius: 3,
+                    }} />
+                  </View>
+                  <Text style={{ fontSize: 10, color: GOLD, marginTop: 3, fontWeight: '600' }}>
+                    {quest.progress?.current ?? 0}/{quest.progress?.target ?? 1}
+                  </Text>
+                </>
+              ) : (
+                <Text style={{ fontSize: 11, color: '#555' }}>No active quest</Text>
+              )}
+            </View>
+          </View>
+          {/* Navigation buttons */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: GOLD + '15', borderRadius: 8, borderWidth: 1, borderColor: GOLD + '40', paddingVertical: 10 }}
+              onPress={() => router.push('/achievements' as any)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="star-circle-outline" size={14} color={GOLD} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: GOLD }}>Achievements</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: CARD, borderRadius: 8, borderWidth: 1, borderColor: BORDER, paddingVertical: 10 }}
+              onPress={() => router.push('/leaderboard' as any)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="podium-gold" size={14} color={COLORS.text.secondary} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.text.secondary }}>Leaderboard</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Animated.View>

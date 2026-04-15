@@ -59,10 +59,10 @@ function BadgeCard({ badge, earned }: { badge: any; earned: boolean }) {
 const bStyle = StyleSheet.create({
   card:          { flex: 1, backgroundColor: CARD, borderRadius: RADIUS.lg, padding: 14, alignItems: 'center', gap: 6 },
   earnedCard:    { borderWidth: 1, borderColor: GOLD + '40' },
-  lockedCard:    { borderWidth: 1, borderColor: BORDER, opacity: 0.6 },
+  lockedCard:    { borderWidth: 1, borderColor: '#333', opacity: 0.6 },
   iconCircle:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  earnedCircle:  { backgroundColor: GOLD + '20', borderWidth: 1, borderColor: GOLD + '40' },
-  lockedCircle:  { backgroundColor: '#1A1A1E' },
+  earnedCircle:  { backgroundColor: GOLD + '15', borderWidth: 1, borderColor: GOLD + '40' },
+  lockedCircle:  { backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#333' },
   name:          { fontSize: 12, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, textAlign: 'center' },
   desc:          { fontSize: 10, color: COLORS.text.muted, textAlign: 'center', lineHeight: 14 },
 });

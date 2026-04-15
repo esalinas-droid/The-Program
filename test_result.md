@@ -14,7 +14,7 @@
 # Main and testing agents must follow this exact format to maintain testing data. 
 # The testing data must be entered in yaml format Below is the data structure:
 # 
-## user_problem_statement: {problem_statement}
+## user_problem_statement: 13-Part Gamification Update - UX Upgrade + Gamification + Leaderboard + Social Invite System. Backend complete. Frontend: track.tsx Achievements row (Part 12) added, achievements.tsx and leaderboard.tsx fully built. today.tsx PR overlay and Session Complete overlay fully implemented. All routes registered in _layout.tsx.
 ## backend:
 ##   - task: "Task name"
 ##     implemented: true

@@ -29,6 +29,8 @@ export default function RootLayout() {
         <Stack.Screen name="roadmap" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="current-block" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="review" options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="achievements" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </>
   );
