@@ -388,10 +388,14 @@ export default function ScheduleScreen() {
     _setWeekOffset(n);
   };
 
+  // NOTE: todayStr at render level is used only for SessionHistoryCard prop.
+  // Inside loadData, we always recompute it fresh to avoid stale closure bugs.
   const todayStr = getLocalDateString();
 
   // ── Load data ────────────────────────────────────────────────────────────────
   const loadData = useCallback(async (offset = weekOffsetRef.current) => {
+    // Always recompute today fresh — avoids stale closure if app was open overnight
+    const today = getLocalDateString();
     setLoading(true);
     try {
       const weekDates  = getWeekDates(offset);
@@ -412,22 +416,26 @@ export default function ScheduleScreen() {
       const events: any[] = evResp?.events || [];
       const allLogs: any[] = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
 
-      console.log(`[Schedule] Loaded: ${events.length} events, ${allLogs.length} logs for ${startDate} → ${endDate}`);
+      console.log(`[Schedule] Loaded: ${events.length} events, ${allLogs.length} logs for ${startDate} → ${endDate} | today=${today}`);
       if (events.length > 0 && allLogs.length === 0) {
         console.warn('[Schedule] WARNING: Calendar has events but NO log entries found. Possible userId mismatch or date issue.');
       }
 
-      // Build logs-by-date map (all history)
+      // Build logs-by-date map
       const logsByDate: Record<string, any[]> = {};
       for (const lg of allLogs) {
         if (!logsByDate[lg.date]) logsByDate[lg.date] = [];
         logsByDate[lg.date].push(lg);
       }
 
+      // Log matches for debugging
+      const matchedDates = events.filter((ev: any) => (logsByDate[ev.date]?.length ?? 0) > 0).map((ev: any) => ev.date);
+      console.log(`[Schedule] Events with matching logs: ${matchedDates.length} → dates: [${matchedDates.join(', ')}]`);
+
       // ── Calendar grid ────────────────────────────────────────────────────────
       const days: WeekDay[] = weekDates.map((date, i) => {
         const ev = events.find((e: any) => e.date === date);
-        const status = getDayStatus(date, todayStr, logsByDate, !!ev);
+        const status = getDayStatus(date, today, logsByDate, !!ev);
         return {
           date,
           dayAbbr: DAY_ABBRS[i],
@@ -442,7 +450,7 @@ export default function ScheduleScreen() {
 
       // ── Session cards ────────────────────────────────────────────────────────
       const cards: SessionCard[] = events.map((ev: any) => {
-        const status   = getDayStatus(ev.date, todayStr, logsByDate, true);
+        const status   = getDayStatus(ev.date, today, logsByDate, true);
         const dayLogs  = logsByDate[ev.date] || [];
         const exNames  = (ev.exercises || []).map((e: any) => e.name || '').filter(Boolean);
         return {
@@ -459,8 +467,8 @@ export default function ScheduleScreen() {
         };
       }).sort((a: SessionCard, b: SessionCard) => {
         // Today's date always first, regardless of logged status
-        if (a.date === todayStr && b.date !== todayStr) return -1;
-        if (b.date === todayStr && a.date !== todayStr) return 1;
+        if (a.date === today && b.date !== today) return -1;
+        if (b.date === today && a.date !== today) return 1;
         if (a.status === 'completed' && b.status === 'upcoming') return -1;
         if (a.status === 'upcoming' && b.status === 'completed') return 1;
         if (a.status === 'missed'    && b.status === 'upcoming') return -1;
