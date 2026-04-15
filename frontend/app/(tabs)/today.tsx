@@ -4,12 +4,14 @@ import {
   ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
   RefreshControl,
 } from 'react-native';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -1180,7 +1182,7 @@ function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
-  restConfig, adjustActive,
+  restConfig, adjustActive, previousData, prExercises,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1208,6 +1210,8 @@ function ExerciseCard({
     onCustom: () => void;
   };
   adjustActive?: boolean;
+  previousData?: Record<string, {weight: number; reps: number; date: string}[]>;
+  prExercises?: Set<string>;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1243,6 +1247,12 @@ function ExerciseCard({
           )}
         </View>
         <View style={ec.headerRight}>
+          {/* Part 3D: PR badge */}
+          {prExercises.has(exercise.name) && (
+            <View style={{ backgroundColor: '#C9A84C20', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6 }}>
+              <Text style={{ fontSize: 9, fontWeight: '700', color: '#C9A84C' }}>PR</Text>
+            </View>
+          )}
           <View style={[ec.progressPill, { backgroundColor: progColor + '20' }]}>
             <Text style={[ec.progressText, { color: progColor }]}>{loggedCount}/{total}</Text>
           </View>
@@ -1273,13 +1283,23 @@ function ExerciseCard({
             />
           )}
           <View style={ec.body}>
-          {/* Last session reference */}
-          {exercise.lastSession !== '—' && (
+          {/* Part 2C: Enhanced previous workout reference */}
+          {previousData[exercise.name]?.length > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 4 }}>
+              <MaterialCommunityIcons name="history" size={12} color="#555" />
+              <Text style={{ fontSize: 11, color: '#555' }}>
+                Last ({previousData[exercise.name][0].date.slice(5).replace('-', '/')}):
+              </Text>
+              <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>
+                {previousData[exercise.name].map(s => `${s.weight}×${s.reps}`).join(' · ')}
+              </Text>
+            </View>
+          ) : exercise.lastSession !== '—' ? (
             <View style={ec.lastRow}>
               <MaterialCommunityIcons name="history" size={12} color={COLORS.text.muted} />
               <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
             </View>
-          )}
+          ) : null}
 
           {/* Coaching cues */}
           {exercise.cues.length > 0 && (
@@ -1543,6 +1563,61 @@ export default function TodayScreen() {
   const [painExerciseName, setPainExerciseName] = useState('');
   const [painAlert, setPainAlert]           = useState<string | null>(null);
 
+  // ── Gamification state ───────────────────────────────────────────────────────
+  const [previousData, setPreviousData] = useState<Record<string, {weight: number; reps: number; date: string}[]>>({});
+  const [prCelebration, setPrCelebration] = useState<any>(null);
+  const [prExercises, setPrExercises]     = useState<Set<string>>(new Set());
+  const [showSessionComplete, setShowSessionComplete] = useState(false);
+  const [sessionStats, setSessionStats]   = useState<any>(null);
+  const prCardRef = useRef<View>(null);
+
+  // ── Previous workout data fetch ──────────────────────────────────────────────
+  const fetchPreviousData = useCallback(async (exerciseNames: string[]) => {
+    const prevMap: Record<string, {weight: number; reps: number; date: string}[]> = {};
+    const todayStr = getLocalDateString();
+    for (const name of exerciseNames) {
+      try {
+        const logs = await logApi.list({ exercise: name });
+        const entries = (Array.isArray(logs) ? logs : (logs?.logs || []))
+          .filter((e: any) => e.date < todayStr);
+        if (entries.length > 0) {
+          const lastDate = entries[0].date;
+          const lastSession = entries.filter((e: any) => e.date === lastDate);
+          prevMap[name] = lastSession.map((e: any) => ({
+            weight: parseFloat(e.weight) || 0,
+            reps:   parseInt(String(e.reps)) || 0,
+            date:   e.date,
+          }));
+        }
+      } catch { /* Non-critical */ }
+    }
+    setPreviousData(prevMap);
+  }, []);
+
+  // ── PR detection helper ───────────────────────────────────────────────────────
+  const checkForPR = useCallback((exerciseName: string, weight: number, reps: number) => {
+    const e1rm = weight * (1 + reps / 30);
+    const prevEntries = previousData[exerciseName] || [];
+    const prevBestE1rm = prevEntries.reduce((mx, s) => {
+      const prev = s.weight * (1 + s.reps / 30);
+      return prev > mx ? prev : mx;
+    }, 0);
+    if (e1rm > prevBestE1rm && prevBestE1rm > 0 && weight > 0) {
+      return { exercise: exerciseName, weight, reps, e1rm: Math.round(e1rm), previousBest: Math.round(prevBestE1rm) };
+    }
+    return null;
+  }, [previousData]);
+
+  // ── Share PR card ─────────────────────────────────────────────────────────────
+  const sharePRCard = useCallback(async (data: any) => {
+    try {
+      const uri = await captureRef(prCardRef, { format: 'png', quality: 1 });
+      await Sharing.shareAsync(uri, { mimeType: 'image/png' });
+    } catch (err) {
+      console.warn('Share failed:', err);
+    }
+  }, []);
+
   const todayName = getTodayDayName();
 
   // Pull-to-refresh handler — force a full session reload
@@ -1632,6 +1707,10 @@ export default function TodayScreen() {
           // Clear stale logged state immediately — will repopulate from backend below
           setLoggedSets(new Set());
           setLogEntryIds({});
+
+          // Part 2B: Fetch previous workout data for all exercises
+          const exNames = apiExs.map((e: any) => e.name).filter(Boolean);
+          fetchPreviousData(exNames);
 
           // Reload logged state + entry IDs from backend
           try {
@@ -1919,6 +1998,13 @@ export default function TodayScreen() {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
         }
+        // ── PR detection ─────────────────────────────────────────────────────
+        const prData = checkForPR(logName, weight, parseInt(reps) || 1);
+        if (prData) {
+          setPrCelebration(prData);
+          setPrExercises(prev => new Set([...prev, logName]));
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
       } catch (err) {
         console.log('[Today] Backend log failed:', err);
       }
@@ -2037,17 +2123,24 @@ export default function TodayScreen() {
     } catch (e) { console.warn('Substitution log failed:', e); }
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    router.push({
-      pathname: '/review',
-      params: {
-        setsLogged:  String(loggedCount),
-        totalSets:   String(totalSets),
-        sessionType: sessionType,
-        week:        String(week),
-      },
-    } as any);
+    // Calculate session stats
+    const allSetValues = Object.values(setValues);
+    const totalVolume = allSetValues.reduce((sum, sv) => {
+      return sum + (parseFloat(sv.weight) || 0) * (parseInt(sv.reps) || 0);
+    }, 0);
+    const avgRPE = Object.values(efforts).length > 0
+      ? Object.values(efforts).reduce((a, b) => a + b, 0) / Object.values(efforts).length
+      : 0;
+    // Fetch streak for celebration
+    let streakData = null;
+    try { streakData = await streakApi.get(); } catch {}
+    setSessionStats({
+      sessionType, sets: loggedCount, volume: totalVolume, rpe: avgRPE,
+      streak: streakData,
+    });
+    setShowSessionComplete(true);
   };
 
   // ── Injury warnings ──────────────────────────────────────────────────────────
@@ -2094,6 +2187,18 @@ export default function TodayScreen() {
           <Text style={s.sessionTitle}>{sessionType}</Text>
           {sessionObj ? <Text style={s.sessionObj}>{sessionObj}</Text> : null}
         </View>
+
+        {/* ── Part 2F: SESSION PROGRESS BAR ── */}
+        {totalSets > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flex: 1, height: 4, backgroundColor: '#1E1E22', borderRadius: 2 }}>
+              <View style={{ width: `${progressPct}%` as any, height: '100%', backgroundColor: COLORS.accent, borderRadius: 2 }} />
+            </View>
+            <Text style={{ fontSize: 11, color: COLORS.accent, fontWeight: '600' }}>
+              {loggedCount}/{totalSets}
+            </Text>
+          </View>
+        )}
 
         {/* ── COMPACT READINESS STRIP ── */}
         {readinessScore !== null && (
@@ -2259,6 +2364,8 @@ export default function TodayScreen() {
             onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
             onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
             adjustActive={loadMultiplier < 1.0 && !autoAdjustOverride}
+            previousData={previousData}
+            prExercises={prExercises}
             restConfig={{
               selectedSeconds: exerciseRestDurations[ex.id],
               onSelect: (secs) => {
@@ -2349,6 +2456,106 @@ export default function TodayScreen() {
         }}
         onClose={() => setCustomRestVisible(false)}
       />
+
+      {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
+      {prCelebration && (
+        <Modal transparent visible animationType="fade" onRequestClose={() => setPrCelebration(null)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6', marginBottom: 4, textAlign: 'center' }}>{prCelebration.exercise}</Text>
+            <Text style={{ fontSize: 52, fontWeight: '800', color: COLORS.accent, lineHeight: 60 }}>{prCelebration.weight}</Text>
+            <Text style={{ fontSize: 16, color: '#888', marginBottom: 20 }}>lbs × {prCelebration.reps} reps</Text>
+            <View style={{ width: '100%', backgroundColor: '#111114', borderRadius: 16, padding: 20, gap: 8 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Est. Max</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: COLORS.accent }}>{prCelebration.e1rm} lbs</Text>
+              </View>
+              <View style={{ height: 1, backgroundColor: '#1E1E22' }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Improvement</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#4DCEA6' }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 20, width: '100%' }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => sharePRCard(prCelebration)}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A0A0C' }}>SHARE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, borderWidth: 1, borderColor: '#444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => setPrCelebration(null)}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#E8E8E6' }}>DISMISS</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => { setPrCelebration(null); (router as any).push('/leaderboard'); }}>
+              <Text style={{ fontSize: 12, color: '#888', textAlign: 'center' }}>Challenge a friend — <Text style={{ color: COLORS.accent }}>invite them to your group</Text></Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── Part 4B: SESSION COMPLETE OVERLAY ── */}
+      {showSessionComplete && sessionStats && (
+        <Modal transparent visible animationType="slide" onRequestClose={() => setShowSessionComplete(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#C9A84C20', borderWidth: 2, borderColor: '#C9A84C', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <MaterialCommunityIcons name="check" size={32} color="#C9A84C" />
+            </View>
+            <Text style={{ fontSize: 11, color: '#C9A84C', letterSpacing: 2, fontWeight: '700', marginBottom: 6 }}>SESSION COMPLETE</Text>
+            <Text style={{ fontSize: 24, fontWeight: '800', color: '#E8E8E6', marginBottom: 20 }}>{sessionStats.sessionType}</Text>
+            {/* Stats row */}
+            <View style={{ flexDirection: 'row', gap: 24, marginBottom: 20 }}>
+              {[
+                { label: 'SETS',   value: String(sessionStats.sets) },
+                { label: 'VOLUME', value: sessionStats.volume > 0 ? `${(sessionStats.volume/1000).toFixed(1)}k` : '0' },
+                { label: 'RPE',    value: sessionStats.rpe > 0 ? sessionStats.rpe.toFixed(1) : '—' },
+              ].map(({ label, value }) => (
+                <View key={label} style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 22, fontWeight: '700', color: '#E8E8E6' }}>{value}</Text>
+                  <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>{label}</Text>
+                </View>
+              ))}
+            </View>
+            {/* Streak info */}
+            {sessionStats.streak?.currentStreak > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FF6B3515', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 16, borderWidth: 1, borderColor: '#FF6B3530' }}>
+                <MaterialCommunityIcons name="fire" size={18} color="#FF6B35" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#FF6B35' }}>{sessionStats.streak.currentStreak}-week streak!</Text>
+                <Text style={{ fontSize: 11, color: '#888' }}>Keep it going</Text>
+              </View>
+            )}
+            {/* Buttons */}
+            <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+              <TouchableOpacity
+                style={{ flex: 1, borderWidth: 1, borderColor: '#444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => {
+                  setShowSessionComplete(false);
+                  router.push({ pathname: '/review', params: { setsLogged: String(sessionStats.sets), totalSets: String(totalSets), sessionType: sessionStats.sessionType, week: String(week) } } as any);
+                }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#E8E8E6' }}>DONE</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => { setShowSessionComplete(false); (router as any).push('/leaderboard'); }}>
+              <Text style={{ fontSize: 12, color: '#888', textAlign: 'center' }}>Train with friends? <Text style={{ color: COLORS.accent }}>Create a group</Text></Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── Part 3C: Hidden PR share card ── */}
+      <View ref={prCardRef} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center', position: 'absolute', left: -2000 }}>
+        <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
+        <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+        <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{prCelebration?.exercise || '—'}</Text>
+        <Text style={{ fontSize: 56, fontWeight: '800', color: COLORS.accent }}>{prCelebration?.weight || 0}</Text>
+        <Text style={{ fontSize: 16, color: '#888' }}>lbs × {prCelebration?.reps || 0} reps</Text>
+        <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
+        <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
+        {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
+        <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
+      </View>
+
     </SafeAreaView>
   );
 }

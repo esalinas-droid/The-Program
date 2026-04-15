@@ -16,7 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from typing import List, Optional, Any, Annotated
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import re
 import json
@@ -4357,6 +4357,310 @@ async def debug_sync_status(userId: str = Depends(get_current_user)):
         "calendarEventDates": [e.get("date") for e in cal_events[:7]],
         "usersInDatabase": user_list,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STREAK SYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/streaks")
+async def get_streak(userId: str = Depends(get_current_user)):
+    """Calculate training streak (consecutive weeks with at least 1 session)."""
+    user_filter = _user_or_orphan(userId)
+    all_logs = await db.log.find(user_filter).sort("date", -1).to_list(5000)
+    if not all_logs:
+        return {"currentStreak": 0, "longestStreak": 0, "totalWeeksTrained": 0,
+                "lastTrainedDate": None, "freezesAvailable": 1, "freezesUsed": [], "trainedWeeks": []}
+
+    # Group logs by ISO week (Mon-Sun)
+    trained_weeks = set()
+    for log_entry in all_logs:
+        try:
+            d = datetime.strptime(log_entry["date"], "%Y-%m-%d")
+            monday = d - timedelta(days=d.weekday())
+            trained_weeks.add(monday.strftime("%Y-%m-%d"))
+        except: continue
+
+    if not trained_weeks:
+        return {"currentStreak": 0, "longestStreak": 0, "totalWeeksTrained": 0,
+                "lastTrainedDate": None, "freezesAvailable": 1, "freezesUsed": [], "trainedWeeks": []}
+
+    freeze_doc = await db.streak_freezes.find_one({"userId": userId}) or {}
+    freezes_used: list = freeze_doc.get("freezesUsed", [])
+
+    now = datetime.now()
+    current_monday = now - timedelta(days=now.weekday())
+    current_monday = current_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Current streak
+    current_streak = 0
+    check_monday = current_monday
+    skipped_first = False
+    for i in range(200):
+        check_str = check_monday.strftime("%Y-%m-%d")
+        if check_str in trained_weeks:
+            current_streak += 1
+            check_monday -= timedelta(weeks=1)
+        elif check_str in freezes_used:
+            check_monday -= timedelta(weeks=1)
+        else:
+            if not skipped_first and i == 0:
+                skipped_first = True
+                check_monday -= timedelta(weeks=1)
+                continue
+            break
+
+    # Longest streak
+    sorted_weeks = sorted(trained_weeks)
+    all_week_dates = [datetime.strptime(w, "%Y-%m-%d") for w in sorted_weeks]
+    longest = 0
+    streak = 0
+    for i, w in enumerate(all_week_dates):
+        if i == 0:
+            streak = 1
+        else:
+            diff = (w - all_week_dates[i-1]).days
+            if diff == 7:
+                streak += 1
+            elif all_week_dates[i-1].strftime("%Y-%m-%d") in freezes_used:
+                streak += 1
+            else:
+                streak = 1
+        longest = max(longest, streak)
+
+    earned_freezes = min(2, 1 + (current_streak // 4))
+    used_this_month = sum(1 for f in freezes_used if f >= now.replace(day=1).strftime("%Y-%m-%d"))
+    freezes_available = max(0, earned_freezes - used_this_month)
+
+    # Auto-freeze: consume freeze for previous week if missed
+    prev_monday = current_monday - timedelta(weeks=1)
+    prev_str = prev_monday.strftime("%Y-%m-%d")
+    if prev_str not in trained_weeks and prev_str not in freezes_used and freezes_available > 0:
+        freezes_used.append(prev_str)
+        await db.streak_freezes.update_one(
+            {"userId": userId},
+            {"$set": {"userId": userId, "freezesUsed": freezes_used}},
+            upsert=True,
+        )
+        freezes_available -= 1
+
+    return {
+        "currentStreak": current_streak,
+        "longestStreak": max(longest, current_streak),
+        "totalWeeksTrained": len(trained_weeks),
+        "lastTrainedDate": all_logs[0].get("date") if all_logs else None,
+        "freezesAvailable": freezes_available,
+        "freezesUsed": freezes_used,
+        "trainedWeeks": sorted(trained_weeks),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BADGE SYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/badges")
+async def get_badges(userId: str = Depends(get_current_user)):
+    """Calculate earned and locked badges."""
+    user_filter = _user_or_orphan(userId)
+    log_count    = await db.log.count_documents(user_filter)
+    unique_dates = len(await db.log.distinct("date", user_filter))
+    unique_exs   = len(await db.log.distinct("exercise", user_filter))
+
+    streak_data    = await get_streak(userId)
+    current_streak = streak_data.get("currentStreak", 0)
+    total_weeks    = streak_data.get("totalWeeksTrained", 0)
+
+    tracked  = await db.tracked_lifts.find({"userId": userId}).to_list(100)
+    pr_count = sum(1 for t in tracked if t.get("bestE1rm", 0) > 0)
+
+    BADGE_DEFS = [
+        {"id": "first_session",  "name": "First Rep",         "desc": "Logged your first session",         "icon": "dumbbell",            "check": unique_dates >= 1},
+        {"id": "week_1",         "name": "Week One",          "desc": "Completed your first training week", "icon": "calendar-check",      "check": total_weeks >= 1},
+        {"id": "streak_4",       "name": "Iron Month",        "desc": "4-week training streak",             "icon": "fire",                "check": current_streak >= 4},
+        {"id": "streak_8",       "name": "Two Month Iron",    "desc": "8-week training streak",             "icon": "fire",                "check": current_streak >= 8},
+        {"id": "streak_12",      "name": "Quarter Beast",     "desc": "12-week training streak",            "icon": "fire",                "check": current_streak >= 12},
+        {"id": "streak_26",      "name": "Half Year Hero",    "desc": "26-week training streak",            "icon": "fire",                "check": current_streak >= 26},
+        {"id": "sessions_10",    "name": "Getting Started",   "desc": "10 training sessions logged",        "icon": "arm-flex-outline",    "check": unique_dates >= 10},
+        {"id": "sessions_50",    "name": "Committed",         "desc": "50 training sessions",               "icon": "arm-flex-outline",    "check": unique_dates >= 50},
+        {"id": "sessions_100",   "name": "Iron Century",      "desc": "100 sessions — top 5%",              "icon": "trophy",              "check": unique_dates >= 100},
+        {"id": "pr_1",           "name": "PR Hunter",         "desc": "Hit your first personal record",     "icon": "trophy-outline",      "check": pr_count >= 1},
+        {"id": "pr_5",           "name": "PR Machine",        "desc": "5 personal records",                 "icon": "trophy",              "check": pr_count >= 5},
+        {"id": "pr_10",          "name": "Record Breaker",    "desc": "10 PRs — strength is your language", "icon": "star",                "check": pr_count >= 10},
+        {"id": "exercises_25",   "name": "Exercise Explorer", "desc": "25 different exercises mastered",    "icon": "compass-outline",     "check": unique_exs >= 25},
+    ]
+
+    earned, locked = [], []
+    for b in BADGE_DEFS:
+        entry = {"id": b["id"], "name": b["name"], "desc": b["desc"], "icon": b["icon"]}
+        if b["check"]:
+            earned.append(entry)
+        else:
+            locked.append(entry)
+
+    return {"earned": earned, "locked": locked, "totalEarned": len(earned), "totalPossible": len(BADGE_DEFS)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEKLY QUEST
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _calculate_quest_progress(quest: dict, week_logs: list) -> dict:
+    metric = quest.get("metric", "sessions")
+    target = quest.get("target", 4)
+    if metric == "sessions":
+        unique_dates = len(set(l.get("date") for l in week_logs if l.get("date")))
+        return {"current": unique_dates, "target": target, "completed": unique_dates >= target}
+    elif metric == "volume":
+        total_vol = sum(float(l.get("weight", 0)) * int(str(l.get("reps", 0))) for l in week_logs)
+        return {"current": int(total_vol), "target": target, "completed": total_vol >= target}
+    elif metric == "training_days":
+        unique_dates = len(set(l.get("date") for l in week_logs if l.get("date")))
+        return {"current": unique_dates, "target": target, "completed": unique_dates >= target}
+    return {"current": 0, "target": target, "completed": False}
+
+
+@api_router.get("/quest")
+async def get_weekly_quest(userId: str = Depends(get_current_user)):
+    """Generate or return a weekly quest based on the user's training data."""
+    import random
+    user_filter = _user_or_orphan(userId)
+    now = datetime.now()
+    monday = now - timedelta(days=now.weekday())
+    week_start = monday.strftime("%Y-%m-%d")
+    week_end   = (monday + timedelta(days=6)).strftime("%Y-%m-%d")
+
+    week_logs = await db.log.find({**user_filter, "date": {"$gte": week_start, "$lte": week_end}}).to_list(500)
+    profile   = await db.profile.find_one({"userId": userId}) or {}
+    frequency = int(profile.get("trainingDaysCount", 4))
+
+    existing = await db.weekly_quests.find_one({"userId": userId, "weekStart": week_start})
+    if existing:
+        existing.pop("_id", None)
+        existing["progress"] = _calculate_quest_progress(existing, week_logs)
+        return existing
+
+    quest_templates = [
+        {"type": "sessions",     "title": f"Complete {frequency} sessions this week", "target": frequency, "metric": "sessions"},
+        {"type": "volume",       "title": "Hit 20,000 lbs total volume this week",    "target": 20000,     "metric": "volume"},
+        {"type": "consistency",  "title": "Log at least 1 set every training day",    "target": frequency, "metric": "training_days"},
+    ]
+    random.seed(week_start + userId)
+    quest_data = random.choice(quest_templates)
+    quest_doc  = {
+        "userId": userId, "weekStart": week_start,
+        "title": quest_data["title"], "target": quest_data["target"],
+        "metric": quest_data["metric"], "type": quest_data["type"],
+        "xpReward": 50,
+    }
+    await db.weekly_quests.insert_one(quest_doc)
+    quest_doc.pop("_id", None)
+    quest_doc["progress"] = _calculate_quest_progress(quest_doc, week_logs)
+    return quest_doc
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LEADERBOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/leaderboard")
+async def get_leaderboard(
+    group_code: Optional[str] = None,
+    tab: str = "consistency",
+    userId: str = Depends(get_current_user),
+):
+    now = datetime.now()
+    month_start = now.replace(day=1).strftime("%Y-%m-%d")
+    month_end   = now.strftime("%Y-%m-%d")
+
+    if group_code:
+        group = await db.training_groups.find_one({"code": group_code})
+        if not group:
+            return {"entries": [], "userRank": 0, "totalAthletes": 0}
+        member_ids = group.get("members", [])
+    else:
+        all_profiles = await db.profile.find({"onboardingComplete": True}).to_list(500)
+        member_ids   = [p["userId"] for p in all_profiles if p.get("userId")]
+
+    if userId not in member_ids:
+        member_ids.append(userId)
+
+    entries = []
+    for mid in member_ids[:50]:  # Cap at 50 for perf
+        user    = await db.users.find_one({"userId": mid}) or {}
+        profile = await db.profile.find_one({"userId": mid}) or {}
+        uf      = _user_or_orphan(mid)
+
+        month_logs = await db.log.find({**uf, "date": {"$gte": month_start, "$lte": month_end}}).to_list(500)
+        sessions_completed = len(set(l.get("date") for l in month_logs if l.get("date")))
+        planned    = int(profile.get("trainingDaysCount", 4)) * 4
+        compliance = round(sessions_completed / max(planned, 1) * 100)
+
+        streak_data = await get_streak(mid)
+        pr_count = 0
+        if tab == "prs":
+            tracked  = await db.tracked_lifts.find({"userId": mid}).to_list(100)
+            pr_count = sum(1 for t in tracked if t.get("bestE1rm", 0) > 0)
+
+        name       = user.get("name", "Athlete")
+        name_parts = name.strip().split()
+        display    = name_parts[0] + (" " + name_parts[-1][0] + "." if len(name_parts) > 1 else "")
+        initials   = "".join(w[0].upper() for w in name_parts[:2]) if name_parts else "?"
+
+        entries.append({
+            "userId": mid, "name": display, "initials": initials,
+            "goal": profile.get("goal", "Strength"),
+            "sessionsCompleted": sessions_completed, "sessionsPlanned": planned,
+            "compliance": min(100, compliance),
+            "streak": streak_data.get("currentStreak", 0),
+            "prCount": pr_count,
+            "isCurrentUser": mid == userId,
+        })
+
+    if tab == "consistency":
+        entries.sort(key=lambda e: (-e["compliance"], -e["sessionsCompleted"]))
+    elif tab == "streaks":
+        entries.sort(key=lambda e: -e["streak"])
+    elif tab == "prs":
+        entries.sort(key=lambda e: -e["prCount"])
+
+    for i, e in enumerate(entries):
+        e["rank"] = i + 1
+
+    user_rank = next((e["rank"] for e in entries if e["isCurrentUser"]), 0)
+    return {"entries": entries[:50], "userRank": user_rank, "totalAthletes": len(entries)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TRAINING GROUPS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.post("/groups/create")
+async def create_group(body: dict, userId: str = Depends(get_current_user)):
+    import random, string
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    name = body.get("name", "My Crew")
+    group = {"code": code, "name": name, "createdBy": userId,
+             "members": [userId], "createdAt": datetime.now(timezone.utc)}
+    await db.training_groups.insert_one(group)
+    return {"code": code, "name": name, "members": 1}
+
+
+@api_router.post("/groups/join")
+async def join_group(body: dict, userId: str = Depends(get_current_user)):
+    code  = body.get("code", "").strip().upper()
+    group = await db.training_groups.find_one({"code": code})
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found. Check the code and try again.")
+    if userId not in group.get("members", []):
+        await db.training_groups.update_one({"code": code}, {"$addToSet": {"members": userId}})
+    return {"code": code, "name": group.get("name"), "members": len(group.get("members", [])) + 1}
+
+
+@api_router.get("/groups")
+async def get_my_groups(userId: str = Depends(get_current_user)):
+    groups = await db.training_groups.find({"members": userId}).to_list(10)
+    return [{"code": g["code"], "name": g["name"], "members": len(g.get("members", []))} for g in groups]
 
 
 app.include_router(api_router)

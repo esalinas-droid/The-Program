@@ -1,14 +1,21 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Animated, LayoutAnimation,
+  UIManager, Platform, PanResponder,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { calendarApi, logApi } from '../../src/utils/api';
 import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -145,7 +152,31 @@ function groupByExercise(entries: any[]): Record<string, any[]> {
   return map;
 }
 
-// ── DayCard ───────────────────────────────────────────────────────────────────
+// ── WeekRing (Part 1A) ────────────────────────────────────────────────────────
+function WeekRing({ completed, total }: { completed: number; total: number }) {
+  const size = 48, stroke = 3, radius = 20;
+  const circumference = 2 * Math.PI * radius;
+  const progress   = total > 0 ? completed / total : 0;
+  const dashOffset = circumference * (1 - progress);
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <Circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#1E1E22" strokeWidth={stroke} />
+        <Circle
+          cx={size/2} cy={size/2} r={radius} fill="none"
+          stroke={GOLD} strokeWidth={stroke}
+          strokeDasharray={`${circumference}`} strokeDashoffset={dashOffset}
+          strokeLinecap="round" rotation={-90} origin={`${size/2}, ${size/2}`}
+        />
+      </Svg>
+      <Text style={{ position: 'absolute', fontSize: 12, fontWeight: '700', color: GOLD }}>
+        {completed}/{total}
+      </Text>
+    </View>
+  );
+}
+
+// ── DayCard (Part 1B) ─────────────────────────────────────────────────────────
 function DayCard({
   day, onPress, swapMode, isFirstSwap, isSecondSwap,
 }: {
@@ -159,10 +190,11 @@ function DayCard({
     day.status === 'completed' ? RED :
     day.status === 'today'     ? GOLD :
     day.status === 'upcoming'  ? GREEN :
-    day.status === 'missed'    ? AMBER : '#444';
+    day.status === 'missed'    ? AMBER : '#333';
 
-  const isActive = day.status !== 'rest';
-  const cardBg    = day.status === 'today' ? GOLD + '15' : CARD;
+  const isActive  = day.status !== 'rest';
+  // Part 1B: rest days visually recessed
+  const cardBg    = day.status === 'rest' ? '#0E0E10' : (day.status === 'today' ? GOLD + '15' : CARD);
   const cardBorder =
     isFirstSwap || isSecondSwap ? GOLD :
     day.status === 'completed' ? RED + '40' :
@@ -172,8 +204,8 @@ function DayCard({
 
   return (
     <TouchableOpacity
-      style={[s.dayCard, { backgroundColor: cardBg, borderColor: cardBorder }]}
-      onPress={onPress}
+      style={[s.dayCard, { backgroundColor: cardBg, borderColor: cardBorder, overflow: 'hidden' }]}
+      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
       activeOpacity={swapMode && isActive ? 0.6 : 0.9}
     >
       {(isFirstSwap || isSecondSwap) && (
@@ -181,21 +213,33 @@ function DayCard({
           <Text style={s.swapBadgeNum}>{isFirstSwap ? '1' : '2'}</Text>
         </View>
       )}
-      <Text style={[s.dayAbbr, { color: isActive ? statusColor : COLORS.text.muted }]}>
+      <Text style={[s.dayAbbr, { color: isActive ? statusColor : '#555' }]}>
         {day.dayAbbr}
       </Text>
-      <Text style={[s.dayNum, { color: isActive ? COLORS.text.primary : '#444' }]}>
+      <Text style={[s.dayNum, { color: isActive ? COLORS.text.primary : '#333' }]}>
         {day.dayNum}
       </Text>
-      <View style={[s.statusDot, { backgroundColor: isActive ? statusColor : '#333' }]} />
-      <Text style={[s.sessionLbl, { color: isActive ? statusColor : '#444' }]}>
+      <Text style={[s.sessionLbl, { color: isActive ? statusColor : '#333' }]}>
         {isActive ? day.sessionLabel : 'REST'}
       </Text>
+      {/* Part 1B: colored bottom bar instead of dot */}
+      {day.status !== 'rest' && (
+        <View style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: 3,
+          backgroundColor:
+            day.status === 'completed' ? RED :
+            day.status === 'today'     ? GOLD :
+            day.status === 'upcoming'  ? GREEN + '50' :
+            day.status === 'missed'    ? AMBER : 'transparent',
+          borderBottomLeftRadius: 10,
+          borderBottomRightRadius: 10,
+        }} />
+      )}
     </TouchableOpacity>
   );
 }
 
-// ── SessionHistoryCard ────────────────────────────────────────────────────────
+// ── SessionHistoryCard (Parts 1D + 1E) ───────────────────────────────────────
 function SessionHistoryCard({
   card, expanded, onToggle, onGoToSession, todayStr,
 }: {
@@ -205,17 +249,27 @@ function SessionHistoryCard({
   onGoToSession: () => void;
   todayStr: string;
 }) {
-  const style = getSessionStyle(card.sessionType);
-  const stats = computeStats(card.logEntries);
-  const grouped = groupByExercise(card.logEntries);
-  const hasLogs = card.logEntries.length > 0;
-  const isToday = card.date === todayStr;
-  const isExpandable = card.status === 'completed' || card.status === 'missed';
-  const exerciseList = card.exerciseNames.length > 0
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+  const style      = getSessionStyle(card.sessionType);
+  const stats      = computeStats(card.logEntries);
+  const grouped    = groupByExercise(card.logEntries);
+  const hasLogs    = card.logEntries.length > 0;
+  const isToday    = card.date === todayStr;
+  const isPremiumToday = isToday && card.status === 'today';
+  const isExpandable   = card.status === 'completed' || card.status === 'missed';
+  const exerciseList   = card.exerciseNames.length > 0
     ? card.exerciseNames.join(' · ')
     : Object.keys(grouped).join(' · ') || 'Session planned';
 
-  // Today keeps gold border regardless of logged status
+  useEffect(() => {
+    if (isPremiumToday) {
+      Animated.loop(Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 1000, useNativeDriver: true }),
+      ])).start();
+    }
+  }, [isPremiumToday]);
+
   const borderColor =
     isToday                    ? GOLD :
     card.status === 'upcoming' ? GREEN + '50' :
@@ -223,11 +277,20 @@ function SessionHistoryCard({
   const borderWidth = isToday ? 1.5 : 1;
 
   return (
-    <View style={[s.sessCard, { borderColor, borderWidth }]}>
+    <View style={[s.sessCard, { borderColor, borderWidth, overflow: 'hidden' }]}>
+      {/* Part 1D: gold accent bar at top for premium today */}
+      {isToday && (
+        <View style={{ height: 2, backgroundColor: GOLD, position: 'absolute', top: 0, left: 0, right: 0 }} />
+      )}
+
       {/* Header row */}
       <TouchableOpacity
-        style={s.sessCardHeader}
-        onPress={isExpandable ? onToggle : undefined}
+        style={[s.sessCardHeader, isToday && { paddingTop: 14 }]}
+        onPress={isExpandable ? () => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          onToggle();
+        } : undefined}
         activeOpacity={isExpandable ? 0.7 : 1}
       >
         <View style={s.sessCardLeft}>
@@ -236,9 +299,21 @@ function SessionHistoryCard({
               {card.sessionType}
             </Text>
           </View>
-          {/* Always show "Today" label when it's today's date */}
-          {isToday && (
-            <Text style={[s.statusPill, { color: GOLD }]}>Today</Text>
+          {/* Part 1D: "TODAY" label with pulsing dot */}
+          {isPremiumToday && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 6 }}>
+              <Animated.View style={{
+                width: 6, height: 6, borderRadius: 3,
+                backgroundColor: GOLD, opacity: pulseAnim,
+              }} />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: GOLD }}>TODAY</Text>
+            </View>
+          )}
+          {isToday && card.status === 'completed' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 6 }}>
+              <MaterialCommunityIcons name="check-circle" size={14} color={RED} />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: RED }}>TODAY · DONE</Text>
+            </View>
           )}
           {card.status === 'completed' && !isToday && (
             <MaterialCommunityIcons name="check-circle" size={14} color={RED} style={{ marginLeft: 6 }} />
@@ -261,43 +336,66 @@ function SessionHistoryCard({
         </View>
       </TouchableOpacity>
 
-      {/* Exercise names */}
-      <Text style={[s.exLine, { color: card.status === 'upcoming' ? COLORS.text.muted : '#888' }]}
-        numberOfLines={1}>
-        {exerciseList}
-      </Text>
-
-      {/* Stats row — completed with logs only */}
-      {card.status === 'completed' && stats.sets > 0 && (
-        <View style={s.statsRow}>
-          <Text style={s.statItem}>
-            <Text style={s.statLbl}>Sets </Text>
-            <Text style={{ color: RED }}>{stats.sets}</Text>
-          </Text>
-          <Text style={s.statSep}>·</Text>
-          <Text style={s.statItem}>
-            <Text style={s.statLbl}>Vol </Text>
-            <Text style={s.statVal}>{formatVolume(stats.volume)}</Text>
-          </Text>
-          {stats.avgEffort > 0 && <>
-            <Text style={s.statSep}>·</Text>
-            <Text style={s.statItem}>
-              <Text style={s.statLbl}>Effort </Text>
-              <Text style={s.statVal}>{stats.avgEffort.toFixed(1)}</Text>
+      {/* Part 1D: Exercise chips for today's upcoming session */}
+      {isPremiumToday && card.exerciseNames.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingBottom: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {card.exerciseNames.slice(0, 3).map((name, i) => (
+              <View key={i} style={{ backgroundColor: '#1A1A1E', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, color: '#AAA' }}>{name}</Text>
+              </View>
+            ))}
+            {card.exerciseNames.length > 3 && (
+              <View style={{ backgroundColor: '#1A1A1E', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, color: '#666' }}>+{card.exerciseNames.length - 3}</Text>
+              </View>
+            )}
+            <Text style={{ fontSize: 11, color: GOLD, marginLeft: 'auto' }}>
+              {card.exerciseNames.length} exercises
             </Text>
-          </>}
+          </View>
         </View>
       )}
 
-      {/* GO TO SESSION — today with no logs yet */}
-      {card.status === 'today' && (
+      {/* Exercise names (non-premium) */}
+      {!isPremiumToday && (
+        <Text style={[s.exLine, { color: card.status === 'upcoming' ? COLORS.text.muted : '#888' }]}
+          numberOfLines={1}>
+          {exerciseList}
+        </Text>
+      )}
+
+      {/* Part 1E: 4-column stats for completed cards */}
+      {card.status === 'completed' && stats.sets > 0 && (
+        <View style={{ flexDirection: 'row', gap: 16, paddingHorizontal: 12, paddingBottom: 10 }}>
+          <View>
+            <Text style={{ fontSize: 9, color: '#555', marginBottom: 2 }}>SETS</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: RED }}>{stats.sets}</Text>
+          </View>
+          <View>
+            <Text style={{ fontSize: 9, color: '#555', marginBottom: 2 }}>VOLUME</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E8E8E6' }}>{formatVolume(stats.volume)}</Text>
+          </View>
+          <View>
+            <Text style={{ fontSize: 9, color: '#555', marginBottom: 2 }}>EFFORT</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E8E8E6' }}>{stats.avgEffort > 0 ? stats.avgEffort.toFixed(1) : '—'}</Text>
+          </View>
+          <View>
+            <Text style={{ fontSize: 9, color: '#555', marginBottom: 2 }}>TIME</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E8E8E6' }}>—</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Part 1D: START SESSION button (premium today, no logs) */}
+      {isPremiumToday && (
         <TouchableOpacity style={s.goBtn} onPress={onGoToSession} activeOpacity={0.8}>
-          <Text style={s.goBtnText}>GO TO SESSION</Text>
+          <Text style={s.goBtnText}>START SESSION</Text>
           <MaterialCommunityIcons name="arrow-right" size={14} color={BG} />
         </TouchableOpacity>
       )}
 
-      {/* CONTINUE SESSION — today has logs but may not be done */}
+      {/* CONTINUE SESSION — today has logs */}
       {card.status === 'completed' && isToday && (
         <TouchableOpacity style={s.continueBtnSmall} onPress={onGoToSession} activeOpacity={0.8}>
           <Text style={s.continueBtnText}>CONTINUE SESSION</Text>
@@ -305,11 +403,17 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
-      {/* Expanded detail — completed (logged sets) OR missed (planned exercises) */}
+      {/* Part 1E: Bottom progress bar for completed cards */}
+      {card.status === 'completed' && stats.sets > 0 && (
+        <View style={{ height: 3, backgroundColor: '#1A1A1E' }}>
+          <View style={{ height: '100%', width: '100%', backgroundColor: RED }} />
+        </View>
+      )}
+
+      {/* Expanded detail */}
       {isExpandable && expanded && (
         <View style={s.expandDetail}>
           {hasLogs ? (
-            // Completed: show logged weight × reps pills
             Object.entries(grouped).map(([exName, entries]) => {
               const topEntry = entries.reduce((mx, e) =>
                 (parseFloat(e.weight) || 0) > (parseFloat(mx.weight) || 0) ? e : mx, entries[0]);
@@ -337,7 +441,6 @@ function SessionHistoryCard({
               );
             })
           ) : (
-            // Missed: show planned exercises from calendar event
             <>
               <Text style={s.plannedLabel}>Planned exercises</Text>
               {card.exercises.length > 0 ? (
@@ -590,9 +693,20 @@ export default function ScheduleScreen() {
   // ── Render ────────────────────────────────────────────────────────────────────
   const isCurrentWeek = weekOffset === 0;
 
+  // Part 1H: PanResponder for swipe week navigation
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 30 && Math.abs(gs.dy) < 30,
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dx > 50)  { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); goWeek(-1); }
+        if (gs.dx < -50) { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); goWeek(1); }
+      },
+    })
+  ).current;
+
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
-      {/* ── Header ── */}
+    <View style={[s.root, { paddingTop: insets.top }]} {...panResponder.panHandlers}>
+      {/* Part 1A: Header with WeekRing */}
       <View style={s.header}>
         <View>
           <Text style={s.headerTitle}>Schedule</Text>
@@ -604,14 +718,8 @@ export default function ScheduleScreen() {
             </Text>
           )}
         </View>
-        <TouchableOpacity
-          style={s.swapDaysBtn}
-          onPress={() => { setSwapMode(true); setFirstSwap(null); }}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="swap-horizontal" size={14} color={COLORS.text.secondary} />
-          <Text style={s.swapDaysBtnText}>Swap days</Text>
-        </TouchableOpacity>
+        {/* Part 1A: Week progress ring replaces swap button */}
+        <WeekRing completed={weekStats.sessionsCompleted} total={weekStats.totalPlanned} />
       </View>
 
       {/* ── Swap mode banner ── */}
@@ -693,45 +801,19 @@ export default function ScheduleScreen() {
               ))}
             </View>
 
-            {/* ── Legend ── */}
+            {/* Part 1C: Compact 3-item legend with bar indicators */}
             <View style={s.legend}>
               {([
-                { color: RED,   label: 'Completed' },
-                { color: GOLD,  label: 'Today'     },
-                { color: GREEN, label: 'Upcoming'  },
-                { color: AMBER, label: 'Missed'    },
-                { color: '#444',label: 'Rest'      },
+                { color: RED,   label: 'Done'  },
+                { color: GOLD,  label: 'Today' },
+                { color: GREEN, label: 'Next'  },
               ] as {color:string;label:string}[]).map(({ color, label }) => (
                 <View key={label} style={s.legendItem}>
-                  <View style={[s.legendDot, { backgroundColor: color }]} />
+                  <View style={{ width: 8, height: 3, borderRadius: 1, backgroundColor: color }} />
                   <Text style={s.legendText}>{label}</Text>
                 </View>
               ))}
             </View>
-
-            {/* ── Week summary stats ── */}
-            {(weekStats.totalPlanned > 0 || weekStats.volume > 0) && (
-              <View style={s.statsStrip}>
-                <View style={[s.statPill, { borderColor: BORDER }]}>
-                  <Text style={s.statPillLabel}>Sessions</Text>
-                  <Text style={[s.statPillValue, { color: RED }]}>
-                    {weekStats.sessionsCompleted}/{weekStats.totalPlanned}
-                  </Text>
-                </View>
-                <View style={[s.statPill, { borderColor: BORDER }]}>
-                  <Text style={s.statPillLabel}>Volume</Text>
-                  <Text style={s.statPillValue}>
-                    {weekStats.volume > 0 ? formatVolume(weekStats.volume) : '—'}
-                  </Text>
-                </View>
-                <View style={[s.statPill, { borderColor: BORDER }]}>
-                  <Text style={s.statPillLabel}>Avg Effort</Text>
-                  <Text style={s.statPillValue}>
-                    {weekStats.avgEffort > 0 ? weekStats.avgEffort.toFixed(1) : '—'}
-                  </Text>
-                </View>
-              </View>
-            )}
 
             {/* ── Session history ── */}
             <Text style={s.sectionLabel}>SESSION HISTORY</Text>
@@ -754,6 +836,21 @@ export default function ScheduleScreen() {
                 />
               ))
             )}
+
+            {/* Part 1F: Swap training days pill BELOW session cards */}
+            <TouchableOpacity
+              style={{
+                alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6,
+                backgroundColor: '#111114', borderWidth: 1, borderColor: '#1E1E22',
+                borderRadius: 100, paddingHorizontal: 16, paddingVertical: 8,
+                marginTop: 6, marginBottom: 20,
+              }}
+              onPress={() => { setSwapMode(true); setFirstSwap(null); }}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="swap-horizontal" size={14} color="#666" />
+              <Text style={{ fontSize: 12, color: '#888', fontWeight: '600' }}>Swap training days</Text>
+            </TouchableOpacity>
           </>
         )}
       </ScrollView>

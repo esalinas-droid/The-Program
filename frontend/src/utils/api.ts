@@ -430,3 +430,36 @@ export const liftsApi = {
   setFeatured: (featuredIds: string[])                       => api('/lifts/featured', { method: 'PUT', body: JSON.stringify({ featuredIds }) }),
   catalog:     ()                                            => api('/lifts/catalog'),
 };
+
+// Streak
+export const streakApi = {
+  get: () => api('/streaks'),
+};
+
+// Badges
+export const badgesApi = {
+  get: () => api('/badges'),
+};
+
+// Quest
+export const questApi = {
+  get: () => api('/quest'),
+};
+
+// Leaderboard
+export const leaderboardApi = {
+  get: (tab = 'consistency', groupCode?: string) => {
+    const qs = groupCode ? `?tab=${tab}&group_code=${groupCode}` : `?tab=${tab}`;
+    return api(`/leaderboard${qs}`);
+  },
+};
+
+// Groups
+export const groupsApi = {
+  create: (name: string) => api('/groups/create', { method: 'POST', body: JSON.stringify({ name }) }),
+  join:   (code: string) => api('/groups/join',   { method: 'POST', body: JSON.stringify({ code }) }),
+  list:   ()             => api('/groups'),
+};
+
+// Generic api export for one-off calls
+export { api };

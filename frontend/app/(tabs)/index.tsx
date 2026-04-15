@@ -1,15 +1,16 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  SafeAreaView, RefreshControl, ActivityIndicator,
+  SafeAreaView, RefreshControl, ActivityIndicator, Animated,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
 import { toLocalDateString } from '../../src/utils/dateHelpers';
-import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, api } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -132,6 +133,15 @@ export default function Dashboard() {
   const [competitionStatus, setCompetitionStatus] = useState<any | null>(null);
   const [rotationStatus, setRotationStatus] = useState<any | null>(null);
 
+  // ── Gamification state ───────────────────────────────────────────────────────
+  const [streak,          setStreak]          = useState<any>(null);
+  const [badges,          setBadges]          = useState<any>(null);
+  const [quest,           setQuest]           = useState<any>(null);
+  const [userRank,        setUserRank]        = useState<number>(0);
+  const [showGroupPrompt, setShowGroupPrompt] = useState(false);
+  const [questIsNew,      setQuestIsNew]      = useState(false);
+  const streakGlowAnim = useRef(new Animated.Value(0.7)).current;
+
   const loadData = useCallback(async () => {
     const prof = await getProfile();
     if (!prof) { setLoading(false); return; }
@@ -209,6 +219,45 @@ export default function Dashboard() {
       const rot = await rotationApi.check();
       setRotationStatus(rot?.count > 0 ? rot : null);
     } catch { /* Rotation check not critical */ }
+
+    // ── Fetch gamification data ────────────────────────────────────────────
+    try {
+      const [strk, bdgs, qst, lbrd] = await Promise.all([
+        streakApi.get().catch(() => null),
+        badgesApi.get().catch(() => null),
+        questApi.get().catch(() => null),
+        api('/leaderboard?tab=consistency').catch(() => null),
+      ]);
+      setStreak(strk);
+      setBadges(bdgs);
+      setQuest(qst);
+      setUserRank(lbrd?.userRank ?? 0);
+
+      // Part 11B: streak glow on first-time streak
+      if (strk?.currentStreak === 1) {
+        const seen = await AsyncStorage.getItem('streakIntroSeen');
+        if (!seen) {
+          await AsyncStorage.setItem('streakIntroSeen', 'true');
+          Animated.loop(Animated.sequence([
+            Animated.timing(streakGlowAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+            Animated.timing(streakGlowAnim, { toValue: 0.6, duration: 700, useNativeDriver: true }),
+          ]), { iterations: 3 }).start();
+        }
+      }
+
+      // Part 11D: quest "NEW" badge on first time
+      const questSeen = await AsyncStorage.getItem('questIntroSeen');
+      if (!questSeen && qst) {
+        setQuestIsNew(true);
+        await AsyncStorage.setItem('questIntroSeen', 'true');
+      }
+
+      // Part 10C: group prompt for 2+ week athletes
+      if (strk?.totalWeeksTrained >= 2) {
+        const dismissed = await AsyncStorage.getItem('groupPromptDismissed');
+        if (!dismissed) setShowGroupPrompt(true);
+      }
+    } catch { /* Gamification non-critical */ }
 
     setLoading(false);
   }, []);
@@ -347,6 +396,107 @@ export default function Dashboard() {
                 The work you put in this week is consolidating right now. Eat well, sleep more, and come back ready.
               </Text>
             </View>
+          </View>
+        )}
+
+        {/* ── GAMIFICATION CARDS ── */}
+
+        {/* Part 5C: Streak card */}
+        {streak && streak.currentStreak > 0 && (
+          <Animated.View style={{ opacity: streakGlowAnim }}>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#FF6B3530', padding: 14, marginHorizontal: 16, marginBottom: 8 }}
+              onPress={() => router.push('/achievements')}
+              activeOpacity={0.7}>
+              <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#FF6B3515', alignItems: 'center', justifyContent: 'center' }}>
+                <MaterialCommunityIcons name="fire" size={22} color="#FF6B35" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF6B35' }}>{streak.currentStreak}-week streak</Text>
+                <Text style={{ fontSize: 11, color: '#666' }}>
+                  {streak.currentStreak >= streak.longestStreak ? 'New record!' : `Best: ${streak.longestStreak} weeks`}
+                </Text>
+              </View>
+              <View style={{ backgroundColor: '#FF6B3515', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: '#FF6B35' }}>{streak.freezesAvailable} freeze{streak.freezesAvailable !== 1 ? 's' : ''}</Text>
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
+        )}
+
+        {/* Part 6B: Badges row */}
+        {badges?.earned?.length > 0 && (
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#1E1E22', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8 }}
+            onPress={() => router.push('/achievements')}
+            activeOpacity={0.7}>
+            <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>BADGES</Text>
+            <View style={{ flex: 1, flexDirection: 'row', gap: 6 }}>
+              {badges.earned.slice(-4).map((b: any) => (
+                <View key={b.id} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#C9A84C15', borderWidth: 1, borderColor: '#C9A84C40', alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialCommunityIcons name={b.icon as any} size={14} color="#C9A84C" />
+                </View>
+              ))}
+            </View>
+            <Text style={{ fontSize: 10, color: '#555' }}>{badges.totalEarned}/{badges.totalPossible}</Text>
+            <MaterialCommunityIcons name="chevron-right" size={16} color="#444" />
+          </TouchableOpacity>
+        )}
+
+        {/* Part 7B: Weekly Quest */}
+        {quest && (
+          <TouchableOpacity
+            style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#C9A84C30', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8 }}
+            onPress={() => router.push('/achievements')}
+            activeOpacity={0.7}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={{ fontSize: 9, color: '#C9A84C', fontWeight: '700', letterSpacing: 0.8 }}>WEEKLY QUEST</Text>
+                {questIsNew && (
+                  <View style={{ backgroundColor: '#C9A84C', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#0A0A0C' }}>NEW</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={{ fontSize: 10, color: '#555' }}>Resets Mon</Text>
+            </View>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', marginBottom: 6 }}>{quest.title}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flex: 1, height: 6, backgroundColor: '#1E1E22', borderRadius: 3 }}>
+                <View style={{ width: `${Math.min(100, ((quest.progress?.current ?? 0) / Math.max(quest.progress?.target ?? 1, 1)) * 100)}%` as any, height: '100%', backgroundColor: '#C9A84C', borderRadius: 3 }} />
+              </View>
+              <Text style={{ fontSize: 11, color: '#C9A84C', fontWeight: '600' }}>
+                {quest.progress?.current ?? 0}/{quest.progress?.target ?? 1}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Part 10D: Leaderboard preview card */}
+        <TouchableOpacity
+          style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#1E1E22', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
+          onPress={() => router.push('/leaderboard')}
+          activeOpacity={0.7}>
+          <MaterialCommunityIcons name="podium-gold" size={18} color="#C9A84C" />
+          <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', marginLeft: 8, flex: 1 }}>Leaderboard</Text>
+          <Text style={{ fontSize: 12, color: '#C9A84C', fontWeight: '600' }}>#{userRank || '—'}</Text>
+          <MaterialCommunityIcons name="chevron-right" size={16} color="#444" style={{ marginLeft: 4 }} />
+        </TouchableOpacity>
+
+        {/* Part 10C: One-time group invite prompt */}
+        {showGroupPrompt && (
+          <View style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#C9A84C30', padding: 14, marginHorizontal: 16, marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', flex: 1 }}>Training is better with accountability</Text>
+              <TouchableOpacity onPress={async () => { await AsyncStorage.setItem('groupPromptDismissed', 'true'); setShowGroupPrompt(false); }}>
+                <MaterialCommunityIcons name="close" size={16} color="#555" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={{ backgroundColor: '#C9A84C', borderRadius: 8, paddingVertical: 8, marginTop: 8, alignItems: 'center' }}
+              onPress={() => router.push('/leaderboard')}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0A0A0C' }}>CREATE A GROUP</Text>
+            </TouchableOpacity>
           </View>
         )}
 
