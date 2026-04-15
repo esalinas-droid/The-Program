@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
   RefreshControl,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -1547,6 +1548,28 @@ export default function TodayScreen() {
   // Increment to force full reload even while screen is already focused (pull-to-refresh)
   const [loadKey, setLoadKey] = useState(0);
 
+  // ── AsyncStorage keys for persisting today's set values & logged state ───────
+  const SET_VALUES_KEY  = 'today_set_values';
+  const LOGGED_SETS_KEY = 'today_logged_sets';
+
+  const saveSetValuesToStorage = useCallback(async (
+    values: Record<string, { weight: string; reps: string }>
+  ) => {
+    try { await AsyncStorage.setItem(SET_VALUES_KEY, JSON.stringify(values)); } catch {}
+  }, []);
+
+  const saveLoggedSetsToStorage = useCallback(async (
+    logged: Set<string>, ids: Record<string, string>
+  ) => {
+    try {
+      await AsyncStorage.setItem(LOGGED_SETS_KEY, JSON.stringify({
+        loggedSetIds: Array.from(logged),
+        entryIds:     ids,
+        date:         getLocalDateString(),
+      }));
+    } catch {}
+  }, []);
+
   // Adjust modal
   const [modalVisible, setModal]   = useState(false);
   const [adjustKey, setAdjustKey]  = useState('');
@@ -1630,6 +1653,44 @@ export default function TodayScreen() {
     setLoadKey(k => k + 1);          // Triggers useFocusEffect to re-run (while screen is focused)
     // setRefreshing(false) is handled by the load effect after data arrives
   }, []);
+
+  // ── Restore edited values from AsyncStorage on component mount ──────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const todayStr    = getLocalDateString();
+        // Restore set values
+        const savedVals   = await AsyncStorage.getItem(SET_VALUES_KEY);
+        if (savedVals) {
+          const parsed = JSON.parse(savedVals);
+          if (parsed && typeof parsed === 'object') {
+            setSetValues(prev => ({ ...prev, ...parsed }));
+          }
+        }
+        // Restore logged sets (only if date matches today)
+        const savedLogged = await AsyncStorage.getItem(LOGGED_SETS_KEY);
+        if (savedLogged) {
+          const parsed = JSON.parse(savedLogged);
+          if (parsed?.date === todayStr) {
+            setLoggedSets(new Set(parsed.loggedSetIds  || []));
+            setLogEntryIds(parsed.entryIds            || {});
+          } else {
+            // Stale data from a previous day — remove it
+            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]);
+            setSetValues({});
+          }
+        }
+      } catch {}
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Persist setValues to AsyncStorage on every change ─────────────────────
+  useEffect(() => {
+    if (Object.keys(setValues).length > 0) {
+      saveSetValuesToStorage(setValues);
+    }
+  }, [setValues, saveSetValuesToStorage]);
 
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
