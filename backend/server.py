@@ -4221,19 +4221,7 @@ async def get_change_log_v2(userId: str = Depends(get_current_user)):
     }
 
 
-app.include_router(api_router)
-app.include_router(program_router)
-app.include_router(auth_router)
-app.include_router(admin_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ── Debug / Diagnostic ──────────────────────────────────────────────────────
 @api_router.get("/debug/sync-status")
 async def debug_sync_status(userId: str = Depends(get_current_user)):
     """Debug endpoint to diagnose sync issues between log entries, plans, and calendar."""
@@ -4303,6 +4291,20 @@ async def debug_sync_status(userId: str = Depends(get_current_user)):
         "calendarEventDates": [e.get("date") for e in cal_events[:7]],
         "usersInDatabase": user_list,
     }
+
+
+app.include_router(api_router)
+app.include_router(program_router)
+app.include_router(auth_router)
+app.include_router(admin_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("shutdown")
