@@ -387,37 +387,83 @@ export default function TrackScreen() {
   }, [painData]);
   const overallCompliance = overview?.compliance ?? 0;
 
-  // Est. Maxes for 3-card row — use featured lifts if available, else fallback to hardcoded
-  const featuredLifts = useMemo(() => trackedLifts.filter(l => l.isFeatured), [trackedLifts]);
-  const estMaxCards = useMemo(() => {
-    if (featuredLifts.length >= 3) {
-      return featuredLifts.slice(0, 3).map(l => ({
-        key: l.exercise.split(' ').slice(0, 2).join(' ').toUpperCase(),
-        pr: { exercise: l.exercise, bestE1rm: l.bestE1rm, bestWeight: l.bestWeight, bestReps: l.bestReps, lastDate: l.lastDate },
-      }));
-    }
-    // Fallback: hardcoded categories
-    const targets = [
-      { key: 'SQUAT', exercises: ['Back Squat', 'Front Squat', 'SSB Squat'] },
-      { key: 'PRESS', exercises: ['Bench Press', 'Close-Grip Bench Press', 'Floor Press'] },
-      { key: 'PULL',  exercises: ['Conventional Deadlift', 'Sumo Deadlift', 'Romanian Deadlift'] },
-    ];
-    return targets.map(t => {
-      const pr = prs.find(p => t.exercises.some(e => p.exercise?.toLowerCase().includes(e.toLowerCase().split(' ')[0])));
-      return { key: t.key, pr };
-    });
-  }, [prs, featuredLifts]);
+  const featuredLifts = useMemo(() => trackedLifts.filter((l: any) => l.isFeatured), [trackedLifts]);
 
-  // PR board source: use ALL tracked lifts if available, else fall back to log-based sortedPRs
+  // PR board: merge tracked_lifts (with correct e1rm from log merge) + prApi.getAll()
+  // Never ignore either data source — use the higher e1rm when both have data
+  // MUST be declared before estMaxCards which references it
   const prBoardLifts = useMemo(() => {
-    if (trackedLifts.length > 0) {
-      const sorted = [...trackedLifts];
-      if (prSort === 'recent')   return sorted.sort((a, b) => (b.lastDate ?? '') > (a.lastDate ?? '') ? 1 : -1);
-      if (prSort === 'heaviest') return sorted.sort((a, b) => b.bestE1rm - a.bestE1rm);
-      return sorted.sort((a, b) => a.exercise.localeCompare(b.exercise));
+    const merged = new Map<string, any>();
+
+    // 1. Seed with all tracked lifts
+    for (const lift of trackedLifts) {
+      if (lift.exercise) merged.set(lift.exercise, { ...lift });
     }
-    return sortedPRs;
-  }, [trackedLifts, sortedPRs, prSort]);
+
+    // 2. Merge in log-based PRs — if prApi has a higher e1rm, prefer it
+    for (const pr of prs) {
+      if (!pr.exercise || (pr.bestE1rm === 0 && pr.bestWeight === 0)) continue;
+      const existing = merged.get(pr.exercise);
+      if (!existing) {
+        merged.set(pr.exercise, {
+          id:         `pr-${pr.exercise}`,
+          exercise:   pr.exercise,
+          category:   'From Training',
+          bestWeight: pr.bestWeight || 0,
+          bestReps:   pr.bestReps   || 0,
+          bestE1rm:   pr.bestE1rm   || 0,
+          lastDate:   pr.lastDate   || null,
+          isFeatured: false,
+          source:     'log',
+        });
+      } else if ((pr.bestE1rm || 0) > (existing.bestE1rm || 0)) {
+        merged.set(pr.exercise, {
+          ...existing,
+          bestWeight: pr.bestWeight || existing.bestWeight,
+          bestReps:   pr.bestReps   || existing.bestReps,
+          bestE1rm:   pr.bestE1rm   || existing.bestE1rm,
+          lastDate:   pr.lastDate   || existing.lastDate,
+        });
+      }
+    }
+
+    // 3. Filter to entries with actual data and sort
+    const all = Array.from(merged.values()).filter(
+      (l: any) => (l.bestE1rm || 0) > 0 || (l.bestWeight || 0) > 0
+    );
+    if (prSort === 'recent')   return all.sort((a: any, b: any) => (b.lastDate ?? '') > (a.lastDate ?? '') ? 1 : -1);
+    if (prSort === 'heaviest') return all.sort((a: any, b: any) => (b.bestE1rm || 0) - (a.bestE1rm || 0));
+    return all.sort((a: any, b: any) => (a.exercise || '').localeCompare(b.exercise || ''));
+  }, [trackedLifts, prs, prSort]);
+
+  // Est. Maxes: featured lifts (with actual e1rm) → merged prBoardLifts + prs fallback
+  const estMaxCards = useMemo(() => {
+    // Use featured lifts if at least 3 have real e1rm data
+    if (featuredLifts.length >= 3) {
+      const withData = featuredLifts.filter((l: any) => (l.bestE1rm || 0) > 0);
+      if (withData.length >= 3) {
+        return withData.slice(0, 3).map((l: any) => ({
+          key: l.exercise.split(' ').slice(0, 2).join(' ').toUpperCase(),
+          pr:  { exercise: l.exercise, bestE1rm: l.bestE1rm, bestWeight: l.bestWeight, bestReps: l.bestReps, lastDate: l.lastDate },
+        }));
+      }
+    }
+    // Fallback: search prBoardLifts (merged) + prs across expanded category lists
+    const targets = [
+      { key: 'SQUAT', exercises: ['Back Squat', 'Front Squat', 'SSB Box Squat', 'Belt Squat', 'Cambered Bar Box Squat', 'Box Squat', 'Goblet Squat'] },
+      { key: 'PRESS', exercises: ['Bench Press', 'Floor Press', 'Close-Grip Bench Press', 'Overhead Press', 'Log Clean and Press', 'Axle Clean and Press', 'DB Bench Press', 'Incline Bench'] },
+      { key: 'PULL',  exercises: ['Conventional Deadlift', 'Sumo Deadlift', 'Romanian Deadlift', 'Axle Deadlift', 'Block Pull', 'Trap Bar Deadlift'] },
+    ];
+    const allSources = [...prBoardLifts, ...prs];
+    return targets.map(t => {
+      const match = allSources
+        .filter((p: any) => p.exercise && t.exercises.some(e =>
+          p.exercise.toLowerCase().includes(e.toLowerCase().split(' ')[0])
+        ) && (p.bestE1rm || 0) > 0)
+        .sort((a: any, b: any) => (b.bestE1rm || 0) - (a.bestE1rm || 0))[0];
+      return { key: t.key, pr: match || null };
+    });
+  }, [prs, featuredLifts, prBoardLifts]);
 
   // Header subtitle
   const headerSub = useMemo(() => {

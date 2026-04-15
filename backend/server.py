@@ -35,6 +35,27 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ── Exercise Name Canonical Migration Map ────────────────────────────────────
+# Maps old/incorrect exercise names → correct canonical names.
+# Used during startup migration and in any new lookup that needs normalization.
+EXERCISE_NAME_MIGRATION_MAP: dict[str, str] = {
+    "SSB Squat":           "SSB Box Squat",
+    "SSB squat":           "SSB Box Squat",
+    "ssb squat":           "SSB Box Squat",
+    "Axle Deadlift":       "Axle Clean and Press",
+    "axle deadlift":       "Axle Clean and Press",
+    "Log Press":           "Log Clean and Press",
+    "log press":           "Log Clean and Press",
+    "Log push press":      "Log Push Press",
+    "Axle push press":     "Axle Push Press",
+    "Yoke":                "Yoke Carry",
+    "Atlas Stone":         "Atlas Stone Load",
+    "Farmers Walk":        "Farmers Carry",
+    "Farmers Walks":       "Farmers Carry",
+    "farmers walk":        "Farmers Carry",
+    "farmers walks":       "Farmers Carry",
+}
+
 # ── PyObjectId ──────────────────────────────────────────────────────────────
 def validate_object_id(v: Any) -> str:
     if isinstance(v, ObjectId): return str(v)
@@ -1065,6 +1086,35 @@ async def get_tracked_lifts(userId: str = Depends(get_current_user)):
             "isFeatured":  doc.get("isFeatured", False),
             "source":      doc.get("source", "manual"),
         })
+
+    # ── Include exercises from log entries not in tracked_lifts ──────────────
+    tracked_exercise_names = set(doc.get("exercise", "") for doc in tracked)
+    try:
+        all_logged_exs = await db.log.distinct("exercise", _user_or_orphan(userId))
+        for ex_name in all_logged_exs:
+            if not ex_name or ex_name in tracked_exercise_names:
+                continue
+            ex_logs = await db.log.find(
+                {**_user_or_orphan(userId), "exercise": ex_name}
+            ).sort("e1rm", -1).to_list(50)
+            if ex_logs:
+                best_log   = max(ex_logs, key=lambda d: d.get("e1rm", 0))
+                latest_log = max(ex_logs, key=lambda d: d.get("date", ""))
+                if best_log.get("e1rm", 0) > 0:
+                    result.append({
+                        "id":         f"log-{ex_name}",
+                        "exercise":   ex_name,
+                        "category":   "From Training",
+                        "bestWeight": best_log.get("weight", 0),
+                        "bestReps":   best_log.get("reps", 0),
+                        "bestE1rm":   best_log.get("e1rm", 0),
+                        "lastDate":   latest_log.get("date"),
+                        "isFeatured": False,
+                        "source":     "log",
+                    })
+    except Exception as e:
+        logger.warning(f"[LIFTS] Failed to add log-only exercises: {e}")
+
     return {"lifts": result}
 
 @api_router.post("/lifts")
@@ -1637,6 +1687,25 @@ async def _migrate_log_entries_add_userid():
     logger.info(f"[MIGRATION] Backfilled {sub_result.modified_count} substitutions")
 
 
+async def _migrate_exercise_names():
+    """One-time migration: rename old/incorrect exercise names to canonical ones in tracked_lifts and log entries."""
+    total_lifts = 0
+    total_logs  = 0
+    for old_name, new_name in EXERCISE_NAME_MIGRATION_MAP.items():
+        r1 = await db.tracked_lifts.update_many({"exercise": old_name}, {"$set": {"exercise": new_name}})
+        if r1.modified_count > 0:
+            total_lifts += r1.modified_count
+            logger.info(f"[MIGRATION] tracked_lifts: '{old_name}' → '{new_name}' ({r1.modified_count} docs)")
+        r2 = await db.log.update_many({"exercise": old_name}, {"$set": {"exercise": new_name}})
+        if r2.modified_count > 0:
+            total_logs += r2.modified_count
+            logger.info(f"[MIGRATION] log entries:   '{old_name}' → '{new_name}' ({r2.modified_count} docs)")
+    if total_lifts > 0 or total_logs > 0:
+        logger.info(f"[MIGRATION] Exercise rename complete: {total_lifts} tracked_lifts, {total_logs} log entries updated")
+    else:
+        logger.info("[MIGRATION] No exercise name migrations needed — all names are canonical")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -1650,6 +1719,8 @@ async def load_models():
     logger.info("Supabase client initialized.")
     # Run one-time migration to backfill orphan log entries with userId
     await _migrate_log_entries_add_userid()
+    # Run migration to canonicalize exercise names in tracked_lifts and log entries
+    await _migrate_exercise_names()
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
