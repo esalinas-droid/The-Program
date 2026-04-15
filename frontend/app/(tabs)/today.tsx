@@ -67,7 +67,7 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'fallback-sup',
-    name: 'Supplemental',
+    name: 'Support',
     category: 'supplemental',
     prescription: '4 × 6-8',
     lastSession: '—',
@@ -1481,7 +1481,7 @@ export default function TodayScreen() {
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
   const [exercises, setExercises] = useState<Exercise[]>(() => {
-    const s = getTodaySession(1);
+    const s = getTodaySession(week || 1);
     return buildTodayExercisesFromLocal(s);
   });
 
@@ -1491,7 +1491,7 @@ export default function TodayScreen() {
   const [efforts, setEfforts]         = useState<Record<string, number>>({});
   const [expanded, setExpanded]       = useState<Set<string>>(() => {
     // Default expand the first exercise based on local data
-    const s = getTodaySession(1);
+    const s = getTodaySession(week || 1);
     const exs = buildTodayExercisesFromLocal(s);
     return new Set([exs[0]?.id || 'local-main']);
   });

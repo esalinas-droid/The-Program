@@ -48,7 +48,13 @@ export const logApi = {
   create: (entry: any) => api('/log', { method: 'POST', body: JSON.stringify(entry) }),
   update: (id: string, entry: any) => api(`/log/${id}`, { method: 'PUT', body: JSON.stringify(entry) }),
   delete: (id: string) => api(`/log/${id}`, { method: 'DELETE' }),
-  weekStats: (week: number) => api(`/log/stats/week/${week}`),
+  weekStats: (week: number, startDate?: string, endDate?: string) => {
+    let qs = `/log/stats/week/${week}`;
+    if (startDate && endDate) {
+      qs += `?start_date=${startDate}&end_date=${endDate}`;
+    }
+    return api(qs);
+  },
 };
 
 // PRs

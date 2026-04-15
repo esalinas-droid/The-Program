@@ -1399,3 +1399,56 @@ agent_communication:
       Test credentials:
       - user_a@theprogram.app / StrongmanA123 (has 128 backfilled log entries)
       - user_b@theprogram.app / HypertrophyB123 (fresh, no log entries)
+
+  - agent: "main"
+    message: >
+      COMPLETE BUG FIX — 15 Bugs Across 5 Categories. All implemented. Backend reloaded clean.
+
+      CATEGORY 1 — Home/Schedule session count mismatch:
+      1. Added _calculate_current_week() helper to server.py (date math, not profile int).
+      2. GET /api/log/stats/week/{week_num} now accepts optional start_date + end_date query
+         params. When provided, queries by date range (same source as Schedule). Legacy
+         week-number query retained as fallback.
+      3. GET /api/plan/session/today now returns currentWeek int in response (computed from
+         planStartDate via _calculate_current_week).
+      4. TRAINING_CALENDAR in get_today_session_mongo updated to new terminology:
+         Heavy Lower/Upper and Speed Lower/Upper. Old legacy names tried second as fallback.
+      5. frontend/src/utils/api.ts logApi.weekStats now accepts optional startDate/endDate.
+      6. frontend/app/(tabs)/index.tsx loadData computes Mon-Sun date range (local time)
+         and passes weekStart/weekEnd to logApi.weekStats — matches Schedule page data source.
+
+      CATEGORY 2 — _ensure_plan_loaded:
+      7. Startup: Removed _ensure_plan_loaded() call from startup. Plans load on-demand per user.
+      8. apply_recommendation: Changed db.profile.find_one({}) to find_one({"userId": userId}).
+      9. apply_recommendation: Changed _ensure_plan_loaded() to _ensure_plan_loaded(userId).
+
+      CATEGORY 3 — Legacy terminology:
+      10. today.tsx fallback exercise name: 'Supplemental' → 'Support'.
+      11. today.tsx getTodaySession(1) calls → getTodaySession(week || 1) in both useState inits.
+      12. tools/calendar.tsx: Added Upper Push, Lower Body, Full Body, Repetition Upper, Repetition
+          Lower to both SESSION_COLORS and SESSION_DOTS maps with distinct colors.
+
+      CATEGORY 4 — Coach data leak:
+      13. coach_chat: Removed fallback db.log.find({}) — now strictly scoped to userId only.
+          New comment: "no cross-user fallback".
+
+      CATEGORY 5 — Weekly review stale data:
+      14. GET /api/weekly-review: Now computes Mon-Sun date range (local time). Log queries use
+          date-range filter ({$gte: week_start, $lte: week_end}) instead of week number. prev_logs
+          also uses date range for previous week. Cache key changed from {week: N} to {weekStart: date}.
+      15. POST /api/log cache invalidation: Now deletes by {weekStart: week_start} instead of
+          {week: current_week} so new reviews generate with fresh data.
+
+      HOW TO TEST:
+      1. GET /api/log/stats/week/1?start_date=2026-04-13&end_date=2026-04-19 → should return
+         sessionsCompleted based on DATE RANGE (matching Schedule page). Without query params
+         → falls back to week=1 query.
+      2. GET /api/plan/session/today → response should include "currentWeek" integer field.
+      3. GET /api/weekly-review (first call) → should cache with weekStart field not week int.
+         Second call → cached: true. After POST /api/log → cache invalidated, third call regenerates.
+      4. POST /api/coach/apply-recommendation with JWT → should use userId-scoped profile and plan.
+      5. Coach chat for NEW user (no logs) → should NOT pull other users' log data.
+      6. Home tab: sessionsCompleted should match Schedule tab Sessions count.
+      7. All existing endpoints still return 200.
+
+      Test credentials: user_a@theprogram.app / StrongmanA123

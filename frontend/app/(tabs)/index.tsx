@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
+import { toLocalDateString } from '../../src/utils/dateHelpers';
 import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
@@ -147,9 +148,21 @@ export default function Dashboard() {
       setProgramSession(apiSession);
     } catch { /* No AI plan yet — use local data */ }
 
+    // Compute this week's Mon-Sun date range (local time, matches Schedule page)
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon…6=Sat
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const weekStart = toLocalDateString(monday);
+    const weekEnd   = toLocalDateString(sunday);
+
     try {
       const [stats, bestsData] = await Promise.all([
-        logApi.weekStats(week),
+        logApi.weekStats(week, weekStart, weekEnd),
         prApi.getBests(),
       ]);
       setWeekStats(stats);

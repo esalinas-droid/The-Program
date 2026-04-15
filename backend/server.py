@@ -365,10 +365,19 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="No plan found.")
 
     today_day = datetime.now().weekday() + 1  # 1=Mon … 7=Sun
+    # Updated to new session terminology — legacy names kept for fallback
     TRAINING_CALENDAR = {
+        1: "Heavy Lower",  2: "Heavy Upper",
+        4: "Speed Lower",  5: "Speed Upper",
+    }
+    TRAINING_CALENDAR_LEGACY = {
         1: "Max Effort Lower", 2: "Max Effort Upper",
         4: "Dynamic Effort Lower", 5: "Dynamic Effort Upper",
     }
+    # Calculate current week from plan start date
+    plan_start = getattr(plan, "planStartDate", None) or getattr(plan, "startDate", None) or ""
+    current_week_num = _calculate_current_week(str(plan_start)) if plan_start else 1
+
     for phase in plan.phases:
         if phase.status == _PhaseStatus.CURRENT:
             for block in phase.blocks:
@@ -377,28 +386,35 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
                         for session in week.sessions:
                             if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
                                 return {"phase": phase.phaseName, "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
-                        expected_type = TRAINING_CALENDAR.get(today_day)
-                        if expected_type:
-                            for session in week.sessions:
-                                if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                    return {"phase": phase.phaseName, "block": block.blockName,
-                                            "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                                        "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                        "session": session.model_dump()}
+                        # Try new terminology first, then legacy
+                        for cal in (TRAINING_CALENDAR, TRAINING_CALENDAR_LEGACY):
+                            expected_type = cal.get(today_day)
+                            if expected_type:
+                                for session in week.sessions:
+                                    if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                        return {"phase": phase.phaseName, "block": block.blockName,
+                                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                                "session": session.model_dump()}
                         for session in week.sessions:
                             if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
                                 return {"phase": phase.phaseName, "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                                        "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                        "session": session.model_dump()}
                         for session in week.sessions:
                             if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
                                 return {"phase": phase.phaseName, "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}", "session": session.model_dump()}
+                                        "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                        "session": session.model_dump()}
     if plan.phases and plan.phases[0].blocks and plan.phases[0].blocks[0].weeks:
         phase = plan.phases[0]
         block = phase.blocks[0]
         week = block.weeks[0]
         if week.sessions:
             return {"phase": phase.phaseName, "block": block.blockName,
-                    "week": f"Week {week.weekNumber}", "session": week.sessions[0].model_dump()}
+                    "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                    "session": week.sessions[0].model_dump()}
     raise HTTPException(status_code=404, detail="No session found for today.")
 
 
@@ -806,10 +822,13 @@ async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_cu
     result = await db.log.insert_one(data)
     doc = await db.log.find_one({"_id": result.inserted_id})
     # Invalidate weekly review cache so it regenerates with fresh data
-    profile = await db.profile.find_one({"userId": userId})
-    if profile:
-        current_week = profile.get("currentWeek", 1)
-        await db.weekly_reviews.delete_one({"userId": userId, "week": current_week})
+    # Use weekStart date key (matches new weekly-review endpoint cache key)
+    from datetime import timedelta as _td
+    _now = datetime.now()
+    _day_of_week = _now.weekday()
+    _monday = _now - _td(days=_day_of_week)
+    _week_start = _monday.strftime("%Y-%m-%d")
+    await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
 @api_router.put("/log/{entry_id}")
@@ -836,11 +855,27 @@ async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user
     return {"deleted": True}
 
 @api_router.get("/log/stats/week/{week_num}")
-async def get_week_stats(week_num: int, userId: str = Depends(get_current_user)):
+async def get_week_stats(
+    week_num: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    userId: str = Depends(get_current_user),
+):
+    """Return weekly training stats. When start_date + end_date provided, query by date
+    range (preferred — matches Schedule page). Falls back to week-number query."""
     user_filter = _user_or_orphan(userId)
-    docs = await db.log.find({**user_filter, "week": week_num}).to_list(500)
+
+    if start_date and end_date:
+        # Date-range query — same data source as Schedule page
+        query = {**user_filter, "date": {"$gte": start_date, "$lte": end_date}}
+    else:
+        # Legacy week-number query
+        query = {**user_filter, "week": week_num}
+
+    docs = await db.log.find(query).to_list(500)
     if not docs:
-        return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0, "sessionsCompleted": 0, "sessionsPlanned": 4}
+        return {"avgPain": 0, "avgRPE": 0, "completionRate": 0, "entries": 0,
+                "sessionsCompleted": 0, "sessionsPlanned": 4}
 
     pain_vals = [d["pain"] for d in docs if d.get("pain") is not None]
     rpe_vals  = [d["rpe"]  for d in docs if d.get("rpe")  is not None and d.get("rpe", 0) > 0]
@@ -1560,9 +1595,8 @@ async def load_models():
     logger.info("Supabase client initialized.")
     # Run one-time migration to backfill orphan log entries with userId
     await _migrate_log_entries_add_userid()
-    # Pre-load plan from MongoDB into memory so all plan endpoints work immediately
-    await _ensure_plan_loaded()
-    logger.info("Startup complete — plan preloaded.")
+    # Plans are loaded on-demand when each user first makes a request
+    logger.info("Startup complete — plans load on demand.")
 
 # ── Coach Models ──────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
@@ -1609,10 +1643,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             f"Avoid: {', '.join(avoid) if avoid else 'None'}"
         )
 
-    # ── 2. Recent training log (userId-scoped) ────────────────────────────────
+    # ── 2. Recent training log (userId-scoped only — no cross-user fallback) ──
     log_docs = await db.log.find({"userId": userId}).sort("date", -1).limit(5).to_list(5)
-    if not log_docs:
-        log_docs = await db.log.find({}).sort("date", -1).limit(5).to_list(5)
     recent_log = "No recent sessions logged."
     if log_docs:
         lines = [
@@ -1878,6 +1910,18 @@ async def _save_plan_to_db(plan, uid: str = None) -> None:
         logger.warning(f"Failed to persist plan to MongoDB: {e}")
 
 
+def _calculate_current_week(plan_start_date: str) -> int:
+    """Calculate current training week number from plan start date."""
+    try:
+        from datetime import datetime as _dt
+        start = _dt.strptime(plan_start_date[:10], "%Y-%m-%d")
+        today = _dt.now()
+        delta = (today - start).days
+        return max(1, (delta // 7) + 1)
+    except Exception:
+        return 1
+
+
 async def _ensure_plan_loaded(uid: str = None) -> bool:
     """Load plan from MongoDB (saved_plans first, then regenerate) if not in memory."""
     user_id = uid or _PROG_USER
@@ -2133,11 +2177,11 @@ async def apply_recommendation(body: ApplyRecommendationRequest, userId: str = D
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid conversation_id format")
 
-    profile = await db.profile.find_one({})
+    profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
     now = datetime.now(timezone.utc)
 
-    plan_available = await _ensure_plan_loaded()
+    plan_available = await _ensure_plan_loaded(userId)
 
     changes_by_category: dict = {"main": [], "supplemental": [], "accessory": [], "prehab": []}
     total_swapped = 0
@@ -2735,25 +2779,40 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
 @api_router.get("/weekly-review")
 async def get_weekly_review(userId: str = Depends(get_current_user)):
     """
-    Return a weekly AI coaching review, cached once per training week.
-    Generates on first call for the week; returns cache on subsequent calls.
+    Return a weekly AI coaching review, cached once per training week (Mon-Sun).
+    Cache key uses weekStart (YYYY-MM-DD) so it invalidates on new week even
+    if currentWeek profile integer hasn't updated yet.
     Stored in db.weekly_reviews.
     """
     from datetime import timedelta
 
     profile_doc = await db.profile.find_one({"userId": userId})
     current_week = int(profile_doc.get("currentWeek", 1)) if profile_doc else 1
-    now = datetime.now(timezone.utc)
-    today_str = now.strftime("%Y-%m-%d")
 
-    # ── Cache check ────────────────────────────────────────────────────────────
-    existing = await db.weekly_reviews.find_one({"userId": userId, "week": current_week})
+    # ── Calculate this week's Mon-Sun date range (local time) ─────────────────
+    now = datetime.now()
+    day_of_week = now.weekday()  # 0=Mon, 6=Sun
+    monday = now - timedelta(days=day_of_week)
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = monday + timedelta(days=6)
+    week_start = monday.strftime("%Y-%m-%d")
+    week_end   = sunday.strftime("%Y-%m-%d")
+    today_str  = now.strftime("%Y-%m-%d")
+
+    # Previous week date range
+    prev_monday = monday - timedelta(days=7)
+    prev_sunday = monday - timedelta(days=1)
+    prev_week_start = prev_monday.strftime("%Y-%m-%d")
+    prev_week_end   = prev_sunday.strftime("%Y-%m-%d")
+
+    # ── Cache check — keyed by weekStart date ─────────────────────────────────
+    existing = await db.weekly_reviews.find_one({"userId": userId, "weekStart": week_start})
     if existing:
         existing.pop("_id", None)
         return {
             "hasReview": True,
             "cached": True,
-            **{k: existing.get(k) for k in ("week", "generatedAt", "summary", "highlights", "concerns", "nextWeekFocus", "stats")},
+            **{k: existing.get(k) for k in ("week", "weekStart", "generatedAt", "summary", "highlights", "concerns", "nextWeekFocus", "stats")},
         }
 
     # ── Gather data ────────────────────────────────────────────────────────────
@@ -2767,7 +2826,10 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
         "userId": userId, "date": {"$gte": week_ago},
     }).to_list(30)
 
-    log_docs = await db.log.find({**_user_or_orphan(userId), "week": current_week}).to_list(500)
+    # Use date-range query to match Home/Schedule page data source
+    log_docs = await db.log.find(
+        {**_user_or_orphan(userId), "date": {"$gte": week_start, "$lte": week_end}}
+    ).to_list(500)
 
     # Stats
     sessions_planned = int(profile_doc.get("trainingDaysCount", 4)) if profile_doc else 4
@@ -2783,8 +2845,10 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
     pain_count = len(pain_docs)
     pain_regions = list(set(d.get("bodyRegion") for d in pain_docs if d.get("bodyRegion")))
 
-    # PR detection (e1rm improvement vs prev week)
-    prev_logs = await db.log.find({**_user_or_orphan(userId), "week": current_week - 1}).to_list(500)
+    # PR detection (e1rm improvement vs prev week) — uses date ranges
+    prev_logs = await db.log.find(
+        {**_user_or_orphan(userId), "date": {"$gte": prev_week_start, "$lte": prev_week_end}}
+    ).to_list(500)
     this_best: dict = {}
     for d in log_docs:
         ex = d.get("exercise", "")
@@ -2855,7 +2919,7 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
     if _openai_client:
         try:
             context_lines = [
-                f"Week {current_week} summary:",
+                f"Week {current_week} summary ({week_start} → {week_end}):",
                 f"- Sessions: {sessions_completed}/{sessions_planned} completed",
                 f"- Avg RPE: {avg_rpe:.1f}/10" if avg_rpe > 0 else "- No RPE data yet",
                 f"- PRs logged: {pr_count}",
@@ -2896,25 +2960,27 @@ Write a weekly review as JSON (no markdown):
     if not review_data:
         review_data = _fallback_review()
 
-    # ── Cache in MongoDB ───────────────────────────────────────────────────────
+    # ── Cache in MongoDB — keyed by weekStart date ─────────────────────────────
     # Ensure highlights are never empty (fallback for AI returning empty array)
     if not review_data.get("highlights"):
         review_data["highlights"] = ["Complete more sessions this week to unlock insights"]
     doc = {
         "userId": userId,
         "week": current_week,
+        "weekStart": week_start,  # New cache key — survives week roll-over
         "generatedAt": today_str,
         "stats": stats,
-        "createdAt": now,
+        "createdAt": datetime.now(timezone.utc),
         **review_data,
     }
     await db.weekly_reviews.insert_one(doc)
-    logger.info(f"[WeeklyReview] Cached week {current_week} review for user {userId}")
+    logger.info(f"[WeeklyReview] Cached week {current_week} review for user {userId} (weekStart={week_start})")
 
     return {
         "hasReview": True,
         "cached": False,
         "week": current_week,
+        "weekStart": week_start,
         "generatedAt": today_str,
         "stats": stats,
         **review_data,

@@ -18,6 +18,12 @@ const SESSION_COLORS: Record<string, string> = {
   'Heavy Upper':            '#A78BFA',
   'Speed Lower':            '#60A5FA',
   'Speed Upper':            '#34D399',
+  // Goal-specific session types
+  'Upper Push':             '#38BDF8',
+  'Lower Body':             '#FB923C',
+  'Full Body':              '#F97316',
+  'Repetition Upper':       '#C084FC',
+  'Repetition Lower':       '#FCD34D',
   // Legacy (backward-compatible)
   'Max Effort Lower':       '#E8B84B',
   'Max Effort Upper':       '#A78BFA',
@@ -36,6 +42,12 @@ const SESSION_DOTS: Record<string, string> = {
   'Heavy Upper':            '#9D77F2',
   'Speed Lower':            '#5B9CF7',
   'Speed Upper':            '#30C78A',
+  // Goal-specific session types
+  'Upper Push':             '#36B5EF',
+  'Lower Body':             '#F59340',
+  'Full Body':              '#F57C30',
+  'Repetition Upper':       '#B975EC',
+  'Repetition Lower':       '#F0CB40',
   // Legacy (backward-compatible)
   'Max Effort Lower':       '#E8B84B',
   'Max Effort Upper':       '#9D77F2',
