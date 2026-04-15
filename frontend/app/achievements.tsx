@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
 import { streakApi, badgesApi, questApi } from '../src/utils/api';
 import { COLORS, FONTS, RADIUS } from '../src/constants/theme';
 
@@ -57,7 +58,7 @@ function BadgeCard({ badge, earned }: { badge: any; earned: boolean }) {
   );
 }
 const bStyle = StyleSheet.create({
-  card:          { flex: 1, backgroundColor: CARD, borderRadius: RADIUS.lg, padding: 14, alignItems: 'center', gap: 6 },
+  card:          { width: '47%', backgroundColor: CARD, borderRadius: RADIUS.lg, padding: 14, alignItems: 'center', gap: 6 },
   earnedCard:    { borderWidth: 1, borderColor: GOLD + '40' },
   lockedCard:    { borderWidth: 1, borderColor: '#333', opacity: 0.6 },
   iconCircle:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
@@ -244,23 +245,73 @@ export default function AchievementsScreen() {
             <Text style={s.emptyText}>Log your first session to earn badges!</Text>
           ) : (
             <View style={s.badgeGrid}>
-              {earnedBadges.map((b: any, i: number) => (
+              {earnedBadges.map((b: any) => (
                 <BadgeCard key={b.id} badge={b} earned />
               ))}
-              {earnedBadges.length % 2 !== 0 && <View style={{ flex: 1 }} />}
             </View>
           )}
         </View>
 
-        {/* ── Locked Badges ───────────────────────────────────────────────── */}
+        {/* ── Up Next (3 closest-to-unlocking locked badges) ──────────────── */}
         {lockedBadges.length > 0 && (
           <View style={s.section}>
-            <Text style={s.sectionLabel}>LOCKED</Text>
-            <View style={s.badgeGrid}>
-              {lockedBadges.map((b: any) => (
-                <BadgeCard key={b.id} badge={b} earned={false} />
+            <Text style={[s.sectionLabel, { color: GOLD }]}>UP NEXT</Text>
+            {lockedBadges.slice(0, 3).map((b: any) => {
+              const pct           = b.target > 0 ? Math.min(100, (b.current / b.target) * 100) : 0;
+              const radius        = 17;
+              const circumference = 2 * Math.PI * radius;
+              const dashOffset    = circumference * (1 - pct / 100);
+              return (
+                <View key={b.id} style={s.upNextCard}>
+                  {/* Progress ring with icon */}
+                  <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                    <Svg width={44} height={44} viewBox="0 0 44 44">
+                      <Circle cx={22} cy={22} r={radius} fill="none" stroke="#1E1E22" strokeWidth={2.5} />
+                      <Circle
+                        cx={22} cy={22} r={radius}
+                        fill="none"
+                        stroke={GOLD + '60'}
+                        strokeWidth={2.5}
+                        strokeDasharray={String(circumference)}
+                        strokeDashoffset={dashOffset}
+                        strokeLinecap="round"
+                        rotation={-90}
+                        origin="22, 22"
+                      />
+                    </Svg>
+                    <View style={{ position: 'absolute' }}>
+                      <MaterialCommunityIcons name={b.icon as any} size={16} color={GOLD + '80'} />
+                    </View>
+                  </View>
+                  {/* Name + description */}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: FONTS.weights.semibold, color: '#E8E8E6' }}>{b.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#666', marginTop: 1 }}>{b.desc}</Text>
+                  </View>
+                  {/* Progress count */}
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: GOLD }}>{b.current}/{b.target}</Text>
+                    <Text style={{ fontSize: 10, color: '#555', marginTop: 1 }}>{b.remaining} away</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* ── More to unlock (compact icon row for remaining locked badges) ── */}
+        {lockedBadges.length > 3 && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>{lockedBadges.length - 3} MORE TO UNLOCK</Text>
+            <View style={s.compactGrid}>
+              {lockedBadges.slice(3).map((b: any) => (
+                <View key={b.id} style={s.compactBadge}>
+                  <View style={s.compactCircle}>
+                    <MaterialCommunityIcons name={b.icon as any} size={14} color="#444" />
+                  </View>
+                  <Text style={s.compactLabel} numberOfLines={1}>{b.name}</Text>
+                </View>
               ))}
-              {lockedBadges.length % 2 !== 0 && <View style={{ flex: 1 }} />}
             </View>
           </View>
         )}
@@ -320,6 +371,29 @@ const s = StyleSheet.create({
   questCount:      { fontSize: 11, color: GOLD, fontWeight: FONTS.weights.semibold, minWidth: 36, textAlign: 'right' },
   questDone:       { fontSize: 11, color: '#4DCEA6', marginTop: 6 },
 
-  badgeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  badgeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' },
   emptyText: { fontSize: 13, color: COLORS.text.muted, textAlign: 'center', paddingVertical: 20 },
+
+  // Up Next cards
+  upNextCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: CARD, borderRadius: 14,
+    borderWidth: 1, borderColor: GOLD + '20',
+    padding: 12, marginBottom: 8,
+  },
+
+  // Compact locked grid
+  compactGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 12,
+    backgroundColor: '#0E0E10', borderRadius: 12,
+    borderWidth: 1, borderColor: '#1A1A1E', padding: 14,
+  },
+  compactBadge: { alignItems: 'center', width: 52 },
+  compactCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#1A1A1E',
+    borderWidth: 1, borderColor: '#2A2A2E',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  compactLabel: { fontSize: 9, color: '#444', marginTop: 3, textAlign: 'center' },
 });

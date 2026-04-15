@@ -4475,19 +4475,19 @@ async def get_badges(userId: str = Depends(get_current_user)):
     pr_count = sum(1 for t in tracked if t.get("bestE1rm", 0) > 0)
 
     BADGE_DEFS = [
-        {"id": "first_session",  "name": "First Rep",         "desc": "Logged your first session",         "icon": "dumbbell",            "check": unique_dates >= 1},
-        {"id": "week_1",         "name": "Week One",          "desc": "Completed your first training week", "icon": "calendar-check",      "check": total_weeks >= 1},
-        {"id": "streak_4",       "name": "Iron Month",        "desc": "4-week training streak",             "icon": "fire",                "check": current_streak >= 4},
-        {"id": "streak_8",       "name": "Two Month Iron",    "desc": "8-week training streak",             "icon": "fire",                "check": current_streak >= 8},
-        {"id": "streak_12",      "name": "Quarter Beast",     "desc": "12-week training streak",            "icon": "fire",                "check": current_streak >= 12},
-        {"id": "streak_26",      "name": "Half Year Hero",    "desc": "26-week training streak",            "icon": "fire",                "check": current_streak >= 26},
-        {"id": "sessions_10",    "name": "Getting Started",   "desc": "10 training sessions logged",        "icon": "arm-flex-outline",    "check": unique_dates >= 10},
-        {"id": "sessions_50",    "name": "Committed",         "desc": "50 training sessions",               "icon": "arm-flex-outline",    "check": unique_dates >= 50},
-        {"id": "sessions_100",   "name": "Iron Century",      "desc": "100 sessions — top 5%",              "icon": "trophy",              "check": unique_dates >= 100},
-        {"id": "pr_1",           "name": "PR Hunter",         "desc": "Hit your first personal record",     "icon": "trophy-outline",      "check": pr_count >= 1},
-        {"id": "pr_5",           "name": "PR Machine",        "desc": "5 personal records",                 "icon": "trophy",              "check": pr_count >= 5},
-        {"id": "pr_10",          "name": "Record Breaker",    "desc": "10 PRs — strength is your language", "icon": "star",                "check": pr_count >= 10},
-        {"id": "exercises_25",   "name": "Exercise Explorer", "desc": "25 different exercises mastered",    "icon": "compass-outline",     "check": unique_exs >= 25},
+        {"id": "first_session",  "name": "First Rep",         "desc": "Logged your first session",         "icon": "dumbbell",            "check": unique_dates >= 1,    "current": unique_dates,    "target": 1},
+        {"id": "week_1",         "name": "Week One",          "desc": "Completed your first training week", "icon": "calendar-check",      "check": total_weeks >= 1,     "current": total_weeks,     "target": 1},
+        {"id": "streak_4",       "name": "Iron Month",        "desc": "4-week training streak",             "icon": "fire",                "check": current_streak >= 4,  "current": current_streak,  "target": 4},
+        {"id": "streak_8",       "name": "Two Month Iron",    "desc": "8-week training streak",             "icon": "fire",                "check": current_streak >= 8,  "current": current_streak,  "target": 8},
+        {"id": "streak_12",      "name": "Quarter Beast",     "desc": "12-week training streak",            "icon": "fire",                "check": current_streak >= 12, "current": current_streak,  "target": 12},
+        {"id": "streak_26",      "name": "Half Year Hero",    "desc": "26-week training streak",            "icon": "fire",                "check": current_streak >= 26, "current": current_streak,  "target": 26},
+        {"id": "sessions_10",    "name": "Getting Started",   "desc": "10 training sessions logged",        "icon": "arm-flex-outline",    "check": unique_dates >= 10,   "current": unique_dates,    "target": 10},
+        {"id": "sessions_50",    "name": "Committed",         "desc": "50 training sessions",               "icon": "arm-flex-outline",    "check": unique_dates >= 50,   "current": unique_dates,    "target": 50},
+        {"id": "sessions_100",   "name": "Iron Century",      "desc": "100 sessions — top 5%",              "icon": "trophy",              "check": unique_dates >= 100,  "current": unique_dates,    "target": 100},
+        {"id": "pr_1",           "name": "PR Hunter",         "desc": "Hit your first personal record",     "icon": "trophy-outline",      "check": pr_count >= 1,        "current": pr_count,        "target": 1},
+        {"id": "pr_5",           "name": "PR Machine",        "desc": "5 personal records",                 "icon": "trophy",              "check": pr_count >= 5,        "current": pr_count,        "target": 5},
+        {"id": "pr_10",          "name": "Record Breaker",    "desc": "10 PRs — strength is your language", "icon": "star",                "check": pr_count >= 10,       "current": pr_count,        "target": 10},
+        {"id": "exercises_25",   "name": "Exercise Explorer", "desc": "25 different exercises mastered",    "icon": "compass-outline",     "check": unique_exs >= 25,     "current": unique_exs,      "target": 25},
     ]
 
     earned, locked = [], []
@@ -4496,7 +4496,13 @@ async def get_badges(userId: str = Depends(get_current_user)):
         if b["check"]:
             earned.append(entry)
         else:
+            entry["current"]   = min(b["current"], b["target"])
+            entry["target"]    = b["target"]
+            entry["remaining"] = max(0, b["target"] - b["current"])
             locked.append(entry)
+
+    # Sort locked by closest to completion (lowest "remaining" first)
+    locked.sort(key=lambda x: x.get("remaining", 999))
 
     return {"earned": earned, "locked": locked, "totalEarned": len(earned), "totalPossible": len(BADGE_DEFS)}
 
