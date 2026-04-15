@@ -14,7 +14,7 @@
 # Main and testing agents must follow this exact format to maintain testing data. 
 # The testing data must be entered in yaml format Below is the data structure:
 # 
-## user_problem_statement: 13-Part Gamification Update - UX Upgrade + Gamification + Leaderboard + Social Invite System. Backend complete. Frontend: track.tsx Achievements row (Part 12) added, achievements.tsx and leaderboard.tsx fully built. today.tsx PR overlay and Session Complete overlay fully implemented. All routes registered in _layout.tsx.
+## user_problem_statement: SYNC FIXES - Today page logged set values now restore on re-focus. Pull-to-refresh fixed. Progress page sync verified (all tabs use useFocusEffect to reload). Three bugs fixed: (1) setValues for logged sets now restored from backend log data in both re-sync and full-rebuild branches, (2) pull-to-refresh now triggers real data reload via loadKey state, (3) setRefreshing(false) now properly called after load completes.
 ## backend:
 ##   - task: "Task name"
 ##     implemented: true

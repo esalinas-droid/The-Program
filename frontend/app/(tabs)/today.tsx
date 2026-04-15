@@ -1544,6 +1544,8 @@ export default function TodayScreen() {
   const initialLoadDone = useRef(false);
   const exercisesRef = useRef<Exercise[]>([]);
   const lastLoadDate = useRef('');
+  // Increment to force full reload even while screen is already focused (pull-to-refresh)
+  const [loadKey, setLoadKey] = useState(0);
 
   // Adjust modal
   const [modalVisible, setModal]   = useState(false);
@@ -1625,13 +1627,13 @@ export default function TodayScreen() {
     setRefreshing(true);
     initialLoadDone.current = false;
     lastLoadDate.current = '';
-    setRefreshing(false);
+    setLoadKey(k => k + 1);          // Triggers useFocusEffect to re-run (while screen is focused)
+    // setRefreshing(false) is handled by the load effect after data arrives
   }, []);
 
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
-      // ── RE-SYNC ONLY on subsequent tab focuses (skip full rebuild) ───────────
       const todayStr = getLocalDateString();
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         try {
@@ -1655,31 +1657,52 @@ export default function TodayScreen() {
           const currentExs = exercisesRef.current;
           const recovered = new Set<string>();
           const recoveredIds: Record<string, string> = {};
+          const recoveredValues: Record<string, { weight: string; reps: string }> = {};
           for (const ex of currentExs) {
             const exName = ex.name.toLowerCase();
             const idxMap = bySetIdx.get(exName);
+            const exEntries = logsByEx.get(exName) || [];
             if (idxMap && idxMap.size > 0) {
               // ── Precise: exact per-set matching via stored setIndex ──
               ex.sets.forEach((s, i) => {
                 if (idxMap!.has(i)) {
                   recovered.add(s.id);
-                  recoveredIds[s.id] = idxMap!.get(i)!;
+                  const entryId = idxMap!.get(i)!;
+                  recoveredIds[s.id] = entryId;
+                  // ── Restore actual logged weight/reps into input fields ──
+                  const logEntry = allLogs.find((l: any) => (l.id || l._id) === entryId);
+                  if (logEntry) {
+                    recoveredValues[s.id] = {
+                      weight: String(logEntry.weight ?? 0),
+                      reps:   String(logEntry.reps   ?? 1),
+                    };
+                  }
                 }
               });
             } else {
               // ── Fallback: count-based for legacy entries without setIndex ──
-              const sorted = (logsByEx.get(exName) || [])
+              const sorted = exEntries
                 .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
               for (let i = 0; i < Math.min(sorted.length, ex.sets.length); i++) {
                 recovered.add(ex.sets[i].id);
                 if (sorted[i]?.id || sorted[i]?._id) {
                   recoveredIds[ex.sets[i].id] = sorted[i].id || sorted[i]._id;
                 }
+                if (sorted[i]) {
+                  recoveredValues[ex.sets[i].id] = {
+                    weight: String(sorted[i].weight ?? 0),
+                    reps:   String(sorted[i].reps   ?? 1),
+                  };
+                }
               }
             }
           }
           setLoggedSets(recovered);
           setLogEntryIds(recoveredIds);
+          // ── Restore actual logged values so inputs show what was logged ──
+          if (Object.keys(recoveredValues).length > 0) {
+            setSetValues(prev => ({ ...prev, ...recoveredValues }));
+          }
         } catch { /* Non-blocking */ }
         return; // skip full rebuild
       }
@@ -1734,29 +1757,50 @@ export default function TodayScreen() {
 
             const recovered = new Set<string>();
             const recoveredIds: Record<string, string> = {};
+            const recoveredValues: Record<string, { weight: string; reps: string }> = {};
             for (const ex of apiExs) {
               const exName = ex.name.toLowerCase();
               const idxMap = bySetIdx.get(exName);
+              const exEntries = logsByEx.get(exName) || [];
               if (idxMap && idxMap.size > 0) {
                 ex.sets.forEach((s: any, i: number) => {
                   if (idxMap!.has(i)) {
                     recovered.add(s.id);
-                    recoveredIds[s.id] = idxMap!.get(i)!;
+                    const entryId = idxMap!.get(i)!;
+                    recoveredIds[s.id] = entryId;
+                    // ── Restore actual logged weight/reps into inputs ──
+                    const logEntry = allLogs.find((l: any) => (l.id || l._id) === entryId);
+                    if (logEntry) {
+                      recoveredValues[s.id] = {
+                        weight: String(logEntry.weight ?? 0),
+                        reps:   String(logEntry.reps   ?? 1),
+                      };
+                    }
                   }
                 });
               } else {
-                const sorted = (logsByEx.get(exName) || [])
+                const sorted = exEntries
                   .sort((a: any, b: any) => String(a.id || '').localeCompare(String(b.id || '')));
                 for (let i = 0; i < Math.min(sorted.length, ex.sets.length); i++) {
                   recovered.add(ex.sets[i].id);
                   if (sorted[i]?.id || sorted[i]?._id) {
                     recoveredIds[ex.sets[i].id] = sorted[i].id || sorted[i]._id;
                   }
+                  if (sorted[i]) {
+                    recoveredValues[ex.sets[i].id] = {
+                      weight: String(sorted[i].weight ?? 0),
+                      reps:   String(sorted[i].reps   ?? 1),
+                    };
+                  }
                 }
               }
             }
             setLoggedSets(recovered);
             setLogEntryIds(recoveredIds);
+            // ── Restore actual logged values so inputs show what was logged ──
+            if (Object.keys(recoveredValues).length > 0) {
+              setSetValues(prev => ({ ...prev, ...recoveredValues }));
+            }
           } catch { /* Non-blocking — logged state stays empty if fetch fails */ }
         }
       } catch { /* No AI plan yet — keep local exercises */ }
@@ -1788,9 +1832,10 @@ export default function TodayScreen() {
       initialLoadDone.current = true;
       lastLoadDate.current = todayStr;
       setLoading(false);
+      setRefreshing(false);
     })();
-  }, []));
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadKey])); 
   // ── Initialize setValues when exercises load/change ─────────────────────────
   useEffect(() => {
     setSetValues(prev => {
