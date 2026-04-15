@@ -1094,23 +1094,39 @@ frontend:
           Button active (gold) when >= 50% sets logged.
           Bottom bar also shows set count, label, and % pill.
 
+  - task: "AsyncStorage persistence — setValues + loggedSets survive tab switches"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/today.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: >
+          Completed all 7 steps of the AsyncStorage persistence fix:
+          Steps A-D (previous agent): AsyncStorage import, SET_VALUES_KEY/LOGGED_SETS_KEY constants,
+          saveSetValuesToStorage/saveLoggedSetsToStorage helpers, restore-on-mount useEffect,
+          persist-setValues-on-change useEffect, lazy:false in _layout.tsx.
+          Step E (this agent): saveLoggedSetsToStorage() called after successful handleLog
+          (after setLogEntryIds line), using new Set([...loggedSets, setId]) + updated entryIds.
+          Step F (this agent): AsyncStorage.multiRemove() + state resets added at start of
+          full-rebuild path when lastLoadDate.current !== todayStr (new workout day).
+          Step G (this agent): AsyncStorage.multiRemove() called at start of handleFinish
+          to clear stale data when workout is completed.
+          Fix 2 (this agent): console.warn added to 3 catch blocks:
+          Re-sync path, full-rebuild inner fetch path, handleLog backend call.
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 26
+  test_sequence: 27
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Today Page Terminology Fix — ExCategory types and getCategoryStyle labels"
-    - "Today Page UI — Thin gold progress bar at top"
-    - "Today Page UI — Compact session header with slim italic coach note"
-    - "Today Page UI — Collapsible exercise cards (first expanded, rest collapsed)"
-    - "Today Page UI — Editable weight/reps TextInputs inside set rows"
-    - "Today Page UI — Per-exercise effort selector (1-5 gold circles)"
-    - "Today Page UI — Pill action buttons: Swap, Pain, Add Set"
-    - "Today Page UI — Sticky rest timer between scroll and bottom bar"
-    - "Today Page UI — FINISH SESSION disabled until 50% sets logged"
+    - "AsyncStorage persistence — setValues + loggedSets survive tab switches"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

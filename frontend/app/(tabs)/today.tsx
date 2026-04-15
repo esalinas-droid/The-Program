@@ -1764,8 +1764,16 @@ export default function TodayScreen() {
           if (Object.keys(recoveredValues).length > 0) {
             setSetValues(prev => ({ ...prev, ...recoveredValues }));
           }
-        } catch { /* Non-blocking */ }
+        } catch (err) { console.warn('[Today] Re-sync log fetch failed:', err); }
         return; // skip full rebuild
+      }
+
+      // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
+      if (lastLoadDate.current && lastLoadDate.current !== todayStr) {
+        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]).catch(() => {});
+        setSetValues({});
+        setLoggedSets(new Set());
+        setLogEntryIds({});
       }
 
       const prof = await getProfile();
@@ -1862,9 +1870,9 @@ export default function TodayScreen() {
             if (Object.keys(recoveredValues).length > 0) {
               setSetValues(prev => ({ ...prev, ...recoveredValues }));
             }
-          } catch { /* Non-blocking — logged state stays empty if fetch fails */ }
+          } catch (err) { console.warn('[Today] Full-rebuild log fetch failed:', err); }
         }
-      } catch { /* No AI plan yet — keep local exercises */ }
+      } catch (err) { console.warn('[Today] API session fetch failed:', err); }
 
       // ── Check today's readiness ──────────────────────────────────────────
       try {
@@ -2103,6 +2111,11 @@ export default function TodayScreen() {
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
+          // ── Step E: Persist loggedSets + entryIds to AsyncStorage ──────────
+          saveLoggedSetsToStorage(
+            new Set([...loggedSets, setId]),
+            { ...logEntryIds, [setId]: entryId },
+          );
         }
         // ── PR detection ─────────────────────────────────────────────────────
         const prData = checkForPR(logName, weight, parseInt(reps) || 1);
@@ -2112,7 +2125,7 @@ export default function TodayScreen() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
       } catch (err) {
-        console.log('[Today] Backend log failed:', err);
+        console.warn('[Today] Backend log failed:', err);
       }
     }
   };
@@ -2231,6 +2244,8 @@ export default function TodayScreen() {
 
   const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // ── Step G: Clear AsyncStorage — workout is complete, no need to restore ──
+    AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]).catch(() => {});
     // Calculate session stats
     const allSetValues = Object.values(setValues);
     const totalVolume = allSetValues.reduce((sum, sv) => {
