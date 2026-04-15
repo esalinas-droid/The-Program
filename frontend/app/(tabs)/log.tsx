@@ -85,15 +85,19 @@ function getDayStatus(
   dateStr: string,
   todayStr: string,
   logsByDate: Record<string, any[]>,
-  hasEvent: boolean
+  hasEvent: boolean,
+  sessionType?: string,
+  completedSessionTypes?: Set<string>,
 ): DayStatus {
   if (!hasEvent) return 'rest';
+  // Primary: exact date match. Secondary: same sessionType logged anywhere this week.
+  const exactLog = (logsByDate[dateStr]?.length ?? 0) > 0;
+  const typeLogged = !!(sessionType && completedSessionTypes?.has(sessionType));
   if (dateStr === todayStr) {
-    // Show completed if user has already logged sets today
-    return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'today';
+    return exactLog || typeLogged ? 'completed' : 'today';
   }
   if (dateStr < todayStr) {
-    return (logsByDate[dateStr]?.length ?? 0) > 0 ? 'completed' : 'missed';
+    return exactLog || typeLogged ? 'completed' : 'missed';
   }
   return 'upcoming';
 }
@@ -428,6 +432,13 @@ export default function ScheduleScreen() {
         logsByDate[lg.date].push(lg);
       }
 
+      // Build set of session types actually logged this week — for loose matching.
+      // Handles the case where a user trains Heavy Lower on Wed instead of the
+      // planned Mon: the Monday card still shows as "completed".
+      const completedSessionTypes = new Set<string>(
+        allLogs.map((l: any) => l.sessionType || '').filter(Boolean)
+      );
+
       // Log matches for debugging
       const matchedDates = events.filter((ev: any) => (logsByDate[ev.date]?.length ?? 0) > 0).map((ev: any) => ev.date);
       console.log(`[Schedule] Events with matching logs: ${matchedDates.length} → dates: [${matchedDates.join(', ')}]`);
@@ -435,7 +446,7 @@ export default function ScheduleScreen() {
       // ── Calendar grid ────────────────────────────────────────────────────────
       const days: WeekDay[] = weekDates.map((date, i) => {
         const ev = events.find((e: any) => e.date === date);
-        const status = getDayStatus(date, today, logsByDate, !!ev);
+        const status = getDayStatus(date, today, logsByDate, !!ev, ev?.sessionType, completedSessionTypes);
         return {
           date,
           dayAbbr: DAY_ABBRS[i],
@@ -450,7 +461,7 @@ export default function ScheduleScreen() {
 
       // ── Session cards ────────────────────────────────────────────────────────
       const cards: SessionCard[] = events.map((ev: any) => {
-        const status   = getDayStatus(ev.date, today, logsByDate, true);
+        const status   = getDayStatus(ev.date, today, logsByDate, true, ev.sessionType, completedSessionTypes);
         const dayLogs  = logsByDate[ev.date] || [];
         const exNames  = (ev.exercises || []).map((e: any) => e.name || '').filter(Boolean);
         return {

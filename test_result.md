@@ -1402,7 +1402,28 @@ agent_communication:
 
   - agent: "main"
     message: >
-      COMPLETE BUG FIX — 15 Bugs Across 5 Categories. All implemented. Backend reloaded clean.
+      SCHEDULE PAGE — SESSION COMPLETED MATCHING FIX.
+
+      ROOT CAUSE: getDayStatus() used strict exact-date matching. If a user logged
+      "Heavy Lower" on Wednesday but the calendar event was on Monday, the Monday event
+      showed as "missed" even though the user DID train Heavy Lower that week.
+
+      FIX: Added sessionType-based loose matching to getDayStatus() in log.tsx.
+      Now builds completedSessionTypes = Set of all sessionTypes logged this week.
+      If a planned event's sessionType is in that set, the event is marked "completed"
+      even if the log date ≠ event date. Exact date match is still primary; sessionType
+      match is fallback for off-day training.
+
+      CHANGED: frontend/app/(tabs)/log.tsx:
+        - getDayStatus(): Added sessionType and completedSessionTypes params (optional, backward-compat).
+        - loadData(): Builds completedSessionTypes from allLogs.
+        - Calendar grid getDayStatus() call: passes ev?.sessionType, completedSessionTypes.
+        - Session cards getDayStatus() call: passes ev.sessionType, completedSessionTypes.
+
+      RESULT: User has 41 logs for current week. All 4 session types (Heavy Lower,
+      Heavy Upper, Speed Lower, Speed Upper) are trained. Now ALL 4 past events will
+      show "completed" and sessionsCompleted counter = 4/4 (or the correct count).
+
 
       CATEGORY 1 — Home/Schedule session count mismatch:
       1. Added _calculate_current_week() helper to server.py (date math, not profile int).
