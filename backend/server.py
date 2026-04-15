@@ -900,19 +900,39 @@ async def get_week_stats(
 
 # ── PR Endpoints ──────────────────────────────────────────────────────────────
 TRACKED_EXERCISES = [
+    # Core competition lifts
     "SSB Box Squat", "Back Squat", "Bench Press", "Floor Press", "Close-Grip Bench Press",
     "Conventional Deadlift", "Sumo Deadlift", "Trap Bar Deadlift (High Handle)",
-    "Block Pull (Below Knee)", "Log Clean and Press", "Log Push Press",
-    "Axle Clean and Press", "Axle Push Press", "Overhead Press (Barbell)",
-    "Cambered Bar Box Squat", "Yoke Carry", "Farmers Carry", "Speed Box Squat",
-    "Sandbag Carry", "Suitcase Carry", "Belt Squat"
+    "Block Pull (Below Knee)",
+    # Strongman
+    "Log Clean and Press", "Log Push Press", "Axle Clean and Press", "Axle Push Press",
+    "Axle Deadlift", "Yoke Carry", "Farmers Carry", "Atlas Stone Load",
+    "Sandbag Carry", "Suitcase Carry",
+    # Overhead
+    "Overhead Press (Barbell)", "Push Press", "Z-Press",
+    # Squat variations
+    "Front Squat", "Belt Squat", "Cambered Bar Box Squat", "Speed Box Squat",
+    "Box Squat (Straight Bar)",
+    # Hinge variations
+    "Romanian Deadlift", "Block Pull (Above Knee)",
+    # Pressing variations
+    "Incline Bench Press", "DB Bench Press", "Dumbbell Bench Press",
+    # Pulling
+    "Pendlay Row", "Chest Supported Row", "Lat Pulldown", "DB Row", "Barbell Row",
+    # Olympic
+    "Clean & Jerk", "Snatch", "Power Clean",
 ]
 
 @api_router.get("/prs")
 async def get_prs(userId: str = Depends(get_current_user)):
+    user_filter = _user_or_orphan(userId)
     prs = []
+    seen_exercises = set()
+
+    # 1. Loop over TRACKED_EXERCISES first (canonical list)
     for exercise in TRACKED_EXERCISES:
-        docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("e1rm", -1).to_list(500)
+        seen_exercises.add(exercise)
+        docs = await db.log.find({**user_filter, "exercise": exercise}).sort("e1rm", -1).to_list(500)
         if not docs:
             prs.append({"exercise": exercise, "lastDate": None, "bestWeight": 0, "bestReps": 0, "bestE1rm": 0, "latestNote": ""})
             continue
@@ -926,21 +946,56 @@ async def get_prs(userId: str = Depends(get_current_user)):
             "bestE1rm":   best.get("e1rm", 0),
             "latestNote": latest.get("notes", "")
         })
+
+    # 2. Also include ANY exercise logged but not in TRACKED_EXERCISES
+    all_logged_exs = await db.log.distinct("exercise", user_filter)
+    for exercise in all_logged_exs:
+        if not exercise or exercise in seen_exercises:
+            continue
+        seen_exercises.add(exercise)
+        docs = await db.log.find({**user_filter, "exercise": exercise}).sort("e1rm", -1).to_list(50)
+        if docs:
+            best   = max(docs, key=lambda d: d.get("e1rm", 0))
+            latest = max(docs, key=lambda d: d.get("date", ""))
+            if best.get("e1rm", 0) > 0:
+                prs.append({
+                    "exercise":   exercise,
+                    "lastDate":   latest.get("date"),
+                    "bestWeight": best.get("weight", 0),
+                    "bestReps":   best.get("reps", 0),
+                    "bestE1rm":   best.get("e1rm", 0),
+                    "latestNote": latest.get("notes", "")
+                })
+
     return prs
 
 @api_router.get("/prs/bests/overview")
 async def get_bests_overview(userId: str = Depends(get_current_user)):
+    user_filter = _user_or_orphan(userId)
     categories = {
-        "squat": ["SSB Box Squat", "Back Squat", "Belt Squat", "Cambered Bar Box Squat", "Trap Bar Deadlift (High Handle)"],
-        "press": ["Floor Press", "Close-Grip Bench Press", "Bench Press", "Log Clean and Press", "Axle Clean and Press", "Log Push Press", "Axle Push Press", "Overhead Press (Barbell)"],
-        "pull":  ["Conventional Deadlift", "Sumo Deadlift", "Trap Bar Deadlift (High Handle)", "Block Pull (Below Knee)"]
+        "squat": [
+            "SSB Box Squat", "Back Squat", "Belt Squat", "Cambered Bar Box Squat",
+            "Front Squat", "Box Squat (Straight Bar)", "Speed Box Squat",
+            "Trap Bar Deadlift (High Handle)",
+        ],
+        "press": [
+            "Floor Press", "Close-Grip Bench Press", "Bench Press", "Incline Bench Press",
+            "Log Clean and Press", "Axle Clean and Press", "Log Push Press",
+            "Axle Push Press", "Overhead Press (Barbell)", "Push Press", "Z-Press",
+            "DB Bench Press", "Dumbbell Bench Press",
+        ],
+        "pull":  [
+            "Conventional Deadlift", "Sumo Deadlift",
+            "Trap Bar Deadlift (High Handle)", "Block Pull (Below Knee)",
+            "Block Pull (Above Knee)", "Axle Deadlift", "Romanian Deadlift",
+        ],
     }
     result = {}
     for cat, exercises in categories.items():
-        best_e1rm    = 0
+        best_e1rm     = 0
         best_exercise = None
         for ex in exercises:
-            doc = await db.log.find_one({**_user_or_orphan(userId), "exercise": ex}, sort=[("e1rm", -1)])
+            doc = await db.log.find_one({**user_filter, "exercise": ex}, sort=[("e1rm", -1)])
             if doc and doc.get("e1rm", 0) > best_e1rm:
                 best_e1rm     = doc["e1rm"]
                 best_exercise = ex
@@ -988,8 +1043,8 @@ async def get_tracked_lifts(userId: str = Depends(get_current_user)):
         best_reps   = doc.get("bestReps", 1)
         best_e1rm   = doc.get("bestE1rm", 0)
         last_date   = doc.get("lastDate")
-        # Merge with log-based PRs — always use the higher value
-        log_docs = await db.log.find({"exercise": exercise}).sort("e1rm", -1).to_list(100)
+        # Merge with log-based PRs — always use the higher value, filter by userId
+        log_docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("e1rm", -1).to_list(100)
         if log_docs:
             log_best   = max(log_docs, key=lambda d: d.get("e1rm", 0))
             log_latest = max(log_docs, key=lambda d: d.get("date", ""))
@@ -2407,7 +2462,10 @@ async def get_analytics_overview(userId: str = Depends(get_current_user)):
 
     block_logs = [d for d in all_logs if d.get("week", 0) > block_start_week]
     pr_count = 0
-    for ex in TRACKED_EXERCISES:
+    # Check all exercises the user has actually logged (not just TRACKED_EXERCISES)
+    all_logged_exs = set(d.get("exercise") for d in all_logs if d.get("exercise"))
+    all_logged_exs.update(TRACKED_EXERCISES)
+    for ex in all_logged_exs:
         pre_max = max(
             (d.get("e1rm", 0) for d in all_logs if d.get("exercise") == ex and d.get("week", 0) <= block_start_week),
             default=0
@@ -2416,7 +2474,8 @@ async def get_analytics_overview(userId: str = Depends(get_current_user)):
             (d.get("e1rm", 0) for d in block_logs if d.get("exercise") == ex),
             default=0
         )
-        if block_max > pre_max and pre_max > 0:
+        # Count PR if: block_max is positive AND exceeds previous best (0 = never done = valid first PR)
+        if block_max > pre_max and block_max > 0:
             pr_count += 1
 
     return {
@@ -2564,14 +2623,14 @@ async def _create_default_tracked_lifts(user_id: str, goal: str, database) -> No
     GOAL_DEFAULTS = {
         "strongman": {
             "featured": [
-                {"exercise": "SSB Squat",      "category": "Squat Variations"},
-                {"exercise": "Axle Deadlift",  "category": "Strongman"},
-                {"exercise": "Log Press",       "category": "Strongman"},
+                {"exercise": "SSB Box Squat",        "category": "Squat Variations"},
+                {"exercise": "Axle Clean and Press",  "category": "Strongman"},
+                {"exercise": "Log Clean and Press",   "category": "Strongman"},
             ],
             "also_track": [
-                {"exercise": "Yoke",            "category": "Strongman"},
-                {"exercise": "Atlas Stone",     "category": "Strongman"},
-                {"exercise": "Farmers Walk",    "category": "Strongman"},
+                {"exercise": "Yoke Carry",            "category": "Strongman"},
+                {"exercise": "Atlas Stone Load",      "category": "Strongman"},
+                {"exercise": "Farmers Carry",         "category": "Strongman"},
             ],
         },
         "powerlifting": {
@@ -2863,7 +2922,7 @@ async def get_weekly_review(userId: str = Depends(get_current_user)):
             prev_best[ex] = e1rm
     pr_count = sum(
         1 for ex, val in this_best.items()
-        if val > prev_best.get(ex, 0) and prev_best.get(ex, 0) > 0
+        if val > prev_best.get(ex, 0) and val > 0
     )
 
     stats = {
@@ -4471,8 +4530,14 @@ async def get_badges(userId: str = Depends(get_current_user)):
     current_streak = streak_data.get("currentStreak", 0)
     total_weeks    = streak_data.get("totalWeeksTrained", 0)
 
-    tracked  = await db.tracked_lifts.find({"userId": userId}).to_list(100)
-    pr_count = sum(1 for t in tracked if t.get("bestE1rm", 0) > 0)
+    # Count unique exercises with at least one logged set with positive e1rm (actual training PRs)
+    exercises_with_logs = await db.log.distinct("exercise", user_filter)
+    pr_exercises = set()
+    for ex in exercises_with_logs:
+        best_doc = await db.log.find_one({**user_filter, "exercise": ex, "e1rm": {"$gt": 0}})
+        if best_doc:
+            pr_exercises.add(ex)
+    pr_count = len(pr_exercises)
 
     BADGE_DEFS = [
         {"id": "first_session",  "name": "First Rep",         "desc": "Logged your first session",         "icon": "dumbbell",            "check": unique_dates >= 1,    "current": unique_dates,    "target": 1},
@@ -4605,8 +4670,13 @@ async def get_leaderboard(
         streak_data = await get_streak(mid)
         pr_count = 0
         if tab == "prs":
-            tracked  = await db.tracked_lifts.find({"userId": mid}).to_list(100)
-            pr_count = sum(1 for t in tracked if t.get("bestE1rm", 0) > 0)
+            # Count exercises with at least one logged set with positive e1rm
+            uf_for_pr = _user_or_orphan(mid)
+            ex_list = await db.log.distinct("exercise", uf_for_pr)
+            for ex in ex_list:
+                has_pr = await db.log.find_one({**uf_for_pr, "exercise": ex, "e1rm": {"$gt": 0}})
+                if has_pr:
+                    pr_count += 1
 
         name       = user.get("name", "Athlete")
         name_parts = name.strip().split()
