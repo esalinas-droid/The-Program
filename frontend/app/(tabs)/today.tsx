@@ -12,7 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi, prApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -1631,45 +1631,57 @@ export default function TodayScreen() {
     setPreviousData(prevMap);
   }, []);
 
-  // ── PR detection helper ───────────────────────────────────────────────────────
-  const checkForPR = useCallback((exerciseName: string, weight: number, reps: number) => {
+  // ── PR detection helper (async — fetches backend history as fallback) ─────────
+  const checkForPR = useCallback(async (exerciseName: string, weight: number, reps: number) => {
     const e1rm = weight * (1 + reps / 30);
     if (e1rm <= 0 || weight <= 0) return null;
 
-    // Check previous day data first
+    let historicalBest = 0;
+
+    // 1. Check previousData (prior days, from local state)
     const prevEntries = previousData[exerciseName] || [];
     const prevBestE1rm = prevEntries.reduce((mx, s) => {
       const prev = s.weight * (1 + s.reps / 30);
       return prev > mx ? prev : mx;
     }, 0);
+    historicalBest = Math.max(historicalBest, prevBestE1rm);
 
-    // Also check earlier sets logged TODAY for this exercise
-    let todayBestE1rm = 0;
+    // 2. Check earlier sets logged TODAY for this exercise
     const ex = exercises.find(e => e.name === exerciseName);
     if (ex) {
       for (const s of ex.sets) {
-        if (loggedSets.has(s.id) && s.id !== '') {
+        if (loggedSets.has(s.id)) {
           const sv = setValues[s.id];
           if (sv) {
             const w = parseFloat(sv.weight) || 0;
             const r = parseInt(sv.reps) || 0;
             const se1rm = w * (1 + r / 30);
-            if (se1rm > todayBestE1rm) todayBestE1rm = se1rm;
+            if (se1rm > historicalBest) historicalBest = se1rm;
           }
         }
       }
     }
 
-    const previousBest = Math.max(prevBestE1rm, todayBestE1rm);
+    // 3. If still no comparison data, fetch from backend PR history
+    if (historicalBest === 0) {
+      try {
+        const history = await prApi.getHistory(exerciseName);
+        const entries = Array.isArray(history) ? history : (history?.history || []);
+        for (const h of entries) {
+          const he1rm = h.e1rm || (h.weight && h.reps ? h.weight * (1 + h.reps / 30) : 0);
+          if (he1rm > historicalBest) historicalBest = he1rm;
+        }
+      } catch {} // Non-critical — skip if no history
+    }
 
-    // Fire PR only when there IS a previous bar to beat
-    if (previousBest > 0 && e1rm > previousBest) {
+    // Fire PR only if we beat a previous record AND there IS a record to beat
+    if (historicalBest > 0 && e1rm > historicalBest) {
       return {
         exercise: exerciseName,
         weight,
         reps,
         e1rm: Math.round(e1rm),
-        previousBest: Math.round(previousBest),
+        previousBest: Math.round(historicalBest),
       };
     }
     return null;
@@ -2190,7 +2202,7 @@ export default function TodayScreen() {
           );
         }
         // ── PR detection ─────────────────────────────────────────────────────
-        const prData = checkForPR(logName, weight, parseInt(reps) || 1);
+        const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
         if (prData) {
           setPrCelebration(prData);
           setPrExercises(prev => new Set([...prev, logName]));
@@ -2769,34 +2781,38 @@ export default function TodayScreen() {
       )}
 
       {/* ── Part 3C: Hidden PR share card ── */}
-      <View ref={prCardRef} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center', position: 'absolute', left: -2000 }}>
-        <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
-        <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
-        <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{prCelebration?.exercise || '—'}</Text>
-        <Text style={{ fontSize: 56, fontWeight: '800', color: COLORS.accent }}>{prCelebration?.weight || 0}</Text>
-        <Text style={{ fontSize: 16, color: '#888' }}>lbs × {prCelebration?.reps || 0} reps</Text>
-        <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
-        <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
-        {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
-        <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
+      <View style={{ height: 0, overflow: 'hidden' }}>
+        <View ref={prCardRef} collapsable={false} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
+          <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{prCelebration?.exercise || '—'}</Text>
+          <Text style={{ fontSize: 56, fontWeight: '800', color: COLORS.accent }}>{prCelebration?.weight || 0}</Text>
+          <Text style={{ fontSize: 16, color: '#888' }}>lbs × {prCelebration?.reps || 0} reps</Text>
+          <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
+          <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
+          {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
+          <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
+        </View>
       </View>
 
       {/* ── Part 3D: Hidden Session share card (BUG 3) ── */}
-      <View ref={sessionCardRef} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center', position: 'absolute', left: -2000 }}>
-        <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
-        <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>SESSION COMPLETE</Text>
-        <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{sessionStats?.sessionType || 'Training'}</Text>
-        <View style={{ flexDirection: 'row', gap: 24, marginTop: 20 }}>
-          <View style={{ alignItems: 'center' }}>
-            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.sets || 0}</Text>
-            <Text style={{ fontSize: 11, color: '#555' }}>SETS</Text>
+      <View style={{ height: 0, overflow: 'hidden' }}>
+        <View ref={sessionCardRef} collapsable={false} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
+          <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>SESSION COMPLETE</Text>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{sessionStats?.sessionType || 'Training'}</Text>
+          <View style={{ flexDirection: 'row', gap: 24, marginTop: 20 }}>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.sets || 0}</Text>
+              <Text style={{ fontSize: 11, color: '#555' }}>SETS</Text>
+            </View>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.volume > 0 ? `${(sessionStats.volume / 1000).toFixed(1)}k` : '0'}</Text>
+              <Text style={{ fontSize: 11, color: '#555' }}>VOLUME</Text>
+            </View>
           </View>
-          <View style={{ alignItems: 'center' }}>
-            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.volume > 0 ? `${(sessionStats.volume / 1000).toFixed(1)}k` : '0'}</Text>
-            <Text style={{ fontSize: 11, color: '#555' }}>VOLUME</Text>
-          </View>
+          <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
         </View>
-        <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
       </View>
 
     </SafeAreaView>

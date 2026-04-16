@@ -416,6 +416,33 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
             result["session"] = session
         return result
 
+    # ── Check calendar overrides — respect moved sessions (ISSUE 5) ──────────────
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Was a session MOVED TO today from another date?
+    moved_to_today = await db.calendar_overrides.find_one({"userId": userId, "newDate": today_str})
+
+    # Was today's original session MOVED AWAY to another date?
+    moved_from_today = await db.calendar_overrides.find_one({"userId": userId, "originalDate": today_str})
+
+    if moved_to_today:
+        # A session was moved TO today — find and return the matching session from the plan
+        moved_session_type = moved_to_today.get("sessionType", "")
+        for phase in plan.phases:
+            for block in (phase.blocks or []):
+                for week in (block.weeks or []):
+                    for session in (week.sessions or []):
+                        if session.sessionType == moved_session_type:
+                            return _apply_boxing_filter({
+                                "phase": phase.phaseName, "block": block.blockName,
+                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                "session": session.model_dump(),
+                            })
+
+    if moved_from_today and not moved_to_today:
+        # Today's session was moved away and nothing moved here → rest day
+        raise HTTPException(status_code=404, detail="Session moved to another day. Today is a rest day.")
+
     for phase in plan.phases:
         if phase.status == _PhaseStatus.CURRENT:
             for block in phase.blocks:

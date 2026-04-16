@@ -193,10 +193,15 @@ function DayCard({
     day.status === 'missed'    ? AMBER : '#333';
 
   const isActive  = day.status !== 'rest';
-  // Part 1B: rest days visually recessed
-  const cardBg    = day.status === 'rest' ? '#0E0E10' : (day.status === 'today' ? GOLD + '15' : CARD);
+  // Part 1B: rest days visually recessed; during move mode, glow as drop targets
+  const isSwapDestination = swapMode && !isFirstSwap; // first has been picked, now picking destination
+  const cardBg    = isSwapDestination && !isActive
+    ? '#12121A'  // Slightly brighter rest day during move mode
+    : day.status === 'rest' ? '#0E0E10'
+    : (day.status === 'today' ? GOLD + '15' : CARD);
   const cardBorder =
     isFirstSwap || isSecondSwap ? GOLD :
+    isSwapDestination && !isActive ? GOLD + '30' :
     day.status === 'completed' ? RED + '40' :
     day.status === 'today'     ? GOLD + '60' :
     day.status === 'upcoming'  ? GREEN + '40' :
@@ -206,20 +211,20 @@ function DayCard({
     <TouchableOpacity
       style={[s.dayCard, { backgroundColor: cardBg, borderColor: cardBorder, overflow: 'hidden' }]}
       onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
-      activeOpacity={swapMode && isActive ? 0.6 : 0.9}
+      activeOpacity={swapMode ? 0.6 : 0.9}
     >
       {(isFirstSwap || isSecondSwap) && (
         <View style={s.swapBadge}>
           <Text style={s.swapBadgeNum}>{isFirstSwap ? '1' : '2'}</Text>
         </View>
       )}
-      <Text style={[s.dayAbbr, { color: isActive ? statusColor : '#555' }]}>
+      <Text style={[s.dayAbbr, { color: isSwapDestination && !isActive ? '#666' : (isActive ? statusColor : '#555') }]}>
         {day.dayAbbr}
       </Text>
-      <Text style={[s.dayNum, { color: isActive ? COLORS.text.primary : '#333' }]}>
+      <Text style={[s.dayNum, { color: isSwapDestination && !isActive ? '#555' : (isActive ? COLORS.text.primary : '#333') }]}>
         {day.dayNum}
       </Text>
-      <Text style={[s.sessionLbl, { color: isActive ? statusColor : '#333' }]}>
+      <Text style={[s.sessionLbl, { color: isActive ? statusColor : (isSwapDestination ? '#444' : '#333') }]}>
         {isActive ? day.sessionLabel : 'REST'}
       </Text>
       {/* Part 1B: colored bottom bar instead of dot */}

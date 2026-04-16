@@ -20,12 +20,16 @@ const TEAL   = '#4DCEA6';
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface LogEntry {
   _id?: string;
+  id?: string;
   exercise: string;
   weight: number;
   reps: number;
   rpe?: number;
   setNumber?: number;
+  setIndex?: number;
   date: string;
+  e1rm?: number;
+  sessionType?: string;
 }
 
 interface ExerciseGroup {
@@ -58,8 +62,8 @@ function groupByExercise(logs: LogEntry[]): ExerciseGroup[] {
     map.get(name)!.push(entry);
   }
   return Array.from(map.entries()).map(([name, sets]) => {
-    // Sort by set number or insertion order
-    sets.sort((a, b) => (a.setNumber || 0) - (b.setNumber || 0));
+    // Sort by setIndex (0-based) or setNumber (1-based)
+    sets.sort((a, b) => (a.setIndex ?? a.setNumber ?? 0) - (b.setIndex ?? b.setNumber ?? 0));
     const bestSet = sets.reduce<LogEntry | null>((best, s) => {
       if (!best) return s;
       const bE1rm = best.weight * (1 + best.reps / 30);
@@ -73,7 +77,7 @@ function groupByExercise(logs: LogEntry[]): ExerciseGroup[] {
 
 // ── Exercise Card ─────────────────────────────────────────────────────────────
 function ExerciseCard({ group }: { group: ExerciseGroup }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);  // Start expanded for read-only detail view
   return (
     <View style={styles.exerciseCard}>
       <TouchableOpacity
@@ -99,7 +103,9 @@ function ExerciseCard({ group }: { group: ExerciseGroup }) {
         <View style={styles.setsContainer}>
           {group.sets.map((s, i) => (
             <View key={i} style={styles.setRow}>
-              <Text style={styles.setLabel}>Set {s.setNumber || i + 1}</Text>
+              <Text style={styles.setLabel}>
+                Set {(s.setIndex != null ? s.setIndex + 1 : s.setNumber) || i + 1}
+              </Text>
               <Text style={styles.setValues}>
                 {s.weight} lbs × {s.reps} reps
                 {s.rpe ? <Text style={styles.rpeTag}>  @RPE {s.rpe}</Text> : null}
@@ -127,6 +133,7 @@ export default function SessionDetailScreen() {
     try {
       const result = await logApi.list({ startDate: date, endDate: date });
       const logs: LogEntry[] = Array.isArray(result) ? result : (result?.logs || []);
+      console.log(`[SessionDetail] date=${date}, fetched ${logs.length} logs`);
       const exerciseGroups = groupByExercise(logs);
       setGroups(exerciseGroups);
 
