@@ -1572,8 +1572,6 @@ export default function TodayScreen() {
   }, []);
 
   // ── Persist added sets (keyed by exercise id) to AsyncStorage ─────────────
-  const pendingAddedSets = useRef<Record<string, any[]> | null>(null);
-
   const saveAddedSetsToStorage = useCallback(async (addedByEx: Record<string, any[]>) => {
     try {
       await AsyncStorage.setItem(ADDED_SETS_KEY, JSON.stringify({
@@ -1785,14 +1783,7 @@ export default function TodayScreen() {
             setSetValues({});
           }
         }
-        // Restore added sets (only if date matches today)
-        const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
-        if (savedAdded) {
-          const parsed = JSON.parse(savedAdded);
-          if (parsed?.date === todayStr && parsed?.addedByEx) {
-            pendingAddedSets.current = parsed.addedByEx;
-          }
-        }
+        // (Added sets are now restored inline in useFocusEffect — no race condition)
       } catch {}
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1818,6 +1809,33 @@ export default function TodayScreen() {
     (async () => {
       const todayStr = getLocalDateString();
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
+        // Safety net: re-verify added sets are present in exercises state
+        // (On Expo Go, a background/foreground cycle can reset state while
+        //  AsyncStorage still has the persisted data)
+        try {
+          const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
+          if (savedAdded) {
+            const parsed = JSON.parse(savedAdded);
+            if (parsed?.date === todayStr && parsed?.addedByEx) {
+              const addedByEx = parsed.addedByEx;
+              setExercises(prev => {
+                let changed = false;
+                const next = prev.map((ex: any) => {
+                  const added = addedByEx[ex.id];
+                  if (!added || added.length === 0) return ex;
+                  // Only add sets that are not already present
+                  const existingIds = new Set(ex.sets.map((s: any) => s.id));
+                  const missing = added.filter((s: any) => !existingIds.has(s.id));
+                  if (missing.length === 0) return ex;
+                  changed = true;
+                  return { ...ex, sets: [...ex.sets, ...missing] };
+                });
+                return changed ? next : prev;
+              });
+            }
+          }
+        } catch {}
+
         try {
           const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
           const allLogs = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
@@ -1919,15 +1937,29 @@ export default function TodayScreen() {
           session?.session?.sessionType  // pass session type so DE days get 'Dynamic Effort' badge
         );
         if (apiExs.length > 0) {
-          // Fix 2B: Merge any pending added sets from AsyncStorage before rendering
+          // Fix: Read ADDED_SETS_KEY inline to avoid race with mount useEffect
+          // (On real Expo Go devices, AsyncStorage reads can take 20-100ms each,
+          //  causing pendingAddedSets to still be null when this merge runs)
           let exsWithAdded = apiExs;
-          if (pendingAddedSets.current) {
-            const addedByEx = pendingAddedSets.current;
-            pendingAddedSets.current = null;
-            exsWithAdded = apiExs.map((ex: any) => {
-              const added = addedByEx[ex.id];
-              return added?.length > 0 ? { ...ex, sets: [...ex.sets, ...added] } : ex;
-            });
+          try {
+            const todayStr2 = getLocalDateString();
+            const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
+            if (savedAdded) {
+              const parsed = JSON.parse(savedAdded);
+              if (parsed?.date === todayStr2 && parsed?.addedByEx) {
+                const addedByEx = parsed.addedByEx;
+                const merged = apiExs.map((ex: any) => {
+                  const added = addedByEx[ex.id];
+                  return added?.length > 0 ? { ...ex, sets: [...ex.sets, ...added] } : ex;
+                });
+                // Only use merge if we actually found added sets
+                if (merged.some((ex: any, i: number) => ex.sets.length > apiExs[i].sets.length)) {
+                  exsWithAdded = merged;
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[Today] Failed to restore added sets:', err);
           }
           setExercises(exsWithAdded);
           // Expand only the first exercise by default
