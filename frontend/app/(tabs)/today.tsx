@@ -12,7 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -1595,6 +1595,18 @@ export default function TodayScreen() {
   const [showSessionComplete, setShowSessionComplete] = useState(false);
   const [sessionStats, setSessionStats]   = useState<any>(null);
   const prCardRef = useRef<View>(null);
+  const sessionCardRef = useRef<View>(null);
+
+  // ── PR particle animation ─────────────────────────────────────────────────────
+  const prParticles = useRef(
+    Array.from({ length: 15 }, () => ({
+      x: Math.random() * 300,
+      animY: new Animated.Value(-20),
+      animOpacity: new Animated.Value(1),
+      size: 4 + Math.random() * 8,
+      delay: Math.random() * 1500,
+    }))
+  ).current;
 
   // ── Previous workout data fetch ──────────────────────────────────────────────
   const fetchPreviousData = useCallback(async (exerciseNames: string[]) => {
@@ -1622,16 +1634,46 @@ export default function TodayScreen() {
   // ── PR detection helper ───────────────────────────────────────────────────────
   const checkForPR = useCallback((exerciseName: string, weight: number, reps: number) => {
     const e1rm = weight * (1 + reps / 30);
+    if (e1rm <= 0 || weight <= 0) return null;
+
+    // Check previous day data first
     const prevEntries = previousData[exerciseName] || [];
     const prevBestE1rm = prevEntries.reduce((mx, s) => {
       const prev = s.weight * (1 + s.reps / 30);
       return prev > mx ? prev : mx;
     }, 0);
-    if (e1rm > prevBestE1rm && prevBestE1rm > 0 && weight > 0) {
-      return { exercise: exerciseName, weight, reps, e1rm: Math.round(e1rm), previousBest: Math.round(prevBestE1rm) };
+
+    // Also check earlier sets logged TODAY for this exercise
+    let todayBestE1rm = 0;
+    const ex = exercises.find(e => e.name === exerciseName);
+    if (ex) {
+      for (const s of ex.sets) {
+        if (loggedSets.has(s.id) && s.id !== '') {
+          const sv = setValues[s.id];
+          if (sv) {
+            const w = parseFloat(sv.weight) || 0;
+            const r = parseInt(sv.reps) || 0;
+            const se1rm = w * (1 + r / 30);
+            if (se1rm > todayBestE1rm) todayBestE1rm = se1rm;
+          }
+        }
+      }
+    }
+
+    const previousBest = Math.max(prevBestE1rm, todayBestE1rm);
+
+    // Fire PR only when there IS a previous bar to beat
+    if (previousBest > 0 && e1rm > previousBest) {
+      return {
+        exercise: exerciseName,
+        weight,
+        reps,
+        e1rm: Math.round(e1rm),
+        previousBest: Math.round(previousBest),
+      };
     }
     return null;
-  }, [previousData]);
+  }, [previousData, exercises, loggedSets, setValues]);
 
   // ── Share PR card ─────────────────────────────────────────────────────────────
   const sharePRCard = useCallback(async (data: any) => {
@@ -1642,6 +1684,36 @@ export default function TodayScreen() {
       console.warn('Share failed:', err);
     }
   }, []);
+
+  // ── Share Session card (BUG 3) ────────────────────────────────────────────────
+  const shareSessionCard = useCallback(async () => {
+    try {
+      const uri = await captureRef(sessionCardRef, { format: 'png', quality: 1 });
+      await Sharing.shareAsync(uri, { mimeType: 'image/png' });
+    } catch (err) {
+      console.warn('Session share failed:', err);
+    }
+  }, []);
+
+  // ── PR particle animation trigger (BUG 1) ─────────────────────────────────────
+  useEffect(() => {
+    if (prCelebration) {
+      prParticles.forEach(p => {
+        p.animY.setValue(-20);
+        p.animOpacity.setValue(1);
+        Animated.sequence([
+          Animated.delay(p.delay),
+          Animated.parallel([
+            Animated.timing(p.animY, { toValue: 700, duration: 2500, useNativeDriver: true }),
+            Animated.timing(p.animOpacity, { toValue: 0, duration: 2500, useNativeDriver: true }),
+          ]),
+        ]).start();
+      });
+      // Auto-dismiss after 8 seconds
+      const timer = setTimeout(() => setPrCelebration(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [prCelebration, prParticles]);
 
   const todayName = getTodayDayName();
 
@@ -2254,12 +2326,15 @@ export default function TodayScreen() {
     const avgRPE = Object.values(efforts).length > 0
       ? Object.values(efforts).reduce((a, b) => a + b, 0) / Object.values(efforts).length
       : 0;
-    // Fetch streak for celebration
+    // Fetch streak + badges for celebration
     let streakData = null;
     try { streakData = await streakApi.get(); } catch {}
+    let badgeData = null;
+    try { badgeData = await badgesApi.get(); } catch {}
     setSessionStats({
       sessionType, sets: loggedCount, volume: totalVolume, rpe: avgRPE,
       streak: streakData,
+      badges: badgeData,
     });
     setShowSessionComplete(true);
   };
@@ -2582,6 +2657,23 @@ export default function TodayScreen() {
       {prCelebration && (
         <Modal transparent visible animationType="fade" onRequestClose={() => setPrCelebration(null)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            {/* Gold particle confetti */}
+            {prParticles.map((p, i) => (
+              <Animated.View
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: p.x,
+                  top: 0,
+                  width: p.size,
+                  height: p.size,
+                  borderRadius: p.size / 2,
+                  backgroundColor: i % 3 === 0 ? '#C9A84C' : i % 3 === 1 ? '#E8C868' : '#FFD700',
+                  opacity: p.animOpacity,
+                  transform: [{ translateY: p.animY }],
+                }}
+              />
+            ))}
             <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
             <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6', marginBottom: 4, textAlign: 'center' }}>{prCelebration.exercise}</Text>
             <Text style={{ fontSize: 52, fontWeight: '800', color: COLORS.accent, lineHeight: 60 }}>{prCelebration.weight}</Text>
@@ -2640,14 +2732,26 @@ export default function TodayScreen() {
             </View>
             {/* Streak info */}
             {sessionStats.streak?.currentStreak > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FF6B3515', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 16, borderWidth: 1, borderColor: '#FF6B3530' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FF6B3515', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#FF6B3530' }}>
                 <MaterialCommunityIcons name="fire" size={18} color="#FF6B35" />
                 <Text style={{ fontSize: 14, fontWeight: '700', color: '#FF6B35' }}>{sessionStats.streak.currentStreak}-week streak!</Text>
                 <Text style={{ fontSize: 11, color: '#888' }}>Keep it going</Text>
               </View>
             )}
-            {/* Buttons */}
+            {/* Badge info (BUG 1B) */}
+            {sessionStats.badges?.earned?.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#C9A84C15', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#C9A84C30' }}>
+                <MaterialCommunityIcons name="trophy" size={18} color="#C9A84C" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#C9A84C' }}>{sessionStats.badges.totalEarned} badge{sessionStats.badges.totalEarned !== 1 ? 's' : ''} earned</Text>
+              </View>
+            )}
+            {/* Buttons (BUG 3) */}
             <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => shareSessionCard()}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A0A0C' }}>SHARE SESSION</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={{ flex: 1, borderWidth: 1, borderColor: '#444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
                 onPress={() => {
@@ -2674,6 +2778,24 @@ export default function TodayScreen() {
         <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
         <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
         {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
+        <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
+      </View>
+
+      {/* ── Part 3D: Hidden Session share card (BUG 3) ── */}
+      <View ref={sessionCardRef} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center', position: 'absolute', left: -2000 }}>
+        <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
+        <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>SESSION COMPLETE</Text>
+        <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{sessionStats?.sessionType || 'Training'}</Text>
+        <View style={{ flexDirection: 'row', gap: 24, marginTop: 20 }}>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.sets || 0}</Text>
+            <Text style={{ fontSize: 11, color: '#555' }}>SETS</Text>
+          </View>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6' }}>{sessionStats?.volume > 0 ? `${(sessionStats.volume / 1000).toFixed(1)}k` : '0'}</Text>
+            <Text style={{ fontSize: 11, color: '#555' }}>VOLUME</Text>
+          </View>
+        </View>
         <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
       </View>
 

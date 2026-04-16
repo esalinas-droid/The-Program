@@ -31,6 +31,7 @@ export default function RootLayout() {
         <Stack.Screen name="review" options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }} />
         <Stack.Screen name="achievements" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="session-detail" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </>
   );

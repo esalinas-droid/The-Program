@@ -399,6 +399,23 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     plan_start = getattr(plan, "planStartDate", None) or getattr(plan, "startDate", None) or ""
     current_week_num = _calculate_current_week(str(plan_start)) if plan_start else 1
 
+    # Fetch user goal for boxing filter (BUG 5)
+    profile = await db.profile.find_one({"userId": userId})
+    user_goal = (profile.get("goal") or "") if profile else ""
+    _boxing_names = {"1:1 Boxing Intervals", "Shadowboxing", "Boxing / Recovery / Mobility"}
+    is_boxing_user = any(kw in user_goal.lower() for kw in ("boxing", "mma", "martial"))
+
+    def _apply_boxing_filter(result: dict) -> dict:
+        """Remove boxing exercises for non-boxing users (BUG 5)."""
+        if is_boxing_user or not result:
+            return result
+        session = result.get("session", {})
+        exercises = session.get("exercises", [])
+        if exercises:
+            session["exercises"] = [ex for ex in exercises if ex.get("name") not in _boxing_names]
+            result["session"] = session
+        return result
+
     for phase in plan.phases:
         if phase.status == _PhaseStatus.CURRENT:
             for block in phase.blocks:
@@ -406,36 +423,36 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
                     for week in block.weeks:
                         for session in week.sessions:
                             if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                return {"phase": phase.phaseName, "block": block.blockName,
+                                return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                                         "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                        "session": session.model_dump()}
+                                        "session": session.model_dump()})
                         # Try new terminology first, then legacy
                         for cal in (TRAINING_CALENDAR, TRAINING_CALENDAR_LEGACY):
                             expected_type = cal.get(today_day)
                             if expected_type:
                                 for session in week.sessions:
                                     if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                        return {"phase": phase.phaseName, "block": block.blockName,
+                                        return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                                                 "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                                "session": session.model_dump()}
+                                                "session": session.model_dump()})
                         for session in week.sessions:
                             if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                return {"phase": phase.phaseName, "block": block.blockName,
+                                return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                                         "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                        "session": session.model_dump()}
+                                        "session": session.model_dump()})
                         for session in week.sessions:
                             if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                return {"phase": phase.phaseName, "block": block.blockName,
+                                return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                                         "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                        "session": session.model_dump()}
+                                        "session": session.model_dump()})
     if plan.phases and plan.phases[0].blocks and plan.phases[0].blocks[0].weeks:
         phase = plan.phases[0]
         block = phase.blocks[0]
         week = block.weeks[0]
         if week.sessions:
-            return {"phase": phase.phaseName, "block": block.blockName,
+            return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                     "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                    "session": week.sessions[0].model_dump()}
+                    "session": week.sessions[0].model_dump()})
     raise HTTPException(status_code=404, detail="No session found for today.")
 
 

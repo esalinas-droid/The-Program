@@ -395,11 +395,14 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
-      {/* CONTINUE SESSION — today has logs */}
+      {/* VIEW SESSION — today is already completed */}
       {card.status === 'completed' && isToday && (
-        <TouchableOpacity style={s.continueBtnSmall} onPress={onGoToSession} activeOpacity={0.8}>
-          <Text style={s.continueBtnText}>CONTINUE SESSION</Text>
-          <MaterialCommunityIcons name="arrow-right" size={12} color={BG} />
+        <TouchableOpacity
+          style={[s.continueBtnSmall, { backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#2A2A2E' }]}
+          onPress={onGoToSession}
+          activeOpacity={0.8}>
+          <Text style={[s.continueBtnText, { color: '#888' }]}>VIEW SESSION</Text>
+          <MaterialCommunityIcons name="arrow-right" size={12} color="#888" />
         </TouchableOpacity>
       )}
 
@@ -639,16 +642,17 @@ export default function ScheduleScreen() {
     loadData(next);
   };
 
-  // ── Swap logic ────────────────────────────────────────────────────────────────
+  // ── Move session logic (IMP 1) ───────────────────────────────────────────────
   const handleDayPress = (day: WeekDay) => {
     if (!swapMode) return;
-    if (day.status === 'rest') return;
     if (!firstSwap) {
+      // Source must be a training day (something to move)
+      if (day.status === 'rest') return;
       const ev = calEventsRaw.find((e: any) => e.date === day.date);
       setFirstSwap({ date: day.date, event: ev });
       return;
     }
-    // Second tap — do swap
+    // Second tap — destination can be any day (including rest days)
     doSwap(day.date, day);
   };
 
@@ -657,29 +661,43 @@ export default function ScheduleScreen() {
     setSwapping(true);
     try {
       const secondEv = calEventsRaw.find((e: any) => e.date === secondDate);
-      await Promise.all([
-        calendarApi.reschedule({
+      const isRestDestination = secondDay.status === 'rest' || !secondEv;
+
+      if (isRestDestination) {
+        // Move: just reschedule the source session to the new date, no reverse call
+        await calendarApi.reschedule({
           originalDate: firstSwap.date,
           newDate:       secondDate,
           sessionType:   firstSwap.event?.sessionType || '',
-          reason:        'user_swap',
-        }),
-        secondEv ? calendarApi.reschedule({
-          originalDate: secondDate,
-          newDate:       firstSwap.date,
-          sessionType:   secondEv.sessionType || '',
-          reason:        'user_swap',
-        }) : Promise.resolve(),
-      ]);
+          reason:        'user_move',
+        });
+      } else {
+        // Swap: both directions
+        await Promise.all([
+          calendarApi.reschedule({
+            originalDate: firstSwap.date,
+            newDate:       secondDate,
+            sessionType:   firstSwap.event?.sessionType || '',
+            reason:        'user_swap',
+          }),
+          calendarApi.reschedule({
+            originalDate: secondDate,
+            newDate:       firstSwap.date,
+            sessionType:   secondEv.sessionType || '',
+            reason:        'user_swap',
+          }),
+        ]);
+      }
+
       const d1 = formatDate(firstSwap.date).split(',')[0];
       const d2 = formatDate(secondDate).split(',')[0];
-      setSwapToast(`${d1} ↔ ${d2} swapped`);
+      setSwapToast(isRestDestination ? `${d1} → ${d2} moved` : `${d1} ↔ ${d2} swapped`);
       setTimeout(() => setSwapToast(null), 3000);
       setSwapMode(false);
       setFirstSwap(null);
       await loadData(weekOffsetRef.current);
     } catch (err) {
-      console.log('[Schedule] swap error:', err);
+      console.warn('[Schedule] move/swap error:', err);
     } finally {
       setSwapping(false);
     }
@@ -722,12 +740,12 @@ export default function ScheduleScreen() {
         <WeekRing completed={weekStats.sessionsCompleted} total={weekStats.totalPlanned} />
       </View>
 
-      {/* ── Swap mode banner ── */}
+      {/* ── Move session banner ── */}
       {swapMode && (
         <View style={s.swapBanner}>
-          <MaterialCommunityIcons name="swap-horizontal" size={16} color={BG} />
+          <MaterialCommunityIcons name="calendar-arrow-right" size={16} color={BG} />
           <Text style={s.swapBannerText}>
-            {firstSwap ? 'Now tap the second training day' : 'Tap two training days to swap them'}
+            {firstSwap ? 'Now tap the destination day (any day)' : 'Tap the session you want to move'}
           </Text>
           <TouchableOpacity onPress={cancelSwap} style={s.cancelSwapBtn}>
             <Text style={s.cancelSwapText}>Cancel</Text>
@@ -831,13 +849,20 @@ export default function ScheduleScreen() {
                   card={card}
                   expanded={expandedCard === card.date}
                   onToggle={() => setExpandedCard(expandedCard === card.date ? null : card.date)}
-                  onGoToSession={() => router.push('/(tabs)/today')}
+                  onGoToSession={() => {
+                    if (card.status === 'completed' && card.date !== todayStr) {
+                      // Past session — view detailed history
+                      router.push(`/session-detail?date=${card.date}&sessionType=${encodeURIComponent(card.sessionType)}` as any);
+                    } else {
+                      router.push('/(tabs)/today');
+                    }
+                  }}
                   todayStr={todayStr}
                 />
               ))
             )}
 
-            {/* Part 1F: Swap training days pill BELOW session cards */}
+            {/* Part 1F: Move a session pill BELOW session cards */}
             <TouchableOpacity
               style={{
                 alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -848,8 +873,8 @@ export default function ScheduleScreen() {
               onPress={() => { setSwapMode(true); setFirstSwap(null); }}
               activeOpacity={0.7}
             >
-              <MaterialCommunityIcons name="swap-horizontal" size={14} color="#666" />
-              <Text style={{ fontSize: 12, color: '#888', fontWeight: '600' }}>Swap training days</Text>
+              <MaterialCommunityIcons name="calendar-arrow-right" size={14} color="#666" />
+              <Text style={{ fontSize: 12, color: '#888', fontWeight: '600' }}>Move a session</Text>
             </TouchableOpacity>
           </>
         )}

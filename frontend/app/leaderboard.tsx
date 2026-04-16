@@ -82,15 +82,27 @@ function GroupModal({ visible, onClose, userName }: { visible: boolean; onClose:
     setCreating(true);
     try {
       const res = await groupsApi.create(groupName);
-      setMyCode(res.code);
-    } catch { Alert.alert('Error', 'Could not create group'); }
-    finally { setCreating(false); }
+      if (res?.code) {
+        setMyCode(res.code);
+      } else {
+        Alert.alert('Error', 'No group code returned. Try again.');
+      }
+    } catch (e: any) {
+      console.warn('[Leaderboard] Create group failed:', e);
+      Alert.alert('Error', e?.message || 'Could not create group. Check your connection.');
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const handleShare = () => {
-    Share.share({
-      message: `I'm training with The Program — join my group with code ${myCode}. Download: theprogram.app`,
-    });
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `I'm training with The Program — join my group with code ${myCode}. Download: theprogram.app`,
+      });
+    } catch (e) {
+      console.warn('[Leaderboard] Share failed:', e);
+    }
   };
 
   const handleJoin = async () => {

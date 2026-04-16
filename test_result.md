@@ -1094,10 +1094,10 @@ frontend:
           Button active (gold) when >= 50% sets logged.
           Bottom bar also shows set count, label, and % pill.
 
-  - task: "AsyncStorage persistence — setValues + loggedSets survive tab switches"
+  - task: "8 Bugs + 2 Improvements from user testing"
     implemented: true
     working: "NA"
-    file: "frontend/app/(tabs)/today.tsx"
+    file: "frontend/app/(tabs)/today.tsx, frontend/app/(tabs)/log.tsx, frontend/app/leaderboard.tsx, backend/server.py, frontend/app/session-detail.tsx (new)"
     stuck_count: 0
     priority: "high"
     needs_retesting: true
@@ -1105,18 +1105,24 @@ frontend:
       - working: "NA"
         agent: "main"
         comment: >
-          Completed all 7 steps of the AsyncStorage persistence fix:
-          Steps A-D (previous agent): AsyncStorage import, SET_VALUES_KEY/LOGGED_SETS_KEY constants,
-          saveSetValuesToStorage/saveLoggedSetsToStorage helpers, restore-on-mount useEffect,
-          persist-setValues-on-change useEffect, lazy:false in _layout.tsx.
-          Step E (this agent): saveLoggedSetsToStorage() called after successful handleLog
-          (after setLogEntryIds line), using new Set([...loggedSets, setId]) + updated entryIds.
-          Step F (this agent): AsyncStorage.multiRemove() + state resets added at start of
-          full-rebuild path when lastLoadDate.current !== todayStr (new workout day).
-          Step G (this agent): AsyncStorage.multiRemove() called at start of handleFinish
-          to clear stale data when workout is completed.
-          Fix 2 (this agent): console.warn added to 3 catch blocks:
-          Re-sync path, full-rebuild inner fetch path, handleLog backend call.
+          BUG 1: Fixed checkForPR to also compare against earlier sets logged TODAY
+          (removed the prevBestE1rm > 0 blocker; now fires on 2nd set if heavier than 1st).
+          BUG 1 particle: Added prParticles ref (15 gold particles) + useEffect animation
+          (2.5s fall, 8s auto-dismiss) + particle rendering inside PR Modal.
+          BUG 1B: Added badgesApi import + badge fetch in handleFinish + badge trophy row
+          in session complete overlay.
+          BUG 2: Changed 'CONTINUE SESSION' to 'VIEW SESSION' with subtler gray style.
+          BUG 3: Added shareSessionCard function + sessionCardRef + SHARE SESSION button
+          (gold) beside DONE button in session complete overlay + hidden session share card.
+          BUG 4: Improved handleCreate with null-check on res.code + better Alert message +
+          console.warn + handleShare made async with try/catch.
+          BUG 5: Added _apply_boxing_filter() in get_today_session_mongo to strip boxing
+          exercises for non-boxing/MMA users.
+          IMP 1: Renamed 'Swap training days' to 'Move a session' (calendar-arrow-right icon),
+          updated handleDayPress to allow rest days as destination, updated doSwap to handle
+          one-way move (single reschedule) vs swap (bidirectional), updated toast messages.
+          IMP 2: Created session-detail.tsx (new page), registered in _layout.tsx,
+          updated log.tsx to push to /session-detail for past completed cards.
 
 metadata:
   created_by: "main_agent"
