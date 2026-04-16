@@ -1720,6 +1720,14 @@ export default function TodayScreen() {
     }
   }, []);
 
+  // ── Defensive: clear invalid PR celebration state ──────────────────────────
+  useEffect(() => {
+    if (prCelebration && (prCelebration.weight <= 0 || prCelebration.reps <= 0)) {
+      console.warn('[Today] Invalid PR celebration detected — clearing', prCelebration);
+      setPrCelebration(null);
+    }
+  }, [prCelebration]);
+
   // ── PR particle animation trigger (BUG 1) ─────────────────────────────────────
   useEffect(() => {
     if (prCelebration) {
@@ -2747,7 +2755,7 @@ export default function TodayScreen() {
       />
 
       {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
-      {prCelebration && (
+      {prCelebration && prCelebration.weight > 0 && prCelebration.reps > 0 && (
         <Modal transparent visible animationType="fade" onRequestClose={() => setPrCelebration(null)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
             {/* Gold particle confetti */}
