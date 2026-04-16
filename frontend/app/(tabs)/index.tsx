@@ -586,32 +586,55 @@ export default function Dashboard() {
                     }}
                     style={{
                       flexDirection: 'row', alignItems: 'center', gap: 12,
-                      backgroundColor: '#111114',
+                      backgroundColor: isToday ? COLORS.accent + '15'
+                        : isDone  ? '#EF535012'
+                        : isPast  ? '#0E0E10'
+                        : '#4DCEA608',
                       borderRadius: 12,
-                      borderLeftWidth: 3,
+                      borderLeftWidth: 5,
                       borderLeftColor: statusColor,
                       borderWidth: 1,
-                      borderColor: isToday ? COLORS.accent + '40' : '#1E1E22',
+                      borderColor: isToday ? COLORS.accent + '60'
+                        : isDone  ? '#EF535030'
+                        : isPast  ? '#1E1E22'
+                        : '#4DCEA625',
                       paddingHorizontal: 14,
                       paddingVertical: 12,
                     }}
                     activeOpacity={0.7}
                   >
-                    <View style={{ width: 36, alignItems: 'center' }}>
+                    {/* Day + date badge */}
+                    <View style={{
+                      width: 44,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: statusColor + '20',
+                      borderRadius: 8,
+                      paddingVertical: 6,
+                    }}>
                       <Text style={{ fontSize: 9, color: statusColor, fontWeight: '700', letterSpacing: 0.5 }}>{dayAbbr}</Text>
                       <Text style={{ fontSize: 18, fontWeight: '800', color: isPast && !isDone ? '#555' : '#E8E8E6' }}>{dayNum}</Text>
                     </View>
+
+                    {/* Session type + status pill */}
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: isPast && !isDone ? '#666' : '#E8E8E6' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: isPast && !isDone ? '#666' : '#E8E8E6' }}>
                         {ev.sessionType || 'Training'}
                       </Text>
-                      <Text style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
-                        {isDone ? 'Completed' : isToday ? 'Today' : isPast ? 'Missed' : 'Upcoming'}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: statusColor + '25' }}>
+                          <Text style={{ fontSize: 10, color: statusColor, fontWeight: '700', letterSpacing: 0.3 }}>
+                            {isDone ? 'COMPLETED' : isToday ? 'TODAY' : isPast ? 'MISSED' : 'UPCOMING'}
+                          </Text>
+                        </View>
+                      </View>
                     </View>
-                    {isDone    && <MaterialCommunityIcons name="check-circle"       size={18} color="#EF5350"      />}
-                    {isToday && !isDone && <MaterialCommunityIcons name="arrow-right-circle" size={18} color={COLORS.accent} />}
-                    {!isToday && !isDone && !isPast && <MaterialCommunityIcons name="chevron-right" size={18} color="#444" />}
+
+                    {/* Right icon */}
+                    {isDone    && <MaterialCommunityIcons name="check-circle"        size={22} color="#EF5350"      />}
+                    {isToday && !isDone && <MaterialCommunityIcons name="arrow-right-circle" size={22} color={COLORS.accent} />}
+                    {!isToday && !isDone && !isPast && <MaterialCommunityIcons name="chevron-right"  size={20} color="#4DCEA6" />}
+                    {isPast  && !isDone && <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#666" />}
                   </TouchableOpacity>
                 );
               })}

@@ -57,7 +57,11 @@ export async function scheduleDailyReminder(
 
   const id = await Notifications.scheduleNotificationAsync({
     content: { title, body, sound: true },
-    trigger: { hour, minute, repeats: true } as any,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour,
+      minute,
+    },
   });
 
   await AsyncStorage.setItem(NOTIF_KEYS.DAILY, id);
@@ -99,7 +103,10 @@ export async function scheduleDeloadAlerts(
         body: 'This is a deload week. Keep intensity low, move well.',
         sound: true,
       },
-      trigger: { date: monday } as any,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: monday,
+      },
     });
 
     await AsyncStorage.setItem(`${NOTIF_KEYS.DELOAD_PREFIX}${deloadWeek}`, id);
@@ -129,7 +136,12 @@ export async function scheduleWeeklyCheckin(): Promise<void> {
       body: 'Time for your weekly check-in. Review the week and plan ahead.',
       sound: true,
     },
-    trigger: { weekday: 1, hour: 19, minute: 0, repeats: true } as any,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+      weekday: 2,  // 1=Sunday, 2=Monday in Expo's weekday numbering
+      hour: 19,
+      minute: 0,
+    },
   });
 
   await AsyncStorage.setItem(NOTIF_KEYS.CHECKIN, id);

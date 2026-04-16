@@ -120,8 +120,8 @@ async function scheduleTrainingReminders(
   }
 
   const now = new Date();
-  // Schedule for next 8 weeks
-  for (let week = 0; week < 8; week++) {
+  // Schedule for next 4 weeks (iOS limits to 64 total notifications)
+  for (let week = 0; week < 4; week++) {
     for (const dayName of preferredDays) {
       const jsDay = DAY_TO_JS[dayName.toLowerCase()];
       if (jsDay === undefined) continue;
@@ -136,15 +136,23 @@ async function scheduleTrainingReminders(
       d.setHours(hour, minute, 0, 0);
 
       if (d > now) {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: '💪 Training Day',
-            body: `Time to train! Open your program for today's session.`,
-            sound: true,
-            data: { type: 'training_reminder', day: dayName },
-          },
-          trigger: { date: d } as any,
-        });
+        try {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: '💪 Training Day',
+              body: `Time to train! Open your program for today's session.`,
+              sound: true,
+              data: { type: 'training_reminder', day: dayName },
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.DATE,
+              date: d,
+            },
+          });
+        } catch (err) {
+          console.warn(`[Reminders] Failed to schedule for ${d.toISOString()}:`, err);
+          // Don't throw — continue scheduling the rest
+        }
       }
     }
   }
@@ -321,12 +329,16 @@ export default function WorkoutCalendarScreen() {
         : 'your training days';
       Alert.alert(
         'Reminders Enabled ✓',
-        `You'll be notified at ${timeStr} on ${daysStr}.\n\nReminders are scheduled for the next 8 weeks.`,
+        `You'll be notified at ${timeStr} on ${daysStr}.\n\nReminders are scheduled for the next 4 weeks.`,
         [{ text: 'OK' }]
       );
-    } catch (e) {
+    } catch (e: any) {
       console.warn('[Calendar] Save notifications failed:', e);
-      Alert.alert('Error', 'Could not save notification settings. Please try again.');
+      const errMsg = e?.message || 'Unknown error';
+      Alert.alert(
+        'Error',
+        `Could not save notification settings.\n\n${errMsg}\n\nPlease try again.`
+      );
     } finally {
       setSavingNotif(false);
     }
