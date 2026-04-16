@@ -552,7 +552,7 @@ export default function WorkoutCalendarScreen() {
             </View>
             <Text style={s.modalTitle}>Training Reminders</Text>
             <Text style={s.notifDesc}>
-              Get notified on your training days. Reminders scheduled for the next 8 weeks.
+              Get notified on your training days. Reminders scheduled for the next 4 weeks.
             </Text>
 
             <Text style={s.modalLabel}>Reminder time</Text>
