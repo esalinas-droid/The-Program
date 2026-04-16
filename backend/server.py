@@ -376,6 +376,36 @@ async def get_current_block_mongo(userId: str = Depends(get_current_user)):
     raise HTTPException(status_code=404, detail="No active block found.")
 
 
+@api_router.post("/session/finish")
+async def finish_session(body: dict, userId: str = Depends(get_current_user)):
+    """Mark a session as complete. Non-critical — log entries already saved via /log.
+    Resets in-memory session cache so the next visit loads fresh."""
+    session_id = body.get("sessionId", "")
+    try:
+        await _ensure_plan_loaded(userId)
+        plan = _prog_store["plans"].get(userId)
+        if plan and session_id:
+            for phase in plan.phases:
+                for block in phase.blocks:
+                    for session in block.sessions:
+                        if getattr(session, "sessionId", "") == session_id:
+                            from models.schemas import SessionStatus as _SS
+                            session.status = _SS.COMPLETED
+                            logger.info(f"[FinishSession] Marked {session_id} complete for {userId}")
+    except Exception as e:
+        logger.warning(f"[FinishSession] Could not mark session in plan: {e}")
+    return {
+        "sessionId": session_id,
+        "completedSets": 0,
+        "totalSets": 0,
+        "duration": 0,
+        "wins": ["Session logged successfully"],
+        "flags": [],
+        "coachNote": "Great work — sets saved to your log.",
+        "whatsNext": "Rest up and come back for your next session.",
+    }
+
+
 @api_router.get("/plan/session/today")
 async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     """Get today's session — auto-loads plan from MongoDB if not in memory."""

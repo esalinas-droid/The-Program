@@ -1974,7 +1974,7 @@ export default function TodayScreen() {
 
       // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
       if (lastLoadDate.current && lastLoadDate.current !== todayStr) {
-        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]).catch(() => {});
+        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
         setSetValues({});
         setLoggedSets(new Set());
         setLogEntryIds({});
@@ -2496,9 +2496,8 @@ export default function TodayScreen() {
 
   const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    // ── Step G: Clear AsyncStorage — workout is complete, no need to restore ──
-    AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
-    // Calculate session stats
+
+    // ── Step 1: Capture stats BEFORE clearing state ──────────────────────────
     const allSetValues = Object.values(setValues);
     const totalVolume = allSetValues.reduce((sum, sv) => {
       return sum + (parseFloat(sv.weight) || 0) * (parseInt(sv.reps) || 0);
@@ -2506,17 +2505,54 @@ export default function TodayScreen() {
     const avgRPE = Object.values(efforts).length > 0
       ? Object.values(efforts).reduce((a, b) => a + b, 0) / Object.values(efforts).length
       : 0;
-    // Fetch streak + badges for celebration
+    const finalLoggedCount = loggedSets.size;
+    const finalSessionType = sessionType;
+
+    // ── Step 2: Clear React STATE first ──────────────────────────────────────
+    // Must happen BEFORE clearing AsyncStorage so the persistence useEffects
+    // see empty state and do NOT re-write stale data back to AsyncStorage.
+    setLoggedSets(new Set());
+    setLogEntryIds({});
+    setSetValues({});
+
+    // ── Step 3: Clear AsyncStorage after a short delay ───────────────────────
+    // The 200ms delay ensures the empty-state useEffects have already fired
+    // (they won't re-write because loggedSets.size === 0 and setValues is empty).
+    setTimeout(async () => {
+      await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
+      console.log('[Today] Finish: AsyncStorage cleared');
+    }, 200);
+
+    // ── Step 4: Notify backend that session is complete (non-critical) ───────
+    try {
+      const sid = apiSession?.session?.sessionId;
+      if (sid) {
+        await programApi.finishSession(sid).catch(() => {});
+        console.log('[Today] Finish: notified backend, sessionId:', sid);
+      }
+    } catch {
+      // Non-critical — individual log entries already exist in db.log
+    }
+
+    // ── Step 5: Fetch streak + badges for celebration ─────────────────────────
     let streakData = null;
     try { streakData = await streakApi.get(); } catch {}
     let badgeData = null;
     try { badgeData = await badgesApi.get(); } catch {}
+
     setSessionStats({
-      sessionType, sets: loggedCount, volume: totalVolume, rpe: avgRPE,
+      sessionType: finalSessionType,
+      sets: finalLoggedCount,
+      volume: totalVolume,
+      rpe: avgRPE,
       streak: streakData,
       badges: badgeData,
     });
     setShowSessionComplete(true);
+
+    // ── Step 6: Reset load flags so next visit does a full rebuild ─────────────
+    initialLoadDone.current = false;
+    lastLoadDate.current = '';
   };
 
   // ── Injury warnings ──────────────────────────────────────────────────────────
