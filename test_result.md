@@ -1495,3 +1495,23 @@ agent_communication:
       7. All existing endpoints still return 200.
 
       Test credentials: user_a@theprogram.app / StrongmanA123
+
+  - agent: "main"
+    message: >
+      DEEP AUDIT FIX — Logging Persistence Bugs (Bugs A, B, C, D applied to today.tsx).
+
+      VERIFICATION (all 4 confirmed present in code):
+      - Bug A FIXED: `for (const ex of exsWithAdded)` at line 1955 in full-rebuild path.
+      - Bug B FIXED: `setLoggedSets(new Set())` ONLY in stale-date block (line 1893), not in full rebuild.
+      - Bug C FIXED: Dedicated useEffect for loggedSets at lines 1802-1806.
+      - Bug D FIXED: `postSucceeded` pattern isolates POST from PR detection.
+
+      TEST SCENARIOS (must all pass with real interaction NOT just code compilation):
+      TEST 1: Basic log flow (enter 275x5, tap LOG green check + rest timer + db.log entry setIndex=0)
+      TEST 2: Added sets persist after tab switch (Add Set, log 135x10, switch tab, back, 6th set still logged)
+      TEST 3: Existing sets persist after tab switch (log set1+set2, switch tab, back, both still logged)
+      TEST 4: Log failure shows alert in airplane mode (alert appears + green check rolls back)
+      TEST 5: Force quit + reopen AsyncStorage survives (logged sets still shown)
+
+      Test credentials: user_a@theprogram.app / StrongmanA123
+      Active test user userId: 3f772246-75fc-46c0-b951-765879ded605
