@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
-  RefreshControl,
+  RefreshControl, Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureRef } from 'react-native-view-shot';
@@ -1551,6 +1551,7 @@ export default function TodayScreen() {
   // ── AsyncStorage keys for persisting today's set values & logged state ───────
   const SET_VALUES_KEY  = 'today_set_values';
   const LOGGED_SETS_KEY = 'today_logged_sets';
+  const ADDED_SETS_KEY  = 'today_added_sets';  // Added sets survive tab switches
 
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
@@ -1566,6 +1567,18 @@ export default function TodayScreen() {
         loggedSetIds: Array.from(logged),
         entryIds:     ids,
         date:         getLocalDateString(),
+      }));
+    } catch {}
+  }, []);
+
+  // ── Persist added sets (keyed by exercise id) to AsyncStorage ─────────────
+  const pendingAddedSets = useRef<Record<string, any[]> | null>(null);
+
+  const saveAddedSetsToStorage = useCallback(async (addedByEx: Record<string, any[]>) => {
+    try {
+      await AsyncStorage.setItem(ADDED_SETS_KEY, JSON.stringify({
+        date: getLocalDateString(),
+        addedByEx,
       }));
     } catch {}
   }, []);
@@ -1760,8 +1773,16 @@ export default function TodayScreen() {
             setLogEntryIds(parsed.entryIds            || {});
           } else {
             // Stale data from a previous day — remove it
-            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]);
+            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]);
             setSetValues({});
+          }
+        }
+        // Restore added sets (only if date matches today)
+        const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
+        if (savedAdded) {
+          const parsed = JSON.parse(savedAdded);
+          if (parsed?.date === todayStr && parsed?.addedByEx) {
+            pendingAddedSets.current = parsed.addedByEx;
           }
         }
       } catch {}
@@ -1842,8 +1863,13 @@ export default function TodayScreen() {
               }
             }
           }
-          setLoggedSets(recovered);
-          setLogEntryIds(recoveredIds);
+          // Fix 2C: MERGE with existing state — don't clobber sets just logged locally
+          setLoggedSets(prev => {
+            const merged = new Set(prev);
+            recovered.forEach(id => merged.add(id));
+            return merged;
+          });
+          setLogEntryIds(prev => ({ ...prev, ...recoveredIds }));
           // ── Restore actual logged values so inputs show what was logged ──
           if (Object.keys(recoveredValues).length > 0) {
             setSetValues(prev => ({ ...prev, ...recoveredValues }));
@@ -1877,9 +1903,19 @@ export default function TodayScreen() {
           session?.session?.sessionType  // pass session type so DE days get 'Dynamic Effort' badge
         );
         if (apiExs.length > 0) {
-          setExercises(apiExs);
+          // Fix 2B: Merge any pending added sets from AsyncStorage before rendering
+          let exsWithAdded = apiExs;
+          if (pendingAddedSets.current) {
+            const addedByEx = pendingAddedSets.current;
+            pendingAddedSets.current = null;
+            exsWithAdded = apiExs.map((ex: any) => {
+              const added = addedByEx[ex.id];
+              return added?.length > 0 ? { ...ex, sets: [...ex.sets, ...added] } : ex;
+            });
+          }
+          setExercises(exsWithAdded);
           // Expand only the first exercise by default
-          setExpanded(new Set([apiExs[0].id]));
+          setExpanded(new Set([exsWithAdded[0].id]));
           // Clear stale logged state immediately — will repopulate from backend below
           setLoggedSets(new Set());
           setLogEntryIds({});
@@ -1948,8 +1984,13 @@ export default function TodayScreen() {
                 }
               }
             }
-            setLoggedSets(recovered);
-            setLogEntryIds(recoveredIds);
+            // Fix 2C: MERGE with existing state — don't clobber sets just logged locally
+            setLoggedSets(prev => {
+              const merged = new Set(prev);
+              recovered.forEach(id => merged.add(id));
+              return merged;
+            });
+            setLogEntryIds(prev => ({ ...prev, ...recoveredIds }));
             // ── Restore actual logged values so inputs show what was logged ──
             if (Object.keys(recoveredValues).length > 0) {
               setSetValues(prev => ({ ...prev, ...recoveredValues }));
@@ -2208,8 +2249,16 @@ export default function TodayScreen() {
           setPrExercises(prev => new Set([...prev, logName]));
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('[Today] Backend log failed:', err);
+        // Rollback the optimistic local state so the UI reflects reality
+        setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert(
+          'Log Failed',
+          `Could not save your set. Check your connection and try again.\n\n${err?.message || ''}`,
+          [{ text: 'OK' }]
+        );
       }
     }
   };
@@ -2227,27 +2276,39 @@ export default function TodayScreen() {
 
   const handleAddSet = (exerciseId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setExercises(prev => prev.map(ex => {
-      if (ex.id !== exerciseId) return ex;
-      const lastSet = ex.sets[ex.sets.length - 1];
-      const newSetId = `${exerciseId}-added-${Date.now()}`;
-      const newSet: ExSet = {
-        id: newSetId,
-        type: 'work',
-        weight: lastSet?.weight || 0,
-        reps: lastSet?.reps || '5',
-        label: 'Work',
-      };
-      // Also initialize setValues for the new set
-      setSetValues(sv => ({
-        ...sv,
-        [newSetId]: {
-          weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
-          reps: lastSet?.reps || '',
-        },
-      }));
-      return { ...ex, sets: [...ex.sets, newSet] };
-    }));
+    setExercises(prev => {
+      const updated = prev.map(ex => {
+        if (ex.id !== exerciseId) return ex;
+        const lastSet  = ex.sets[ex.sets.length - 1];
+        const newSetId = `${exerciseId}-added-${Date.now()}`;
+        const newSet: ExSet = {
+          id:     newSetId,
+          type:   'work',
+          weight: lastSet?.weight || 0,
+          reps:   lastSet?.reps || '5',
+          label:  'Work',
+        };
+        // Also initialize setValues for the new set
+        setSetValues(sv => ({
+          ...sv,
+          [newSetId]: {
+            weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
+            reps:   lastSet?.reps || '',
+          },
+        }));
+        return { ...ex, sets: [...ex.sets, newSet] };
+      });
+
+      // Persist added sets to AsyncStorage so they survive tab switches (Fix 2A)
+      const addedByEx: Record<string, any[]> = {};
+      updated.forEach(ex => {
+        const added = ex.sets.filter((s: any) => s.id.includes('-added-'));
+        if (added.length > 0) addedByEx[ex.id] = added;
+      });
+      saveAddedSetsToStorage(addedByEx);
+
+      return updated;
+    });
   };
 
   const handlePain = (setId: string) => {
@@ -2259,9 +2320,19 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     const wasLogged = loggedSets.has(setId);
     setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
-    setExercises(prev => prev.map(e =>
-      e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
-    ));
+    setExercises(prev => {
+      const updated = prev.map(e =>
+        e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
+      );
+      // Update AsyncStorage to remove the deleted set from added-sets list
+      const addedByEx: Record<string, any[]> = {};
+      updated.forEach(ex => {
+        const added = ex.sets.filter((s: any) => s.id.includes('-added-'));
+        if (added.length > 0) addedByEx[ex.id] = added;
+      });
+      saveAddedSetsToStorage(addedByEx);
+      return updated;
+    });
     if (wasLogged && logEntryIds[setId]) {
       logApi.delete(logEntryIds[setId]).catch(() => {});
       setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
@@ -2329,7 +2400,7 @@ export default function TodayScreen() {
   const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // ── Step G: Clear AsyncStorage — workout is complete, no need to restore ──
-    AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY]).catch(() => {});
+    AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
     // Calculate session stats
     const allSetValues = Object.values(setValues);
     const totalVolume = allSetValues.reduce((sum, sv) => {

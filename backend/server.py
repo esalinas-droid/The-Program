@@ -546,20 +546,25 @@ def _generate_calendar_events(
                     display_date = override_map.get(date_str, date_str)
                     # ── Completion check — mirrors Schedule page logic ─────────────────────
                     # Completed if: plan status, OR logs exist for this date,
-                    # OR same session type was logged anywhere this week
+                    # OR same session type was logged anywhere this week (today/past ONLY)
                     has_logs_for_date = display_date in logged_dates
+                    today_str_backend = _dt.now().strftime("%Y-%m-%d")
+                    is_future = display_date > today_str_backend
+
+                    # Never mark a future date as completed via the "same type this week" fallback
                     same_type_this_week = False
-                    try:
-                        ev_date_obj = _dt.strptime(display_date, "%Y-%m-%d")
-                        ev_week_monday = ev_date_obj - _td(days=ev_date_obj.weekday())
-                        for d_offset in range(7):
-                            check_date = (ev_week_monday + _td(days=d_offset)).strftime("%Y-%m-%d")
-                            types_on_day = logged_date_to_types.get(check_date, set())
-                            if session.sessionType in types_on_day:
-                                same_type_this_week = True
-                                break
-                    except Exception:
-                        pass
+                    if not is_future:
+                        try:
+                            ev_date_obj = _dt.strptime(display_date, "%Y-%m-%d")
+                            ev_week_monday = ev_date_obj - _td(days=ev_date_obj.weekday())
+                            for d_offset in range(7):
+                                check_date = (ev_week_monday + _td(days=d_offset)).strftime("%Y-%m-%d")
+                                types_on_day = logged_date_to_types.get(check_date, set())
+                                if session.sessionType in types_on_day:
+                                    same_type_this_week = True
+                                    break
+                        except Exception:
+                            pass
 
                     is_completed = (
                         session.status == "completed"

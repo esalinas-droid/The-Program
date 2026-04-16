@@ -1,0 +1,34 @@
+{
+  "summary": "Tested BUG1 (future sessions not marked completed) and BUG2 (logged sets persist on tab switch). Backend: 9/9 tests passed. Frontend: All 5 tabs load, Today tab logging flow verified, sets persist after tab switch.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bug1_bug2_calendar_persist.py",
+    "/app/test_reports/pytest/iter55_bug1_bug2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "today.tsx has no testID attributes on any interactive elements — makes automated testing harder but does not affect functionality",
+    "Tab navigation in web preview renders all tabs simultaneously, so inner_text() captures full DOM rather than just visible tab content. Not a bug, expected Expo web behavior."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bug1_bug2_calendar_persist.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 passed)",
+    "frontend": "100% (all 5 tabs load, log persist verified)"
+  },
+  "seed_data_creation": "None — used existing user_a@theprogram.app data. One TEST_Squat log created and deleted during testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BUG1 fix verified: /api/calendar/events returns isCompleted=False for all 156 future events. BUG2 fix verified: Logged set (Reverse Hyper set 3, teal checkmark) persisted after switching Home→Today tabs; session count changed from 8/15 to 9/15 and stayed. Home THIS WEEK section shows MON 13/WED 15/THU 16 all COMPLETED (all are past/today — no future training days this week to verify UPCOMING label in UI, but backend test confirms no future event false-positives). Today tab loads correctly with Speed Lower session, exercises visible, ADD SET and LOG buttons functional.",
+  "rca_of_issue": "BUG1 RCA: _generate_calendar_events() was calling same_type_this_week check without guarding against future dates. If a session type was logged earlier this week, ANY same-type session on a future date in the same week would also be marked completed. Fix: wrapped same_type_this_week check in 'if not is_future:'. BUG2 RCA: AsyncStorage was not persisting added sets (ADDED_SETS_KEY) and loggedSets re-sync was replacing rather than merging on mount. Fix: handleAddSet/handleRemoveSet now call saveAddedSetsToStorage; pendingAddedSets ref restores added sets after full rebuild; setLoggedSets now uses merge pattern (new Set(prev) + recovered.forEach)."
+}
