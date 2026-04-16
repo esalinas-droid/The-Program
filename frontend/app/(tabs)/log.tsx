@@ -406,6 +406,17 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
+      {/* VIEW DETAILS — past completed session (IMP 2) */}
+      {card.status === 'completed' && !isToday && stats.sets > 0 && (
+        <TouchableOpacity
+          style={[s.continueBtnSmall, { backgroundColor: '#111114', borderWidth: 1, borderColor: '#1E1E22' }]}
+          onPress={onGoToSession}
+          activeOpacity={0.8}>
+          <Text style={[s.continueBtnText, { color: '#666' }]}>VIEW DETAILS</Text>
+          <MaterialCommunityIcons name="arrow-right" size={12} color="#666" />
+        </TouchableOpacity>
+      )}
+
       {/* Part 1E: Bottom progress bar for completed cards */}
       {card.status === 'completed' && stats.sets > 0 && (
         <View style={{ height: 3, backgroundColor: '#1A1A1E' }}>
