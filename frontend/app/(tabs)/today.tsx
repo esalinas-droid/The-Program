@@ -1797,6 +1797,14 @@ export default function TodayScreen() {
     }
   }, [setValues, saveSetValuesToStorage]);
 
+  // ── Persist loggedSets + logEntryIds to AsyncStorage on every change ───────
+  // This replaces the manual save inside handleLog (closure-value bug removed)
+  useEffect(() => {
+    if (loggedSets.size > 0 || Object.keys(logEntryIds).length > 0) {
+      saveLoggedSetsToStorage(loggedSets, logEntryIds);
+    }
+  }, [loggedSets, logEntryIds, saveLoggedSetsToStorage]);
+
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
@@ -1916,9 +1924,6 @@ export default function TodayScreen() {
           setExercises(exsWithAdded);
           // Expand only the first exercise by default
           setExpanded(new Set([exsWithAdded[0].id]));
-          // Clear stale logged state immediately — will repopulate from backend below
-          setLoggedSets(new Set());
-          setLogEntryIds({});
 
           // Part 2B: Fetch previous workout data for all exercises
           const exNames = apiExs.map((e: any) => e.name).filter(Boolean);
@@ -1947,7 +1952,7 @@ export default function TodayScreen() {
             const recovered = new Set<string>();
             const recoveredIds: Record<string, string> = {};
             const recoveredValues: Record<string, { weight: string; reps: string }> = {};
-            for (const ex of apiExs) {
+            for (const ex of exsWithAdded) {
               const exName = ex.name.toLowerCase();
               const idxMap = bySetIdx.get(exName);
               const exEntries = logsByEx.get(exName) || [];
@@ -2212,13 +2217,14 @@ export default function TodayScreen() {
     const reps   = currentVals ? currentVals.reps : (set?.reps || '');
 
     if (exerciseName) {
+      let postSucceeded = false;
+      let logName = exerciseName;
       try {
         const todayStr  = getLocalDateString();
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-        // Find the index of this set within its exercise so sync is exact
-        const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
-        const setIdx   = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
-        const logName  = exForSet?.name ?? exerciseName;
+        const exForSet  = exercises.find(e => e.sets.some(s => s.id === setId));
+        const setIdx    = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
+        logName = exForSet?.name ?? exerciseName;
         const result = await logApi.create({
           date: todayStr,
           week: week || 1,
@@ -2236,19 +2242,9 @@ export default function TodayScreen() {
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
-          // ── Step E: Persist loggedSets + entryIds to AsyncStorage ──────────
-          saveLoggedSetsToStorage(
-            new Set([...loggedSets, setId]),
-            { ...logEntryIds, [setId]: entryId },
-          );
+          // Persistence is handled by the dedicated loggedSets useEffect above
         }
-        // ── PR detection ─────────────────────────────────────────────────────
-        const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
-        if (prData) {
-          setPrCelebration(prData);
-          setPrExercises(prev => new Set([...prev, logName]));
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
+        postSucceeded = true;
       } catch (err: any) {
         console.warn('[Today] Backend log failed:', err);
         // Rollback the optimistic local state so the UI reflects reality
@@ -2259,6 +2255,20 @@ export default function TodayScreen() {
           `Could not save your set. Check your connection and try again.\n\n${err?.message || ''}`,
           [{ text: 'OK' }]
         );
+      }
+
+      // ── PR detection (runs only if POST succeeded; errors here are non-fatal) ──
+      if (postSucceeded) {
+        try {
+          const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
+          if (prData) {
+            setPrCelebration(prData);
+            setPrExercises(prev => new Set([...prev, logName]));
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+        } catch (prErr) {
+          console.warn('[Today] PR detection failed (non-fatal):', prErr);
+        }
       }
     }
   };
