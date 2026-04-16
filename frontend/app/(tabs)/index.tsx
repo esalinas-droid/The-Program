@@ -10,7 +10,7 @@ import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/const
 import { getProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
 import { toLocalDateString } from '../../src/utils/dateHelpers';
-import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, api } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, calendarApi, api } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
@@ -142,6 +142,9 @@ export default function Dashboard() {
   const [questIsNew,      setQuestIsNew]      = useState(false);
   const streakGlowAnim = useRef(new Animated.Value(0.7)).current;
 
+  // ── Week overview state ───────────────────────────────────────────────────────
+  const [weekEvents, setWeekEvents] = useState<any[]>([]);
+
   const loadData = useCallback(async () => {
     const prof = await getProfile();
     if (!prof) { setLoading(false); return; }
@@ -258,6 +261,24 @@ export default function Dashboard() {
         if (!dismissed) setShowGroupPrompt(true);
       }
     } catch { /* Gamification non-critical */ }
+
+    // ── Fetch this week's training events for the "THIS WEEK" section ─────────
+    try {
+      const now = new Date();
+      const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+      const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - daysFromMonday);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const startStr = monday.toISOString().slice(0, 10);
+      const endStr   = sunday.toISOString().slice(0, 10);
+      const result   = await calendarApi.getEvents(startStr, endStr);
+      const events   = result?.events || [];
+      // Sort by date ascending so the week displays chronologically
+      events.sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''));
+      setWeekEvents(events);
+    } catch { /* Non-critical */ }
 
     setLoading(false);
   }, []);
@@ -528,6 +549,75 @@ export default function Dashboard() {
             <Text style={s.coachCardTag}>{phase} Phase</Text>
           </View>
         </View>
+
+        {/* ── THIS WEEK OVERVIEW ── */}
+        {weekEvents.length > 0 && (
+          <View style={{ marginHorizontal: 16, marginBottom: 20 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <Text style={{ fontSize: 10, color: '#666', fontWeight: '700', letterSpacing: 1.2 }}>THIS WEEK</Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/log' as any)}>
+                <Text style={{ fontSize: 11, color: COLORS.accent, fontWeight: '600' }}>View all →</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ gap: 6 }}>
+              {weekEvents.map((ev: any, idx: number) => {
+                const dateObj   = new Date(ev.date + 'T00:00:00');
+                const todayISO  = new Date().toISOString().slice(0, 10);
+                const isToday   = ev.date === todayISO;
+                const isPast    = ev.date < todayISO;
+                const isDone    = ev.isCompleted;
+
+                const dayAbbr   = ['SUN','MON','TUE','WED','THU','FRI','SAT'][dateObj.getDay()];
+                const dayNum    = dateObj.getDate();
+
+                const statusColor =
+                  isDone    ? '#EF5350' :
+                  isToday   ? COLORS.accent :
+                  isPast    ? '#555' :
+                  '#4DCEA6';
+
+                return (
+                  <TouchableOpacity
+                    key={`${ev.date}-${idx}`}
+                    onPress={() => {
+                      if (isToday)      router.push('/(tabs)/today' as any);
+                      else if (isDone)  router.push(`/session-detail?date=${ev.date}&sessionType=${encodeURIComponent(ev.sessionType)}` as any);
+                      else              router.push('/(tabs)/log' as any);
+                    }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      backgroundColor: '#111114',
+                      borderRadius: 12,
+                      borderLeftWidth: 3,
+                      borderLeftColor: statusColor,
+                      borderWidth: 1,
+                      borderColor: isToday ? COLORS.accent + '40' : '#1E1E22',
+                      paddingHorizontal: 14,
+                      paddingVertical: 12,
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ width: 36, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 9, color: statusColor, fontWeight: '700', letterSpacing: 0.5 }}>{dayAbbr}</Text>
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: isPast && !isDone ? '#555' : '#E8E8E6' }}>{dayNum}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: isPast && !isDone ? '#666' : '#E8E8E6' }}>
+                        {ev.sessionType || 'Training'}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
+                        {isDone ? 'Completed' : isToday ? 'Today' : isPast ? 'Missed' : 'Upcoming'}
+                      </Text>
+                    </View>
+                    {isDone    && <MaterialCommunityIcons name="check-circle"       size={18} color="#EF5350"      />}
+                    {isToday && !isDone && <MaterialCommunityIcons name="arrow-right-circle" size={18} color={COLORS.accent} />}
+                    {!isToday && !isDone && !isPast && <MaterialCommunityIcons name="chevron-right" size={18} color="#444" />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* ── WEEKLY STATS STRIP (compact horizontal) ── */}
         <View style={s.statsStrip}>

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   Modal, ActivityIndicator, Alert, Platform, FlatList, TextInput,
+  PanResponder, Animated, Linking,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -96,6 +97,11 @@ const DAY_TO_JS: Record<string, number> = {
 };
 
 async function requestNotifPermissions() {
+  // Check existing status first — on iOS, requestPermissionsAsync only prompts ONCE
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  if (existing === 'granted') return true;
+  if (existing === 'denied') return false; // Can't re-prompt — user must go to Settings
+  // Status is 'undetermined' — safe to prompt
   const { status } = await Notifications.requestPermissionsAsync();
   return status === 'granted';
 }
@@ -166,6 +172,31 @@ export default function WorkoutCalendarScreen() {
   const [moveReason,      setMoveReason]      = useState('');
   const [notifModal,      setNotifModal]      = useState(false);
   const [savingNotif,     setSavingNotif]     = useState(false);
+
+  // ── Shared swipe-to-dismiss PanResponder for both modals ─────────────────────
+  const modalPanY = useRef(new Animated.Value(0)).current;
+
+  const modalPanResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 5 && Math.abs(gs.dy) > Math.abs(gs.dx),
+      onPanResponderMove: (_, gs) => {
+        if (gs.dy > 0) modalPanY.setValue(gs.dy);
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 100) {
+          // Dismiss whichever modal is open
+          Animated.timing(modalPanY, { toValue: 600, duration: 200, useNativeDriver: true }).start(() => {
+            setNotifModal(false);
+            setMoveModal(false);
+            modalPanY.setValue(0);
+          });
+        } else {
+          // Snap back
+          Animated.spring(modalPanY, { toValue: 0, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
 
   // ── Fetch calendar events ──────────────────────────────────────────────────
   const loadCalendar = useCallback(async () => {
@@ -264,7 +295,14 @@ export default function WorkoutCalendarScreen() {
     try {
       const granted = await requestNotifPermissions();
       if (!granted) {
-        Alert.alert('Notifications', 'Please enable notifications in Settings to receive training reminders.');
+        Alert.alert(
+          'Permission Required',
+          'To receive training reminders, please enable notifications for The Program in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
         return;
       }
       setNotifGranted(true);
@@ -275,8 +313,20 @@ export default function WorkoutCalendarScreen() {
       });
       await scheduleTrainingReminders(preferredDays, notifHour, notifMinute);
       setNotifModal(false);
+
+      // Show success confirmation
+      const timeStr = `${notifHour > 12 ? notifHour - 12 : notifHour === 12 ? 12 : notifHour}:${String(notifMinute).padStart(2, '0')} ${notifHour >= 12 ? 'PM' : 'AM'}`;
+      const daysStr = preferredDays.length > 0
+        ? preferredDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')
+        : 'your training days';
+      Alert.alert(
+        'Reminders Enabled ✓',
+        `You'll be notified at ${timeStr} on ${daysStr}.\n\nReminders are scheduled for the next 8 weeks.`,
+        [{ text: 'OK' }]
+      );
     } catch (e) {
-      Alert.alert('Error', 'Could not save notification settings.');
+      console.warn('[Calendar] Save notifications failed:', e);
+      Alert.alert('Error', 'Could not save notification settings. Please try again.');
     } finally {
       setSavingNotif(false);
     }
@@ -416,10 +466,20 @@ export default function WorkoutCalendarScreen() {
       </ScrollView>
 
       {/* ── Move Session Modal ── */}
-      <Modal visible={moveModal} animationType="slide" transparent presentationStyle="overFullScreen">
-        <View style={s.modalOverlay}>
-          <View style={s.modalSheet}>
-            <View style={s.modalHandle} />
+      <Modal visible={moveModal} animationType="slide" transparent presentationStyle="overFullScreen" onRequestClose={() => setMoveModal(false)}>
+        <TouchableOpacity
+          style={s.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setMoveModal(false)}
+        >
+          <Animated.View
+            style={[s.modalSheet, { transform: [{ translateY: modalPanY }] }]}
+            onStartShouldSetResponder={() => true}
+            onTouchEnd={(e) => e.stopPropagation()}
+          >
+            <View {...modalPanResponder.panHandlers} style={{ width: '100%', paddingVertical: 8, alignItems: 'center' }}>
+              <View style={s.modalHandle} />
+            </View>
             <Text style={s.modalTitle}>Reschedule Session</Text>
             {moveEvent && (
               <View style={[s.modalSessionBadge, { borderLeftColor: sessionColor(moveEvent.sessionType) }]}>
@@ -459,23 +519,38 @@ export default function WorkoutCalendarScreen() {
                 <Text style={s.modalBtnConfirmTxt}>Move Session</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </Animated.View>
+        </TouchableOpacity>
       </Modal>
 
       {/* ── Notification Settings Modal ── */}
-      <Modal visible={notifModal} animationType="slide" transparent presentationStyle="overFullScreen">
-        <View style={s.modalOverlay}>
-          <View style={s.modalSheet}>
-            <View style={s.modalHandle} />
+      <Modal visible={notifModal} animationType="slide" transparent presentationStyle="overFullScreen" onRequestClose={() => setNotifModal(false)}>
+        <TouchableOpacity
+          style={s.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setNotifModal(false)}
+        >
+          <Animated.View
+            style={[s.modalSheet, { transform: [{ translateY: modalPanY }] }]}
+            onStartShouldSetResponder={() => true}
+            onTouchEnd={(e) => e.stopPropagation()}
+          >
+            <View {...modalPanResponder.panHandlers} style={{ width: '100%', paddingVertical: 8, alignItems: 'center' }}>
+              <View style={s.modalHandle} />
+            </View>
             <Text style={s.modalTitle}>Training Reminders</Text>
             <Text style={s.notifDesc}>
               Get notified on your training days. Reminders scheduled for the next 8 weeks.
             </Text>
 
             <Text style={s.modalLabel}>Reminder time</Text>
-            <View style={s.timeRow}>
-              {[5, 6, 7, 8, 9, 10, 11, 12].map(h => (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 6, paddingRight: 20 }}
+              style={{ marginBottom: 12 }}
+            >
+              {[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].map(h => (
                 <TouchableOpacity
                   key={h}
                   style={[s.timePill, notifHour === h && s.timePillActive]}
@@ -486,7 +561,7 @@ export default function WorkoutCalendarScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
 
             <Text style={s.modalLabel}>Minutes</Text>
             <View style={s.timeRow}>
@@ -524,8 +599,8 @@ export default function WorkoutCalendarScreen() {
                 }
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </Animated.View>
+        </TouchableOpacity>
       </Modal>
     </SafeAreaView>
   );
