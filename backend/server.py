@@ -495,9 +495,20 @@ _DAY_TO_OFFSET = {
     'friday': 4, 'saturday': 5, 'sunday': 6,
 }
 
-def _generate_calendar_events(plan, preferred_days: list, overrides: list) -> list:
-    """Map plan sessions to real calendar dates using the user's preferred days."""
+def _generate_calendar_events(
+    plan,
+    preferred_days: list,
+    overrides: list,
+    logged_dates: set = None,
+    logged_date_to_types: dict = None,
+) -> list:
+    """Map plan sessions to real calendar dates using the user's preferred days.
+    logged_dates: set of YYYY-MM-DD dates where the user has ANY log entries.
+    logged_date_to_types: map of date -> set of session types logged on that date.
+    """
     from datetime import datetime as _dt, timedelta as _td
+    logged_dates = logged_dates or set()
+    logged_date_to_types = logged_date_to_types or {}
 
     if not preferred_days:
         preferred_days = ['monday', 'tuesday', 'thursday', 'friday']
@@ -533,6 +544,29 @@ def _generate_calendar_events(plan, preferred_days: list, overrides: list) -> li
                     actual_date = week_monday + _td(days=_DAY_TO_OFFSET[day_name])
                     date_str = actual_date.strftime("%Y-%m-%d")
                     display_date = override_map.get(date_str, date_str)
+                    # ── Completion check — mirrors Schedule page logic ─────────────────────
+                    # Completed if: plan status, OR logs exist for this date,
+                    # OR same session type was logged anywhere this week
+                    has_logs_for_date = display_date in logged_dates
+                    same_type_this_week = False
+                    try:
+                        ev_date_obj = _dt.strptime(display_date, "%Y-%m-%d")
+                        ev_week_monday = ev_date_obj - _td(days=ev_date_obj.weekday())
+                        for d_offset in range(7):
+                            check_date = (ev_week_monday + _td(days=d_offset)).strftime("%Y-%m-%d")
+                            types_on_day = logged_date_to_types.get(check_date, set())
+                            if session.sessionType in types_on_day:
+                                same_type_this_week = True
+                                break
+                    except Exception:
+                        pass
+
+                    is_completed = (
+                        session.status == "completed"
+                        or has_logs_for_date
+                        or same_type_this_week
+                    )
+
                     events.append({
                         "date":          display_date,
                         "originalDate":  date_str if display_date != date_str else None,
@@ -543,7 +577,7 @@ def _generate_calendar_events(plan, preferred_days: list, overrides: list) -> li
                         "phaseName":     phase.phaseName,
                         "blockName":     block.blockName,
                         "exercises":     [e.model_dump() for e in (session.exercises or [])[:5]],
-                        "isCompleted":   session.status == "completed",
+                        "isCompleted":   is_completed,
                         "isOverridden":  display_date != date_str,
                         "isDeloadWeek":  week.isDeload,
                         "coachNote":     session.coachNote or "",
@@ -570,7 +604,30 @@ async def get_calendar_events(
 
     overrides = await db.calendar_overrides.find({"userId": userId}).to_list(2000)
 
-    all_events = _generate_calendar_events(plan, preferred_days, overrides)
+    # ── Fetch log data for completion status ─────────────────────────────────────
+    # Schedule page uses db.log to determine "completed" — we do the same here
+    # so Home, Today, and Schedule pages all stay in sync
+    user_filter = _user_or_orphan(userId)
+    logged_dates: set = set(await db.log.distinct("date", user_filter))
+
+    # Build date → session types map for "same session type this week" check
+    logged_date_to_types: dict = {}
+    all_user_logs = await db.log.find(
+        user_filter,
+        {"date": 1, "sessionType": 1, "_id": 0}
+    ).to_list(5000)
+    for lg in all_user_logs:
+        d  = lg.get("date")
+        st = lg.get("sessionType")
+        if d and st:
+            if d not in logged_date_to_types:
+                logged_date_to_types[d] = set()
+            logged_date_to_types[d].add(st)
+
+    all_events = _generate_calendar_events(
+        plan, preferred_days, overrides,
+        logged_dates, logged_date_to_types,
+    )
 
     if start_date and end_date:
         all_events = [e for e in all_events if start_date <= e["date"] <= end_date]
