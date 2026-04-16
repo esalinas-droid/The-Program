@@ -1498,6 +1498,7 @@ export default function TodayScreen() {
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
+  const [sessionFinished, setSessionFinished] = useState(false); // hides FINISH after completion
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -2549,6 +2550,7 @@ export default function TodayScreen() {
       badges: badgeData,
     });
     setShowSessionComplete(true);
+    setSessionFinished(true); // hide FINISH SESSION button after completion
 
     // ── Step 6: Reset load flags so next visit does a full rebuild ─────────────
     initialLoadDone.current = false;
@@ -2814,12 +2816,12 @@ export default function TodayScreen() {
           </View>
         </View>
         <TouchableOpacity
-          style={[s.finishBtn, !canFinish && s.finishBtnDisabled]}
-          onPress={canFinish ? handleFinish : undefined}
-          activeOpacity={canFinish ? 0.85 : 1}
+          style={[s.finishBtn, (!canFinish || sessionFinished) && s.finishBtnDisabled]}
+          onPress={canFinish && !sessionFinished ? handleFinish : undefined}
+          activeOpacity={canFinish && !sessionFinished ? 0.85 : 1}
         >
-          <Text style={[s.finishBtnText, !canFinish && s.finishBtnTextDisabled]}>
-            FINISH SESSION
+          <Text style={[s.finishBtnText, (!canFinish || sessionFinished) && s.finishBtnTextDisabled]}>
+            {sessionFinished ? 'SESSION COMPLETE ✓' : 'FINISH SESSION'}
           </Text>
           <MaterialCommunityIcons
             name="flag-checkered"

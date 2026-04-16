@@ -385,13 +385,14 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
         await _ensure_plan_loaded(userId)
         plan = _prog_store["plans"].get(userId)
         if plan and session_id:
+            from models.schemas import SessionStatus as _SS
             for phase in plan.phases:
                 for block in phase.blocks:
-                    for session in block.sessions:
-                        if getattr(session, "sessionId", "") == session_id:
-                            from models.schemas import SessionStatus as _SS
-                            session.status = _SS.COMPLETED
-                            logger.info(f"[FinishSession] Marked {session_id} complete for {userId}")
+                    for week in block.weeks:
+                        for session in week.sessions:
+                            if getattr(session, "sessionId", "") == session_id:
+                                session.status = _SS.COMPLETED
+                                logger.info(f"[FinishSession] Marked {session_id} complete for {userId}")
     except Exception as e:
         logger.warning(f"[FinishSession] Could not mark session in plan: {e}")
     return {
