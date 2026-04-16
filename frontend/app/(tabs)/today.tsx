@@ -1542,9 +1542,10 @@ export default function TodayScreen() {
   const [exerciseRestDurations, setExerciseRestDurations] = useState<Record<string, number>>({});
   const [customRestExerciseId, setCustomRestExerciseId]   = useState('');
   const [customRestVisible, setCustomRestVisible]         = useState(false);
-  const initialLoadDone = useRef(false);
-  const exercisesRef = useRef<Exercise[]>([]);
-  const lastLoadDate = useRef('');
+  const initialLoadDone   = useRef(false);
+  const exercisesRef      = useRef<Exercise[]>([]);
+  const lastLoadDate      = useRef('');
+  const mountRestoreDone  = useRef(false); // Fix 5: prevent mount/focus race
   // Increment to force full reload even while screen is already focused (pull-to-refresh)
   const [loadKey, setLoadKey] = useState(0);
 
@@ -1571,14 +1572,15 @@ export default function TodayScreen() {
     } catch {}
   }, []);
 
-  // ── Persist added sets (keyed by exercise id) to AsyncStorage ─────────────
-  const saveAddedSetsToStorage = useCallback(async (addedByEx: Record<string, any[]>) => {
+  // ── Persist added sets (keyed by exercise NAME — IDs can change between loads) ─
+  const saveAddedSetsToStorage = useCallback(async (addedByName: Record<string, any[]>) => {
     try {
-      await AsyncStorage.setItem(ADDED_SETS_KEY, JSON.stringify({
-        date: getLocalDateString(),
-        addedByEx,
-      }));
-    } catch {}
+      const payload = { date: getLocalDateString(), addedByName };
+      await AsyncStorage.setItem(ADDED_SETS_KEY, JSON.stringify(payload));
+      console.log('[Today] Saved added sets for:', Object.keys(addedByName).join(', '));
+    } catch (err) {
+      console.warn('[Today] FAILED to save added sets:', err);
+    }
   }, []);
 
   // Adjust modal
@@ -1784,7 +1786,12 @@ export default function TodayScreen() {
           }
         }
         // (Added sets are now restored inline in useFocusEffect — no race condition)
-      } catch {}
+        mountRestoreDone.current = true;
+        console.log('[Today] Mount restore complete');
+      } catch (err) {
+        mountRestoreDone.current = true; // unblock focusEffect even on error
+        console.warn('[Today] Mount restore failed:', err);
+      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1804,9 +1811,40 @@ export default function TodayScreen() {
     }
   }, [loggedSets, logEntryIds, saveLoggedSetsToStorage]);
 
+  // ── Auto-persist added sets whenever exercises change (Fix 2+3) ──────────────
+  // Same pattern as setValues/loggedSets persistence — runs after every state commit.
+  // Eliminates: async saves inside state updaters, setSetValues nested inside setExercises.
+  useEffect(() => {
+    if (!initialLoadDone.current) return; // skip during initial build
+    const addedByName: Record<string, any[]> = {};
+    exercises.forEach(ex => {
+      const added = ex.sets.filter((s: any) => s.id.includes('-added-'));
+      if (added.length > 0) addedByName[ex.name] = added;
+    });
+    if (Object.keys(addedByName).length > 0) {
+      saveAddedSetsToStorage(addedByName);
+    } else {
+      // No added sets — clear stale data so it doesn't resurrect on reload
+      AsyncStorage.removeItem(ADDED_SETS_KEY).catch(() => {});
+    }
+  }, [exercises, saveAddedSetsToStorage]);
+
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
+      // Fix 5: Wait for mount useEffect to finish AsyncStorage restore before running.
+      // On real Expo Go devices, 3 sequential AsyncStorage reads can take 60-300ms.
+      // Without this wait, useFocusEffect (which starts network calls concurrently)
+      // can complete before mountRestoreDone is true, causing a state race.
+      if (!mountRestoreDone.current) {
+        let waited = 0;
+        while (!mountRestoreDone.current && waited < 500) {
+          await new Promise(r => setTimeout(r, 25));
+          waited += 25;
+        }
+        if (waited > 0) console.log('[Today] Waited', waited, 'ms for mount restore');
+      }
+
       const todayStr = getLocalDateString();
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         // Safety net: re-verify added sets are present in exercises state
@@ -1816,12 +1854,15 @@ export default function TodayScreen() {
           const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
           if (savedAdded) {
             const parsed = JSON.parse(savedAdded);
-            if (parsed?.date === todayStr && parsed?.addedByEx) {
-              const addedByEx = parsed.addedByEx;
+            // Support both old format (addedByEx keyed by ID) and new (addedByName keyed by name)
+            const addedMap = parsed?.addedByName || parsed?.addedByEx || {};
+            const useNameKey = !!parsed?.addedByName;
+            if (parsed?.date === todayStr && Object.keys(addedMap).length > 0) {
+              console.log('[Today] Re-sync: found added sets, keys:', Object.keys(addedMap), 'byName:', useNameKey);
               setExercises(prev => {
                 let changed = false;
                 const next = prev.map((ex: any) => {
-                  const added = addedByEx[ex.id];
+                  const added = useNameKey ? addedMap[ex.name] : addedMap[ex.id];
                   if (!added || added.length === 0) return ex;
                   // Only add sets that are not already present
                   const existingIds = new Set(ex.sets.map((s: any) => s.id));
@@ -1834,7 +1875,7 @@ export default function TodayScreen() {
               });
             }
           }
-        } catch {}
+        } catch (err) { console.warn('[Today] Re-sync added sets failed:', err); }
 
         try {
           const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
@@ -1854,7 +1895,26 @@ export default function TodayScreen() {
             }
           }
 
-          const currentExs = exercisesRef.current;
+          // Fix 4: Build exercise list with added sets for accurate log matching.
+          // exercisesRef.current may be stale if setExercises above hasn't committed yet.
+          let currentExs = [...exercisesRef.current];
+          try {
+            const savedAddedForSync = await AsyncStorage.getItem(ADDED_SETS_KEY);
+            if (savedAddedForSync) {
+              const parsedSync = JSON.parse(savedAddedForSync);
+              const addedMapSync = parsedSync?.addedByName || parsedSync?.addedByEx || {};
+              const useNameSync = !!parsedSync?.addedByName;
+              if (parsedSync?.date === todayStr && Object.keys(addedMapSync).length > 0) {
+                currentExs = currentExs.map(ex => {
+                  const added = useNameSync ? addedMapSync[ex.name] : addedMapSync[ex.id];
+                  if (!added || added.length === 0) return ex;
+                  const existingIds = new Set(ex.sets.map(s => s.id));
+                  const missing = added.filter((s: any) => !existingIds.has(s.id));
+                  return missing.length > 0 ? { ...ex, sets: [...ex.sets, ...missing] } : ex;
+                });
+              }
+            }
+          } catch {}
           const recovered = new Set<string>();
           const recoveredIds: Record<string, string> = {};
           const recoveredValues: Record<string, { weight: string; reps: string }> = {};
@@ -1946,10 +2006,15 @@ export default function TodayScreen() {
             const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
             if (savedAdded) {
               const parsed = JSON.parse(savedAdded);
-              if (parsed?.date === todayStr2 && parsed?.addedByEx) {
-                const addedByEx = parsed.addedByEx;
+              // Support both old (addedByEx keyed by ID) and new (addedByName keyed by name) format
+              const addedMap2 = parsed?.addedByName || parsed?.addedByEx || {};
+              const useNameKey2 = !!parsed?.addedByName;
+              if (parsed?.date === todayStr2 && Object.keys(addedMap2).length > 0) {
+                console.log('[Today] Full-rebuild: found added sets, keys:', Object.keys(addedMap2), 'byName:', useNameKey2);
+                console.log('[Today] Full-rebuild: exercise names:', apiExs.map((e: any) => e.name));
                 const merged = apiExs.map((ex: any) => {
-                  const added = addedByEx[ex.id];
+                  const added = useNameKey2 ? addedMap2[ex.name] : addedMap2[ex.id];
+                  if (added?.length > 0) console.log('[Today] Full-rebuild: merging', added.length, 'sets into', ex.name);
                   return added?.length > 0 ? { ...ex, sets: [...ex.sets, ...added] } : ex;
                 });
                 // Only use merge if we actually found added sets
@@ -2326,39 +2391,30 @@ export default function TodayScreen() {
 
   const handleAddSet = (exerciseId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setExercises(prev => {
-      const updated = prev.map(ex => {
-        if (ex.id !== exerciseId) return ex;
-        const lastSet  = ex.sets[ex.sets.length - 1];
-        const newSetId = `${exerciseId}-added-${Date.now()}`;
-        const newSet: ExSet = {
-          id:     newSetId,
-          type:   'work',
-          weight: lastSet?.weight || 0,
-          reps:   lastSet?.reps || '5',
-          label:  'Work',
-        };
-        // Also initialize setValues for the new set
-        setSetValues(sv => ({
-          ...sv,
-          [newSetId]: {
-            weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
-            reps:   lastSet?.reps || '',
-          },
-        }));
-        return { ...ex, sets: [...ex.sets, newSet] };
-      });
-
-      // Persist added sets to AsyncStorage so they survive tab switches (Fix 2A)
-      const addedByEx: Record<string, any[]> = {};
-      updated.forEach(ex => {
-        const added = ex.sets.filter((s: any) => s.id.includes('-added-'));
-        if (added.length > 0) addedByEx[ex.id] = added;
-      });
-      saveAddedSetsToStorage(addedByEx);
-
-      return updated;
-    });
+    const ex = exercises.find(e => e.id === exerciseId);
+    if (!ex) return;
+    const lastSet  = ex.sets[ex.sets.length - 1];
+    const newSetId = `${exerciseId}-added-${Date.now()}`;
+    const newSet: ExSet = {
+      id:     newSetId,
+      type:   'work',
+      weight: lastSet?.weight || 0,
+      reps:   lastSet?.reps || '5',
+      label:  'Work',
+    };
+    // Pure state update — no side effects inside updater.
+    // Persistence is handled by the dedicated useEffect above (exercises dependency).
+    setExercises(prev => prev.map(e =>
+      e.id !== exerciseId ? e : { ...e, sets: [...e.sets, newSet] }
+    ));
+    // Initialize setValues for the new set (separate call, outside updater — Fix 3)
+    setSetValues(prev => ({
+      ...prev,
+      [newSetId]: {
+        weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
+        reps:   lastSet?.reps || '',
+      },
+    }));
   };
 
   const handlePain = (setId: string) => {
@@ -2370,19 +2426,10 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     const wasLogged = loggedSets.has(setId);
     setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
-    setExercises(prev => {
-      const updated = prev.map(e =>
-        e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
-      );
-      // Update AsyncStorage to remove the deleted set from added-sets list
-      const addedByEx: Record<string, any[]> = {};
-      updated.forEach(ex => {
-        const added = ex.sets.filter((s: any) => s.id.includes('-added-'));
-        if (added.length > 0) addedByEx[ex.id] = added;
-      });
-      saveAddedSetsToStorage(addedByEx);
-      return updated;
-    });
+    // Pure state update — persistence handled by the exercises useEffect (Fix 2+3)
+    setExercises(prev => prev.map(e =>
+      e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
+    ));
     if (wasLogged && logEntryIds[setId]) {
       logApi.delete(logEntryIds[setId]).catch(() => {});
       setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
