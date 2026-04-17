@@ -2547,16 +2547,14 @@ export default function TodayScreen() {
     AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
     console.log('[Today] Finish: AsyncStorage cleared for next session');
 
-    // ── Step 4: Notify backend that session is complete (non-critical) ───────
-    try {
-      const sid = apiSession?.session?.sessionId;
-      if (sid) {
-        await programApi.finishSession(sid).catch(() => {});
-        console.log('[Today] Finish: notified backend, sessionId:', sid);
-      }
-    } catch {
-      // Non-critical — individual log entries already exist in db.log
-    }
+    // ── Step 4: Skip finishSession API call ─────────────────────────────────
+    // The calendar events endpoint determines completion by checking db.log,
+    // NOT session.status. Calling finishSession marks session.status = "completed"
+    // in the backend's plan memory, causing GET /api/plan/session/today to SKIP
+    // this session and return a DIFFERENT one — which breaks the re-sync and makes
+    // it look like all data was lost (exercises don't match the log entries).
+    // Log entries are already saved via individual handleLog POST calls.
+    console.log('[Today] Finish: skipping finishSession API (db.log is the source of truth)');
 
     // ── Step 5: Fetch streak + badges for celebration ─────────────────────────
     let streakData = null;
@@ -2575,9 +2573,18 @@ export default function TodayScreen() {
     setShowSessionComplete(true);
     setSessionFinished(true); // hide FINISH SESSION button after completion
 
-    // ── Step 6: Reset load flags so next visit does a full rebuild ─────────────
-    initialLoadDone.current = false;
-    lastLoadDate.current = '';
+    // ── Step 6: Do NOT reset load flags ─────────────────────────────────────────
+    // CRITICAL: Resetting initialLoadDone = false here causes any subsequent
+    // re-render or focus event to trigger a full-rebuild, which calls
+    // GET /api/plan/session/today. That endpoint SKIPS completed sessions →
+    // returns a DIFFERENT session → re-sync can't match log entries to the new
+    // exercises → data appears lost to the user.
+    //
+    // Keep initialLoadDone = true so tab switches use the RE-SYNC path instead:
+    // it keeps the current exercises and refreshes logged state from db.log.
+    // The stale-date cleanup (Step F) handles loading a new session the next day.
+    // Pull-to-refresh is the explicit way to load the next session immediately.
+    console.log('[Today] Finish: keeping initialLoadDone=true to prevent wrong-session rebuild');
   };
 
   // ── Injury warnings ──────────────────────────────────────────────────────────
