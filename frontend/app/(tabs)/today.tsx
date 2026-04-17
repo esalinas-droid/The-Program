@@ -2861,9 +2861,9 @@ export default function TodayScreen() {
         onConfirm={handleConfirmSwap}
       />
 
-      {/* ── READINESS CHECK MODAL ── */}
+      {/* ── READINESS CHECK MODAL — suppressed while celebration is visible ── */}
       <ReadinessModal
-        visible={showReadiness}
+        visible={showReadiness && !showSessionComplete}
         onSubmit={handleReadinessSubmit}
         onSkip={() => setShowReadiness(false)}
       />
