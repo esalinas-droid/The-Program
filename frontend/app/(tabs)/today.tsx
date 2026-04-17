@@ -1553,9 +1553,10 @@ export default function TodayScreen() {
   const [loadKey, setLoadKey] = useState(0);
 
   // ── AsyncStorage keys for persisting today's set values & logged state ───────
-  const SET_VALUES_KEY  = 'today_set_values';
-  const LOGGED_SETS_KEY = 'today_logged_sets';
-  const ADDED_SETS_KEY  = 'today_added_sets';  // Added sets survive tab switches
+  const SET_VALUES_KEY    = 'today_set_values';
+  const LOGGED_SETS_KEY   = 'today_logged_sets';
+  const ADDED_SETS_KEY    = 'today_added_sets';   // Added sets survive tab switches
+  const FINISHED_DATE_KEY = 'today_finished_date'; // Persists SESSION COMPLETE button state
 
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
@@ -1784,9 +1785,15 @@ export default function TodayScreen() {
             setLogEntryIds(parsed.entryIds            || {});
           } else {
             // Stale data from a previous day — remove it
-            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]);
+            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]);
             setSetValues({});
           }
+        }
+        // Restore sessionFinished state (SESSION COMPLETE ✓ button persists across remounts)
+        const savedFinishedDate = await AsyncStorage.getItem(FINISHED_DATE_KEY);
+        if (savedFinishedDate === todayStr) {
+          setSessionFinished(true);
+          isSessionFinished.current = true;
         }
         // (Added sets are now restored inline in useFocusEffect — no race condition)
         mountRestoreDone.current = true;
@@ -1979,10 +1986,12 @@ export default function TodayScreen() {
 
       // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
       if (lastLoadDate.current && lastLoadDate.current !== todayStr) {
-        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
+        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]).catch(() => {});
         setSetValues({});
         setLoggedSets(new Set());
         setLogEntryIds({});
+        setSessionFinished(false);
+        isSessionFinished.current = false;
         userEditedSets.current.clear(); // Fix 4: reset edit tracking for new day
       }
 
@@ -2572,6 +2581,8 @@ export default function TodayScreen() {
     });
     setShowSessionComplete(true);
     setSessionFinished(true); // hide FINISH SESSION button after completion
+    // Persist finish state so button stays "SESSION COMPLETE ✓" even if component remounts today
+    AsyncStorage.setItem(FINISHED_DATE_KEY, getLocalDateString()).catch(() => {});
 
     // ── Step 6: Do NOT reset load flags ─────────────────────────────────────────
     // CRITICAL: Resetting initialLoadDone = false here causes any subsequent
