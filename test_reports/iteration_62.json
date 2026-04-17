@@ -1,0 +1,62 @@
+{
+  "summary": "Frontend testing of 5 regression tests for user-values auto-adjusting bug fix in today.tsx. Tests cover: Add Set not resetting weights (TEST 1), tab switch preserving user values (TEST 2), logged values being immutable (TEST 3), finish session flow (TEST 4), and fresh session plan weights (TEST 5).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Today - FINISH SESSION celebration modal",
+        "issue": "After FINISH SESSION, the Pre-Session Check-In modal appears to render on top of the SESSION COMPLETE celebration modal, making celebration modal invisible. SESSION COMPLETE text is in DOM but not visually accessible to user.",
+        "testID": "N/A",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_results": {
+    "TEST_1_add_set_no_reset": {
+      "status": "PASS",
+      "detail": "Set 1 typed as 315 lbs. After Add Set: 315. After 2nd Add Set: 315. Weight not reset by Add Set action."
+    },
+    "TEST_2_tab_switch_preserves_values": {
+      "status": "PASS",
+      "detail": "Set 1=315, Set 2=295 typed. Switched to Schedule tab, back to Today. Set 1=315, Set 2=295 preserved (confirmed by screenshot)."
+    },
+    "TEST_3_logged_values_immutable": {
+      "status": "PASS",
+      "detail": "Set 1 logged as 285×5. Add Set pressed. Switched tabs. Set 1 still shows 285 readonly (green logged state)."
+    },
+    "TEST_4_finish_session": {
+      "status": "PARTIAL",
+      "detail": "FINISH SESSION triggered successfully (Pre-Session Check-In reappeared for new session). SESSION COMPLETE text detected in DOM. However, celebration modal was not visually visible - covered by Pre-Session Check-In overlay which renders on top."
+    },
+    "TEST_5_fresh_plan_weights": {
+      "status": "PASS",
+      "detail": "After fresh load: Sets 2-9 show plan weight 100 lbs. Set 1 shows 285 readonly (correctly reflects previously logged backend data from TEST 3). No ghost unlogged sets present."
+    }
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MEDIUM: Fix z-index/modal ordering issue where Pre-Session Check-In renders on top of SESSION COMPLETE celebration modal. After FINISH SESSION, the celebration should be the topmost modal before showing the new session check-in.",
+    "LOW: Weight inputs (lbs/reps) do not have data-testid attributes which makes automated testing harder. Consider adding testID to set row inputs."
+  ],
+  "critical_code_review_comments": [
+    "userEditedSets ref correctly reset on finish (line 2538: userEditedSets.current.clear())",
+    "AsyncStorage cleared with multiRemove after 200ms delay (line 2544) - race condition risk if component remounts within 200ms",
+    "loadMultiplier useEffect deps now correctly [loadMultiplier, autoAdjustOverride] without exercises (preventing Add Set/tab-switch resets)",
+    "exercisesRef used instead of exercises state in auto-adjust effects to break circular dependency"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A",
+    "frontend": "90% (4/5 fully passed, 1 partial - celebration modal visibility)"
+  },
+  "seed_data_creation": "Logged Set 1 of Speed Bench (285×5) for default user user_001 as part of TEST 3",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Core auto-adjust bug fixes verified working: Add Set no longer resets weights, tab switch preserves user values, logged sets are immutable. Minor issue: after FINISH SESSION, celebration modal (SESSION COMPLETE) is covered by Pre-Session Check-In which appears on top. The fixes (userEditedSets ref, exercisesRef in loadMultiplier useEffect, userEditedSets cleared on finish) are all functioning correctly."
+}

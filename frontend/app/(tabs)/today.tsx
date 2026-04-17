@@ -1547,6 +1547,7 @@ export default function TodayScreen() {
   const exercisesRef      = useRef<Exercise[]>([]);
   const lastLoadDate      = useRef('');
   const mountRestoreDone  = useRef(false); // Fix 5: prevent mount/focus race
+  const userEditedSets    = useRef<Set<string>>(new Set()); // Fix: track user-edited set IDs
   // Increment to force full reload even while screen is already focused (pull-to-refresh)
   const [loadKey, setLoadKey] = useState(0);
 
@@ -1979,6 +1980,7 @@ export default function TodayScreen() {
         setSetValues({});
         setLoggedSets(new Set());
         setLogEntryIds({});
+        userEditedSets.current.clear(); // Fix 4: reset edit tracking for new day
       }
 
       const prof = await getProfile();
@@ -2159,39 +2161,56 @@ export default function TodayScreen() {
     });
   }, [exercises]);
 
-  // ── Apply load multiplier to unlogged work sets ──────────────────────────────
+  // ── Apply load multiplier ONLY when loadMultiplier value actually changes ────
+  // CRITICAL: Do NOT include `exercises` in deps — that causes it to fire on
+  // every add-set, remove-set, and tab-switch, overwriting user-entered values.
+  // Use exercisesRef to read current exercises without creating a dependency.
   useEffect(() => {
-    if (loadMultiplier >= 1.0 || autoAdjustOverride || exercises.length === 0) return;
+    if (loadMultiplier >= 1.0 || autoAdjustOverride) return;
+    const currentExs = exercisesRef.current;
+    if (currentExs.length === 0) return;
     setSetValues(prev => {
       const updated = { ...prev };
-      exercises.forEach(ex => {
+      let changed = false;
+      currentExs.forEach(ex => {
         ex.sets.forEach(s => {
+          // Skip sets the user has manually edited or already logged
+          if (userEditedSets.current.has(s.id) || loggedSets.has(s.id)) return;
           if (s.type === 'work' && s.weight > 0) {
             const adjusted = Math.round((s.weight * loadMultiplier) / 5) * 5;
             if (adjusted > 0) {
               updated[s.id] = { ...(prev[s.id] || { reps: s.reps || '' }), weight: String(adjusted) };
+              changed = true;
             }
           }
         });
       });
-      return updated;
+      return changed ? updated : prev;
     });
-  }, [loadMultiplier, autoAdjustOverride, exercises]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadMultiplier, autoAdjustOverride]);
 
   // ── Restore original weights when override is activated ──────────────────────
   useEffect(() => {
-    if (!autoAdjustOverride || exercises.length === 0) return;
+    if (!autoAdjustOverride) return;
+    const currentExs = exercisesRef.current;
+    if (currentExs.length === 0) return;
     setSetValues(prev => {
       const restored = { ...prev };
-      exercises.forEach(ex => {
+      currentExs.forEach(ex => {
         ex.sets.forEach(s => {
+          // Skip logged sets — don't overwrite values the user already committed
+          if (loggedSets.has(s.id)) return;
           if (s.type === 'work' && s.weight > 0) {
             restored[s.id] = { ...(prev[s.id] || { reps: s.reps || '' }), weight: String(s.weight) };
           }
         });
       });
+      // Clear user-edited tracking since we're explicitly resetting to plan weights
+      userEditedSets.current.clear();
       return restored;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoAdjustOverride]);
 
   // ── Keep exercisesRef in sync with latest exercises state ────────────────────
@@ -2380,6 +2399,7 @@ export default function TodayScreen() {
   };
 
   const handleSetValueChange = (setId: string, field: 'weight' | 'reps', value: string) => {
+    userEditedSets.current.add(setId); // Fix: track user-edited sets to protect from auto-adjust
     setSetValues(prev => ({
       ...prev,
       [setId]: { ...(prev[setId] || { weight: '', reps: '' }), [field]: value },
@@ -2515,6 +2535,7 @@ export default function TodayScreen() {
     setLoggedSets(new Set());
     setLogEntryIds({});
     setSetValues({});
+    userEditedSets.current.clear(); // Fix 4: reset edit tracking for new session
 
     // ── Step 3: Clear AsyncStorage after a short delay ───────────────────────
     // The 200ms delay ensures the empty-state useEffects have already fired
