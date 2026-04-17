@@ -1548,6 +1548,7 @@ export default function TodayScreen() {
   const lastLoadDate      = useRef('');
   const mountRestoreDone  = useRef(false); // Fix 5: prevent mount/focus race
   const userEditedSets    = useRef<Set<string>>(new Set()); // Fix: track user-edited set IDs
+  const isSessionFinished = useRef(false); // Prevents persistence useEffects from re-writing after finish
   // Increment to force full reload even while screen is already focused (pull-to-refresh)
   const [loadKey, setLoadKey] = useState(0);
 
@@ -1800,6 +1801,7 @@ export default function TodayScreen() {
 
   // ── Persist setValues to AsyncStorage on every change ─────────────────────
   useEffect(() => {
+    if (isSessionFinished.current) return; // Don't persist after session is finished
     if (Object.keys(setValues).length > 0) {
       saveSetValuesToStorage(setValues);
     }
@@ -1808,6 +1810,7 @@ export default function TodayScreen() {
   // ── Persist loggedSets + logEntryIds to AsyncStorage on every change ───────
   // This replaces the manual save inside handleLog (closure-value bug removed)
   useEffect(() => {
+    if (isSessionFinished.current) return; // Don't persist after session is finished
     if (loggedSets.size > 0 || Object.keys(logEntryIds).length > 0) {
       saveLoggedSetsToStorage(loggedSets, logEntryIds);
     }
@@ -2138,6 +2141,7 @@ export default function TodayScreen() {
 
       initialLoadDone.current = true;
       lastLoadDate.current = todayStr;
+      isSessionFinished.current = false; // Allow persistence for the new session
       setLoading(false);
       setRefreshing(false);
     })();
@@ -2529,21 +2533,19 @@ export default function TodayScreen() {
     const finalLoggedCount = loggedSets.size;
     const finalSessionType = sessionType;
 
-    // ── Step 2: Clear React STATE first ──────────────────────────────────────
-    // Must happen BEFORE clearing AsyncStorage so the persistence useEffects
-    // see empty state and do NOT re-write stale data back to AsyncStorage.
-    setLoggedSets(new Set());
-    setLogEntryIds({});
-    setSetValues({});
-    userEditedSets.current.clear(); // Fix 4: reset edit tracking for new session
+    // ── Step 2: Keep visual state intact ─────────────────────────────────────
+    // DO NOT clear loggedSets, logEntryIds, or setValues here.
+    // The green checks and user-entered values should remain visible behind
+    // the celebration modal — user can see their completed workout on dismiss.
+    // Mark session as finished to prevent persistence useEffects from re-writing.
+    isSessionFinished.current = true;
+    userEditedSets.current.clear();
 
-    // ── Step 3: Clear AsyncStorage after a short delay ───────────────────────
-    // The 200ms delay ensures the empty-state useEffects have already fired
-    // (they won't re-write because loggedSets.size === 0 and setValues is empty).
-    setTimeout(async () => {
-      await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
-      console.log('[Today] Finish: AsyncStorage cleared');
-    }, 200);
+    // ── Step 3: Clear AsyncStorage for the NEXT session ──────────────────────
+    // isSessionFinished.current = true gates the persistence useEffects,
+    // so they will NOT re-write after this clear even with existing state.
+    AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY]).catch(() => {});
+    console.log('[Today] Finish: AsyncStorage cleared for next session');
 
     // ── Step 4: Notify backend that session is complete (non-critical) ───────
     try {
