@@ -1218,7 +1218,8 @@ function ExerciseCard({
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
   const total       = exercise.sets.length;
   const allDone     = loggedCount === total;
-  const displayName = swap?.replacement ?? exercise.name;
+  const rawName = swap?.replacement ?? exercise.name;
+  const displayName = rawName?.trim() ? rawName : getCategoryStyle(exercise.category).label;
   const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
   const cardBorderColor = inRemoveMode ? RED + '40' : inEditMode ? BLUE + '40' : COLORS.border;
 
@@ -2306,6 +2307,7 @@ export default function TodayScreen() {
     // If user logs more sets after finishing, allow them to re-finish
     if (sessionFinished) {
       setSessionFinished(false);
+      AsyncStorage.removeItem(FINISHED_DATE_KEY).catch(() => {});
     }
 
     // Determine rest duration: user selection > category default
@@ -2426,6 +2428,13 @@ export default function TodayScreen() {
 
   const handleAddSet = (exerciseId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // If user adds sets after finishing, re-enable the FINISH button
+    if (sessionFinished) {
+      setSessionFinished(false);
+      AsyncStorage.removeItem(FINISHED_DATE_KEY).catch(() => {});
+    }
+
     const ex = exercises.find(e => e.id === exerciseId);
     if (!ex) return;
     const lastSet  = ex.sets[ex.sets.length - 1];
