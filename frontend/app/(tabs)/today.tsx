@@ -179,7 +179,7 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
     .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
     .map((ex: any, idx: number) => ({
       id: ex.sessionExerciseId || `api-ex-${idx}`,
-      name: ex.name || 'Exercise',
+      name: (ex.name && /[a-zA-Z]{2,}/.test(ex.name)) ? ex.name : 'Exercise',
       category: (ex.category === 'main'
         ? (isDynamic ? 'speed' : 'primary')
         : ex.category === 'supplemental' ? 'supplemental'
@@ -1219,7 +1219,9 @@ function ExerciseCard({
   const total       = exercise.sets.length;
   const allDone     = loggedCount === total;
   const rawName = swap?.replacement ?? exercise.name;
-  const displayName = rawName?.trim() ? rawName : getCategoryStyle(exercise.category).label;
+  // Fallback: if name is empty, whitespace, or has no letters (e.g., "/" or "|"), use category label
+  const hasLetters = rawName && /[a-zA-Z]{2,}/.test(rawName);
+  const displayName = hasLetters ? rawName : getCategoryStyle(exercise.category).label;
   const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
   const cardBorderColor = inRemoveMode ? RED + '40' : inEditMode ? BLUE + '40' : COLORS.border;
 
