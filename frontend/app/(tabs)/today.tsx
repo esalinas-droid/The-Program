@@ -2285,7 +2285,9 @@ export default function TodayScreen() {
   const totalSets   = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
   const loggedCount = loggedSets.size;
   const progressPct = totalSets > 0 ? (loggedCount / totalSets) * 100 : 0;
-  const canFinish   = progressPct >= 50;
+  // Allow finish if user has logged at least 1 set (not percentage-based)
+  // This ensures added sets don't push the threshold out of reach
+  const canFinish   = loggedCount > 0;
 
   // Session header values
   const block        = getBlock(week);
@@ -2300,6 +2302,11 @@ export default function TodayScreen() {
   const handleLog = async (setId: string, exerciseName?: string, set?: ExSet) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoggedSets(prev => new Set([...prev, setId]));
+
+    // If user logs more sets after finishing, allow them to re-finish
+    if (sessionFinished) {
+      setSessionFinished(false);
+    }
 
     // Determine rest duration: user selection > category default
     const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
