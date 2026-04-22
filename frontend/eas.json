@@ -20,13 +20,13 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-backend.emergent.sh"
+        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.preview.emergentagent.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-backend.emergent.sh"
+        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.preview.emergentagent.com"
       }
     }
   },
