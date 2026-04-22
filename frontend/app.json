@@ -11,7 +11,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.theprogram.app",
+      "bundleIdentifier": "com.theprogramapp.ai",
       "icon": "./assets/logo-icon.png",
       "infoPlist": {
         "NSUserNotificationUsageDescription": "Get training reminders and PR alerts",
@@ -26,7 +26,7 @@
         "backgroundColor": "#0A0A0C"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.theprogram.app",
+      "package": "com.theprogramapp.ai",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
