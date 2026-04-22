@@ -2,6 +2,7 @@
   "expo": {
     "name": "The Program",
     "slug": "the-program-app",
+    "owner": "the_program",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/logo-icon.png",
