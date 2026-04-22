@@ -1,7 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { getProgramSession } from '../data/programData';
 import { DELOAD_WEEKS } from './calculations';
 import { AthleteProfile } from '../types';
 
@@ -43,17 +42,11 @@ export async function scheduleDailyReminder(
   const hour = parseInt(hourStr, 10);
   const minute = parseInt(minuteStr, 10);
 
-  // Compute tomorrow's day name
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const tomorrowIndex = (new Date().getDay() + 1) % 7;
-  const tomorrowDay = days[tomorrowIndex];
-
-  // Skip Sunday (off day) — show Monday's session instead
-  const sessionDay = tomorrowDay === 'Sunday' ? 'Monday' : tomorrowDay;
-  const session = getProgramSession(currentWeek, sessionDay);
-
+  // Generic reminder — the user's personalized session details are shown
+  // on the Today page when they open the app. Notifications can't dynamically
+  // change content per day, so we keep the message generic.
   const title = 'Training Tomorrow';
-  const body = `${sessionDay}: ${session.sessionType} — ${session.mainLift}. ${session.topSetScheme.split(';')[0]}.`;
+  const body = 'Check your program for tomorrow\'s session. Stay consistent!';
 
   const id = await Notifications.scheduleNotificationAsync({
     content: { title, body, sound: true },
