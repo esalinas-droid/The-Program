@@ -112,6 +112,10 @@ async def generate_plan_with_rag(intake, openai_client, supabase_client):
 
     injuries_str = ", ".join(injuries_list) if injuries_list else "None"
 
+    current_program_section = ""
+    if intake.currentProgram and intake.currentProgram.strip():
+        current_program_section = f"\n- Current Program: {intake.currentProgram.strip()[:1000]}"
+
     prompt = f"""Based on the sports science research below, suggest evidence-based adjustments for this athlete's training plan.
 
 ATHLETE PROFILE:
@@ -119,7 +123,7 @@ ATHLETE PROFILE:
 - Experience: {intake.experience or 'intermediate'}
 - Injuries/Limitations: {injuries_str}
 - Training frequency: {intake.frequency or 4} days/week
-- 1RMs: Squat {getattr(intake.lifts, 'squat', None) or 'unknown'}, Bench {getattr(intake.lifts, 'bench', None) or 'unknown'}, Deadlift {getattr(intake.lifts, 'deadlift', None) or 'unknown'} {intake.liftUnit}
+- 1RMs: Squat {getattr(intake.lifts, 'squat', None) or 'unknown'}, Bench {getattr(intake.lifts, 'bench', None) or 'unknown'}, Deadlift {getattr(intake.lifts, 'deadlift', None) or 'unknown'} {intake.liftUnit}{current_program_section}
 
 RESEARCH CONTEXT:
 {rag_context}
@@ -137,6 +141,7 @@ Return ONLY a JSON object — no markdown, no explanation:
 
 Rules:
 - ONLY suggest exercise_adjustments when athlete has injuries (injuries_str != "None")
+- If athlete provided a Current Program description, prioritize exercises and structure from their existing program in your recommendations
 - Max 3 exercise_adjustments, max 2 prehab_additions
 - category values: main, supplemental, accessory, or prehab
 - If no injury-based adjustments needed, return empty exercise_adjustments array

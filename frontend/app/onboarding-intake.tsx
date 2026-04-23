@@ -15,7 +15,7 @@ import { getStoredUser, getAuthToken } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 12;
 
 const STEP_META = [
   {
@@ -77,6 +77,12 @@ const STEP_META = [
     question:  "Tell me about your\nrecovery quality.",
     subtext:   "This directly affects your volume prescription.",
     canSkip:   false,
+  },
+  {
+    greeting:  "One more thing.",
+    question:  "Do you have a current\nworkout program?",
+    subtext:   "Describe it and we'll build around what's already working for you. Or skip to let the AI design from scratch.",
+    canSkip:   true,
   },
   {
     greeting:  "Almost there.",
@@ -285,8 +291,8 @@ export default function OnboardingIntake() {
   const [competitionType,  setCompetitionType] = useState('');
   const [competitionDate,  setCompetitionDate] = useState('');
 
-  // Step 11 — Upload
-  // (Step 11 upload removed — fake upload step deleted)
+  // Step 11 — Current Program (optional)
+  const [currentProgram,   setCurrentProgram]  = useState('');
 
   // ── Animation refs ──────────────────────────────────────────────────────────
   const containerFade = useRef(new Animated.Value(1)).current;
@@ -344,7 +350,8 @@ export default function OnboardingIntake() {
       case 8:  return true; // optional, can skip
       case 9:  return injuries.length > 0;
       case 10: return !!selectedSleep && !!stressLevel && !!occupationType;
-      case 11: return gymTypes.length > 0 && hasCompetition !== null;
+      case 11: return true; // optional, can skip — current program
+      case 12: return gymTypes.length > 0 && hasCompetition !== null;
       default: return false;
     }
   };
@@ -468,6 +475,7 @@ export default function OnboardingIntake() {
         competitionType:    hasCompetition ? competitionType : undefined,
         preferredDays:      selectedDays,
         hasCompetition:     !!hasCompetition,
+        currentProgram:     currentProgram.trim() || undefined,
       };
       // CHECK 3: Verify auth token exists before calling backend
       const _token = await getAuthToken();
@@ -1001,6 +1009,36 @@ export default function OnboardingIntake() {
     </View>
   );
 
+  // Current Program step (optional)
+  const renderProgramStep = () => (
+    <View style={{ paddingHorizontal: 4 }}>
+      <TextInput
+        style={{
+          backgroundColor: '#1A1A1E',
+          borderWidth: 1.5,
+          borderColor: currentProgram.trim() ? COLORS.accent : COLORS.border,
+          borderRadius: RADIUS.lg,
+          padding: SPACING.lg,
+          fontSize: 15,
+          color: COLORS.text.primary,
+          minHeight: 160,
+          textAlignVertical: 'top',
+          lineHeight: 22,
+        }}
+        value={currentProgram}
+        onChangeText={setCurrentProgram}
+        placeholder={"Example:\nMonday: Squat 5x5, RDL 3x10, Leg Press 3x12\nTuesday: Bench 5x5, OHP 3x8, Rows 4x10\nThursday: Deadlift 3x3, Front Squat 3x8\nFriday: Incline Press 4x8, Pull-ups 4x8, Arms"}
+        placeholderTextColor={COLORS.text.muted + '80'}
+        multiline
+        autoFocus
+        autoCorrect={false}
+      />
+      <Text style={{ fontSize: 12, color: COLORS.text.muted, marginTop: SPACING.sm, textAlign: 'center' }}>
+        Include exercises, sets, reps, and which days. The AI will build around this.
+      </Text>
+    </View>
+  );
+
   // Step 10 — Gym types + Competition
   const renderStep10 = () => (
     <View style={{ gap: SPACING.xl }}>
@@ -1100,7 +1138,8 @@ export default function OnboardingIntake() {
       case 8:  return renderStep7();
       case 9:  return renderStep8();
       case 10: return renderStep9();
-      case 11: return renderStep10();
+      case 11: return renderProgramStep();
+      case 12: return renderStep10();
       default: return null;
     }
   };

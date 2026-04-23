@@ -392,6 +392,7 @@ class IntakeRequest(BaseModel):
     preferredDays: List[str] = []   # e.g. ["monday", "wednesday", "friday"]
     name: Optional[str] = None
     programStartDate: Optional[str] = None  # Local date "YYYY-MM-DD" from frontend
+    currentProgram: Optional[str] = None    # User's existing workout program description
 
 class LogSetRequest(BaseModel):
     sessionExerciseId: str
