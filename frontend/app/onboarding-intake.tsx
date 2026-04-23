@@ -15,9 +15,15 @@ import { getStoredUser, getAuthToken } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 10;
+const TOTAL_STEPS = 11;
 
 const STEP_META = [
+  {
+    greeting:  "Welcome to The Program.",
+    question:  "What's your name?",
+    subtext:   "So your coach knows who they're working with.",
+    canSkip:   false,
+  },
   {
     greeting:  "Let's get to know each other.",
     question:  "What's your primary\ntraining goal?",
@@ -235,7 +241,10 @@ export default function OnboardingIntake() {
   const [step,         setStep]        = useState(1);
   const [saving,       setSaving]      = useState(false);
 
-  // Step 1 — Goal
+  // Step 1 — Name
+  const [userName,     setUserName]    = useState('');
+
+  // Step 2 — Goal
   const [goal,         setGoal]        = useState('');
 
   // Step 2 — Experience
@@ -325,16 +334,17 @@ export default function OnboardingIntake() {
   // ── Validation ─────────────────────────────────────────────────────────────
   const canContinue = (): boolean => {
     switch (step) {
-      case 1:  return !!goal;
-      case 2:  return !!experience;
-      case 3:  return Object.values(lifts).some(v => v.trim() !== '');
-      case 4:  return bodyweight.trim() !== '' && parseFloat(bodyweight) > 0;
-      case 5:  return trainingDays > 0 && selectedDays.length === trainingDays;
-      case 6:  return true; // optional, can skip
+      case 1:  return userName.trim().length >= 2;
+      case 2:  return !!goal;
+      case 3:  return !!experience;
+      case 4:  return Object.values(lifts).some(v => v.trim() !== '');
+      case 5:  return bodyweight.trim() !== '' && parseFloat(bodyweight) > 0;
+      case 6:  return trainingDays > 0 && selectedDays.length === trainingDays;
       case 7:  return true; // optional, can skip
-      case 8:  return injuries.length > 0;
-      case 9:  return !!selectedSleep && !!stressLevel && !!occupationType;
-      case 10: return gymTypes.length > 0 && hasCompetition !== null;
+      case 8:  return true; // optional, can skip
+      case 9:  return injuries.length > 0;
+      case 10: return !!selectedSleep && !!stressLevel && !!occupationType;
+      case 11: return gymTypes.length > 0 && hasCompetition !== null;
       default: return false;
     }
   };
@@ -408,7 +418,7 @@ export default function OnboardingIntake() {
 
       // 1. Save locally — keeps offline fallback
       await saveProfile({
-        name:            authUser?.name || 'Athlete',
+        name:            userName.trim() || authUser?.name || 'Athlete',
         goal:            GOAL_MAP[goal] || goal,
         experience,
         basePRs:         currentLifts,
@@ -471,6 +481,7 @@ export default function OnboardingIntake() {
       // 3. Sync all new fields to MongoDB profile (non-blocking)
       try {
         await profileApi.update({
+          name:              userName.trim() || 'Athlete',
           experience,
           currentBodyweight: bwNum,
           bw12WeekGoal:      bw12wNum,
@@ -524,6 +535,34 @@ export default function OnboardingIntake() {
   };
 
   // ── Step renderers ─────────────────────────────────────────────────────────
+
+  // Name step
+  const renderNameStep = () => (
+    <View style={{ paddingHorizontal: 4 }}>
+      <TextInput
+        style={{
+          backgroundColor: '#1A1A1E',
+          borderWidth: 1.5,
+          borderColor: userName.trim().length >= 2 ? COLORS.accent : COLORS.border,
+          borderRadius: RADIUS.lg,
+          padding: SPACING.lg,
+          fontSize: 22,
+          fontWeight: '600' as any,
+          color: COLORS.text.primary,
+          textAlign: 'center',
+        }}
+        value={userName}
+        onChangeText={setUserName}
+        placeholder="Your first name"
+        placeholderTextColor={COLORS.text.muted}
+        autoFocus
+        autoCapitalize="words"
+        autoCorrect={false}
+        returnKeyType="next"
+        onSubmitEditing={() => { if (userName.trim().length >= 2) goNext(); }}
+      />
+    </View>
+  );
 
   // Step 1 — Goal
   const renderStep1 = () => (
@@ -1051,16 +1090,17 @@ export default function OnboardingIntake() {
 
   const renderContent = () => {
     switch (step) {
-      case 1:  return renderStep1();
-      case 2:  return renderStep2();
-      case 3:  return renderStep3();
-      case 4:  return renderStep4();
-      case 5:  return renderStep5();
-      case 6:  return renderStep6();
-      case 7:  return renderStep7();
-      case 8:  return renderStep8();
-      case 9:  return renderStep9();
-      case 10: return renderStep10();
+      case 1:  return renderNameStep();
+      case 2:  return renderStep1();
+      case 3:  return renderStep2();
+      case 4:  return renderStep3();
+      case 5:  return renderStep4();
+      case 6:  return renderStep5();
+      case 7:  return renderStep6();
+      case 8:  return renderStep7();
+      case 9:  return renderStep8();
+      case 10: return renderStep9();
+      case 11: return renderStep10();
       default: return null;
     }
   };
