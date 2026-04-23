@@ -2,20 +2,23 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Platform, Animated,
-  TextInput, ActivityIndicator, Alert,
+  TextInput, ActivityIndicator, Alert, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
-import { programApi, profileApi } from '../src/utils/api';
+import { programApi, profileApi, uploadApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { getStoredUser, getAuthToken } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 12;
+const TOTAL_STEPS = 13;
 
 const STEP_META = [
   {
@@ -70,6 +73,12 @@ const STEP_META = [
     greeting:  "Your coach needs to know what to work around.",
     question:  "Any injuries or pain\nto manage?",
     subtext:   "Select all that apply. Your program will work around these.",
+    canSkip:   true,
+  },
+  {
+    greeting:  "This helps your coach keep you safe.",
+    question:  "Any medical documents\nto share?",
+    subtext:   "Upload X-rays, doctor's notes, or PT reports. Your coach will use these to protect you. Completely optional.",
     canSkip:   true,
   },
   {
@@ -293,6 +302,14 @@ export default function OnboardingIntake() {
 
   // Step 11 — Current Program (optional)
   const [currentProgram,   setCurrentProgram]  = useState('');
+  const [programFiles,     setProgramFiles]    = useState<{uri: string; name: string; type: string}[]>([]);
+  const [programMode,      setProgramMode]     = useState<'upload'|'type'|'skip'|null>(null);
+  const [analyzingProgram, setAnalyzingProgram] = useState(false);
+
+  // Step 10 — Medical Documents (optional)
+  const [medicalFiles,     setMedicalFiles]    = useState<{uri: string; name: string; type: string}[]>([]);
+  const [analyzingMedical, setAnalyzingMedical] = useState(false);
+  const [medicalAnalysis,  setMedicalAnalysis] = useState<string>('');
 
   // ── Animation refs ──────────────────────────────────────────────────────────
   const containerFade = useRef(new Animated.Value(1)).current;
@@ -349,9 +366,10 @@ export default function OnboardingIntake() {
       case 7:  return true; // optional, can skip
       case 8:  return true; // optional, can skip
       case 9:  return injuries.length > 0;
-      case 10: return !!selectedSleep && !!stressLevel && !!occupationType;
-      case 11: return true; // optional, can skip — current program
-      case 12: return gymTypes.length > 0 && hasCompetition !== null;
+      case 10: return true; // optional — medical documents
+      case 11: return !!selectedSleep && !!stressLevel && !!occupationType;
+      case 12: return true; // optional, can skip — current program
+      case 13: return gymTypes.length > 0 && hasCompetition !== null;
       default: return false;
     }
   };
@@ -422,6 +440,41 @@ export default function OnboardingIntake() {
       const cleanEquip    = specialtyEquipment.filter(e => e !== 'None of the above');
 
       console.log('[Onboarding] Step 1 — Saving profile locally...');
+
+      // 1a. Process uploaded files (non-blocking — results saved to profile by backend)
+      if (programFiles.length > 0 || medicalFiles.length > 0) {
+        console.log('[Onboarding] Processing uploaded files...');
+        try {
+          const convertToBase64 = async (files: {uri: string; name: string; type: string}[]) => {
+            const results = [];
+            for (const f of files) {
+              try {
+                const base64 = await FileSystem.readAsStringAsync(f.uri, { encoding: FileSystem.EncodingType.Base64 });
+                results.push({ data: base64, name: f.name, mimeType: f.type });
+              } catch (err) { console.warn('[Onboarding] File read failed:', f.name, err); }
+            }
+            return results;
+          };
+          if (programFiles.length > 0) {
+            const b64Files = await convertToBase64(programFiles);
+            if (b64Files.length > 0) {
+              uploadApi.analyzeProgram(b64Files, currentProgram.trim() || undefined).catch(err =>
+                console.warn('[Onboarding] Program upload analysis failed (non-critical):', err)
+              );
+            }
+          }
+          if (medicalFiles.length > 0) {
+            const b64Files = await convertToBase64(medicalFiles);
+            if (b64Files.length > 0) {
+              uploadApi.analyzeMedical(b64Files).catch(err =>
+                console.warn('[Onboarding] Medical upload analysis failed (non-critical):', err)
+              );
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('[Onboarding] Upload processing failed (non-critical):', uploadErr);
+        }
+      }
 
       // 1. Save locally — keeps offline fallback
       await saveProfile({
@@ -1009,33 +1062,205 @@ export default function OnboardingIntake() {
     </View>
   );
 
-  // Current Program step (optional)
+  // ── File picker helpers ─────────────────────────────────────────────────────
+  const pickDocument = async (target: 'program' | 'medical') => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/*', 'application/vnd.ms-excel',
+               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const file = { uri: asset.uri, name: asset.name || 'document', type: asset.mimeType || 'application/octet-stream' };
+        if (target === 'program') setProgramFiles(prev => [...prev, file]);
+        else setMedicalFiles(prev => [...prev, file]);
+        haptic();
+      }
+    } catch (err) { console.warn('Document pick failed:', err); }
+  };
+
+  const pickImage = async (target: 'program' | 'medical', source: 'camera' | 'library') => {
+    try {
+      if (source === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) { Alert.alert('Camera Permission', 'Please enable camera access in Settings.'); return; }
+      }
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ quality: 0.8 })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8 });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const name = asset.fileName || `photo_${Date.now()}.jpg`;
+        const file = { uri: asset.uri, name, type: asset.mimeType || 'image/jpeg' };
+        if (target === 'program') setProgramFiles(prev => [...prev, file]);
+        else setMedicalFiles(prev => [...prev, file]);
+        haptic();
+      }
+    } catch (err) { console.warn('Image pick failed:', err); }
+  };
+
+  // ── Medical documents step ────────────────────────────────────────────────
+  const renderMedicalStep = () => (
+    <View style={{ paddingHorizontal: 4 }}>
+      {/* Privacy notice */}
+      <View style={{ backgroundColor: '#5B9BF515', borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.lg, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+        <MaterialCommunityIcons name="lock-outline" size={18} color="#5B9BF5" />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#5B9BF5', marginBottom: 2 }}>Your data is private</Text>
+          <Text style={{ fontSize: 11, color: COLORS.text.secondary, lineHeight: 16 }}>
+            Medical documents are encrypted and only used by the AI to personalize your program. Never shared or sold.
+          </Text>
+        </View>
+      </View>
+
+      {/* Upload area */}
+      <View style={{ borderWidth: 2, borderStyle: 'dashed', borderColor: medicalFiles.length > 0 ? '#FF6B6B' : COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.xl, alignItems: 'center', marginBottom: SPACING.lg }}>
+        <MaterialCommunityIcons name="hospital-box-outline" size={40} color={COLORS.text.muted} />
+        <Text style={{ fontSize: 14, fontWeight: '700', color: COLORS.text.primary, marginTop: SPACING.sm }}>Upload medical documents</Text>
+        <Text style={{ fontSize: 12, color: COLORS.text.muted, textAlign: 'center', marginTop: 4 }}>X-rays, MRIs, doctor's notes, PT reports</Text>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: SPACING.lg }}>
+          <TouchableOpacity onPress={() => pickImage('medical', 'camera')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <MaterialCommunityIcons name="camera" size={16} color={COLORS.text.primary} />
+            <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Camera</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => pickDocument('medical')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <MaterialCommunityIcons name="file-document-outline" size={16} color={COLORS.text.primary} />
+            <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Files</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => pickImage('medical', 'library')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <MaterialCommunityIcons name="image-outline" size={16} color={COLORS.text.primary} />
+            <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Photos</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Uploaded files list */}
+      {medicalFiles.length > 0 && (
+        <View style={{ marginBottom: SPACING.md }}>
+          <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 8 }}>UPLOADED ({medicalFiles.length})</Text>
+          {medicalFiles.map((f, i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
+              <MaterialCommunityIcons name={f.type.includes('pdf') ? 'file-pdf-box' : 'image'} size={24} color="#FF6B6B" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
+                <Text style={{ fontSize: 11, color: '#4DCEA6' }}>🔒 Encrypted</Text>
+              </View>
+              <TouchableOpacity onPress={() => setMedicalFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // Current Program step (optional) — with file upload
   const renderProgramStep = () => (
     <View style={{ paddingHorizontal: 4 }}>
-      <TextInput
-        style={{
-          backgroundColor: '#1A1A1E',
-          borderWidth: 1.5,
-          borderColor: currentProgram.trim() ? COLORS.accent : COLORS.border,
-          borderRadius: RADIUS.lg,
-          padding: SPACING.lg,
-          fontSize: 15,
-          color: COLORS.text.primary,
-          minHeight: 160,
-          textAlignVertical: 'top',
-          lineHeight: 22,
-        }}
-        value={currentProgram}
-        onChangeText={setCurrentProgram}
-        placeholder={"Example:\nMonday: Squat 5x5, RDL 3x10, Leg Press 3x12\nTuesday: Bench 5x5, OHP 3x8, Rows 4x10\nThursday: Deadlift 3x3, Front Squat 3x8\nFriday: Incline Press 4x8, Pull-ups 4x8, Arms"}
-        placeholderTextColor={COLORS.text.muted + '80'}
-        multiline
-        autoFocus
-        autoCorrect={false}
-      />
-      <Text style={{ fontSize: 12, color: COLORS.text.muted, marginTop: SPACING.sm, textAlign: 'center' }}>
-        Include exercises, sets, reps, and which days. The AI will build around this.
-      </Text>
+      {!programMode && (
+        <View style={{ gap: 10 }}>
+          <TouchableOpacity onPress={() => setProgramMode('upload')} style={{ backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="file-upload-outline" size={28} color={COLORS.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary }}>Upload Program Files</Text>
+              <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginTop: 2 }}>Photos, PDFs, spreadsheets of your current routine</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setProgramMode('type')} style={{ backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="keyboard-outline" size={28} color={COLORS.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary }}>Type / Paste It</Text>
+              <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginTop: 2 }}>Describe your current split in your own words</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setProgramMode('skip')} style={{ backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="auto-fix" size={28} color={COLORS.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary }}>Start Fresh with AI</Text>
+              <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginTop: 2 }}>No existing program — build one from scratch</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {programMode === 'upload' && (
+        <View>
+          <View style={{ borderWidth: 2, borderStyle: 'dashed', borderColor: programFiles.length > 0 ? COLORS.accent : COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.xl, alignItems: 'center', marginBottom: SPACING.lg }}>
+            <MaterialCommunityIcons name="file-plus-outline" size={40} color={COLORS.text.muted} />
+            <Text style={{ fontSize: 14, fontWeight: '700', color: COLORS.text.primary, marginTop: SPACING.sm }}>Upload your workout program</Text>
+            <Text style={{ fontSize: 12, color: COLORS.text.muted, textAlign: 'center', marginTop: 4 }}>PDF, images, Excel, screenshots — anything with your program</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: SPACING.lg }}>
+              <TouchableOpacity onPress={() => pickImage('program', 'camera')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MaterialCommunityIcons name="camera" size={16} color={COLORS.text.primary} />
+                <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Camera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => pickDocument('program')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MaterialCommunityIcons name="file-document-outline" size={16} color={COLORS.text.primary} />
+                <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Files</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => pickImage('program', 'library')} style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MaterialCommunityIcons name="image-outline" size={16} color={COLORS.text.primary} />
+                <Text style={{ fontSize: 12, color: COLORS.text.primary, fontWeight: '600' }}>Photos</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {programFiles.length > 0 && (
+            <View style={{ marginBottom: SPACING.md }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 8 }}>UPLOADED ({programFiles.length})</Text>
+              {programFiles.map((f, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
+                  <MaterialCommunityIcons name={f.type.includes('pdf') ? 'file-pdf-box' : f.type.includes('image') ? 'image' : 'file-excel-box'} size={24} color={COLORS.accent} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#4DCEA6' }}>Ready to analyze</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setProgramFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                    <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity onPress={() => { setProgramMode(null); setProgramFiles([]); }} style={{ flex: 1, padding: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, alignItems: 'center' }}>
+              <Text style={{ color: COLORS.text.secondary, fontSize: 14, fontWeight: '600' }}>Back</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {programMode === 'type' && (
+        <View>
+          <TextInput
+            style={{ backgroundColor: '#1A1A1E', borderWidth: 1.5, borderColor: currentProgram.trim() ? COLORS.accent : COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.lg, fontSize: 15, color: COLORS.text.primary, minHeight: 160, textAlignVertical: 'top', lineHeight: 22 }}
+            value={currentProgram}
+            onChangeText={setCurrentProgram}
+            placeholder={"Monday: Squat 5x5, RDL 3x10, Leg Press 3x12\nTuesday: Bench 5x5, OHP 3x8, Rows 4x10\nThursday: Deadlift 3x3, Front Squat 3x8\nFriday: Incline Press 4x8, Pull-ups 4x8"}
+            placeholderTextColor={COLORS.text.muted + '80'}
+            multiline
+            autoFocus
+            autoCorrect={false}
+          />
+          <Text style={{ fontSize: 12, color: COLORS.text.muted, marginTop: SPACING.sm, textAlign: 'center' }}>
+            Include exercises, sets, reps, and which days
+          </Text>
+          <TouchableOpacity onPress={() => setProgramMode(null)} style={{ marginTop: SPACING.md, padding: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, alignItems: 'center' }}>
+            <Text style={{ color: COLORS.text.secondary, fontSize: 14, fontWeight: '600' }}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {programMode === 'skip' && (
+        <View style={{ alignItems: 'center', padding: 30 }}>
+          <MaterialCommunityIcons name="auto-fix" size={48} color={COLORS.accent} />
+          <Text style={{ fontSize: 16, fontWeight: '700', color: COLORS.text.primary, marginTop: SPACING.md }}>We'll build your program from scratch</Text>
+          <Text style={{ fontSize: 13, color: COLORS.text.secondary, marginTop: 8, textAlign: 'center' }}>Based on your goals, experience, and schedule</Text>
+        </View>
+      )}
     </View>
   );
 
@@ -1137,9 +1362,10 @@ export default function OnboardingIntake() {
       case 7:  return renderStep6();
       case 8:  return renderStep7();
       case 9:  return renderStep8();
-      case 10: return renderStep9();
-      case 11: return renderProgramStep();
-      case 12: return renderStep10();
+      case 10: return renderMedicalStep();
+      case 11: return renderStep9();
+      case 12: return renderProgramStep();
+      case 13: return renderStep10();
       default: return null;
     }
   };

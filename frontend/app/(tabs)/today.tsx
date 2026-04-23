@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   ActivityIndicator, Animated, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform,
-  RefreshControl, Alert,
+  RefreshControl, Alert, Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureRef } from 'react-native-view-shot';
@@ -1282,6 +1282,16 @@ function ExerciseCard({
       {/* ── Expanded body ── */}
       {expanded && (
         <>
+          {/* ── Watch Form Video Button ── */}
+          <TouchableOpacity
+            onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(displayName + ' exercise proper form technique')}`)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignSelf: 'flex-start' }}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="play-circle-outline" size={18} color={COLORS.accent} />
+            <Text style={{ fontSize: 12, color: COLORS.accent, fontWeight: '700' as any }}>WATCH FORM</Text>
+          </TouchableOpacity>
+
           {/* ── Rest Period Selector (between header and set rows) ── */}
           {restConfig && (
             <RestSelector
@@ -1530,6 +1540,7 @@ export default function TodayScreen() {
   const [editModeExId, setEditModeExId]     = useState<string | null>(null);
   const [logEntryIds, setLogEntryIds]       = useState<Record<string, string>>({});
   const [warmupExpanded, setWarmupExpanded] = useState(false);
+  const [warmupLogged, setWarmupLogged] = useState<Set<number>>(new Set());
   const [warmupData, setWarmupData] = useState<{
     title: string;
     sessionFocus: string;
@@ -1539,6 +1550,10 @@ export default function TodayScreen() {
     hasInjuryModifications: boolean;
     extended: boolean;
   } | null>(null);
+
+  // Cooldown
+  const [cooldownExpanded, setCooldownExpanded] = useState(false);
+  const [cooldownLogged, setCooldownLogged] = useState<Set<number>>(new Set());
 
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
@@ -2790,16 +2805,46 @@ export default function TodayScreen() {
                 <Text style={s.warmupReadinessNoteText}>{warmupData.readinessNote}</Text>
               </View>
             ) : null}
-            {(warmupData?.steps ?? WARMUP_STEPS.map(st => `${st.name} — ${st.sets}`)).map((step, i) => (
-              <View key={i} style={s.warmupStep}>
-                <View style={s.warmupStepNum}>
-                  <Text style={s.warmupStepNumText}>{i + 1}</Text>
+            {(warmupData?.steps ?? WARMUP_STEPS.map(st => `${st.name} — ${st.sets}`)).map((step, i) => {
+              const done = warmupLogged.has(i);
+              const exerciseName = step.split('—')[0].split('–')[0].trim();
+              return (
+                <View key={i} style={[s.warmupStep, { alignItems: 'center' }]}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setWarmupLogged(prev => {
+                        const next = new Set(prev);
+                        if (next.has(i)) next.delete(i); else next.add(i);
+                        return next;
+                      });
+                    }}
+                    style={[s.warmupStepNum, done && { backgroundColor: '#4DCEA620', borderColor: '#4DCEA6' }]}
+                  >
+                    {done
+                      ? <MaterialCommunityIcons name="check" size={12} color="#4DCEA6" />
+                      : <Text style={s.warmupStepNumText}>{i + 1}</Text>
+                    }
+                  </TouchableOpacity>
+                  <View style={[s.warmupStepInfo, { flex: 1 }]}>
+                    <Text style={[s.warmupStepName, done && { color: '#4DCEA6' }]}>{step}</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(exerciseName + ' exercise form')}`)}
+                    style={{ backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 3 }}
+                  >
+                    <MaterialCommunityIcons name="play-circle-outline" size={14} color={COLORS.accent} />
+                    <Text style={{ fontSize: 9, color: COLORS.accent, fontWeight: '700' as any }}>FORM</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={s.warmupStepInfo}>
-                  <Text style={s.warmupStepName}>{step}</Text>
-                </View>
-              </View>
-            ))}
+              );
+            })}
+            {/* Warm-up progress */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, gap: 6 }}>
+              <Text style={{ fontSize: 11, color: warmupLogged.size === (warmupData?.steps?.length ?? WARMUP_STEPS.length) ? '#4DCEA6' : COLORS.text.muted, fontWeight: '700' as any }}>
+                {warmupLogged.size}/{warmupData?.steps?.length ?? WARMUP_STEPS.length} complete
+              </Text>
+            </View>
           </View>
         )}
 
@@ -2845,6 +2890,72 @@ export default function TodayScreen() {
             }}
           />
         ))}
+
+        {/* ── COOLDOWN SECTION ── */}
+        <View style={{ marginHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' }}>
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCooldownExpanded(e => !e); }}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md }}
+            activeOpacity={0.8}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ backgroundColor: '#4DCEA620', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
+                <Text style={{ fontSize: 10, fontWeight: '800' as any, color: '#4DCEA6', letterSpacing: 0.5 }}>COOLDOWN</Text>
+              </View>
+              <Text style={{ fontSize: 10, fontWeight: '800' as any, color: COLORS.text.muted }}>~10 MIN</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ backgroundColor: cooldownLogged.size >= 4 ? '#4DCEA620' : COLORS.accent + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800' as any, color: cooldownLogged.size >= 4 ? '#4DCEA6' : COLORS.accent }}>
+                  {cooldownLogged.size}/4
+                </Text>
+              </View>
+              <MaterialCommunityIcons name={cooldownExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={COLORS.text.muted} />
+            </View>
+          </TouchableOpacity>
+
+          {cooldownExpanded && (
+            <View style={{ paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg }}>
+              {[
+                { name: 'Backward Sled Drag / Walk', rx: '6 trips × 40ft or 5 min walk', type: 'cardio' },
+                { name: 'Hip Flexor Stretch', rx: '2×45s per side', type: 'mobility' },
+                { name: 'Foam Roll Major Muscle Groups', rx: '2 min per area', type: 'recovery' },
+                { name: 'Deep Breathing / Box Breathing', rx: '2 min — 4 count in, 4 hold, 4 out', type: 'recovery' },
+              ].map((item, i) => {
+                const done = cooldownLogged.has(i);
+                return (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: i > 0 ? 1 : 0, borderTopColor: COLORS.border }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setCooldownLogged(prev => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; });
+                      }}
+                      style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: done ? '#4DCEA6' : COLORS.border, backgroundColor: done ? '#4DCEA620' : 'transparent', justifyContent: 'center', alignItems: 'center' }}
+                    >
+                      {done && <MaterialCommunityIcons name="check" size={14} color="#4DCEA6" />}
+                    </TouchableOpacity>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600' as any, color: done ? '#4DCEA6' : COLORS.text.primary }}>{item.name}</Text>
+                        <View style={{ backgroundColor: item.type === 'cardio' ? '#FF6B3520' : item.type === 'mobility' ? '#4DCEA620' : COLORS.accent + '20', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 8, fontWeight: '700' as any, color: item.type === 'cardio' ? '#FF6B35' : item.type === 'mobility' ? '#4DCEA6' : COLORS.accent }}>{item.type.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 12, color: COLORS.text.muted }}>{item.rx}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(item.name + ' exercise')}`)}
+                      style={{ backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 3 }}
+                    >
+                      <MaterialCommunityIcons name="play-circle-outline" size={14} color={COLORS.accent} />
+                      <Text style={{ fontSize: 9, color: COLORS.accent, fontWeight: '700' as any }}>FORM</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
 
         <View style={{ height: SPACING.xl }} />
       </ScrollView>

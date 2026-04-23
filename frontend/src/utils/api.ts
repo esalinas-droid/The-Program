@@ -155,6 +155,14 @@ export const analyticsApi = {
   compliance: () => api('/analytics/compliance'),
 };
 
+// Upload Processing
+export const uploadApi = {
+  analyzeProgram: (files: Array<{data: string; name: string; mimeType: string}>, context?: string) =>
+    api('/profile/upload-program', { method: 'POST', body: JSON.stringify({ files, context }) }),
+  analyzeMedical: (files: Array<{data: string; name: string; mimeType: string}>, context?: string) =>
+    api('/profile/upload-medical', { method: 'POST', body: JSON.stringify({ files, context }) }),
+};
+
 // Substitutions
 export const substitutionApi = {
   log: (data: {

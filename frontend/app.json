@@ -58,7 +58,15 @@
           "sounds": []
         }
       ],
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow The Program to take photos of your workout program and medical documents.",
+          "photosPermission": "Allow The Program to access your photos for uploading workout programs and medical documents."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

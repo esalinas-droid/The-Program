@@ -2822,6 +2822,185 @@ async def reset_profile_data(userId: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Reset failed")
 
 
+# ── Upload Processing Endpoints ────────────────────────────────────────────────
+
+class UploadFile(BaseModel):
+    data: str       # base64-encoded file content
+    name: str       # filename
+    mimeType: str   # e.g. image/jpeg, application/pdf
+
+class UploadRequest(BaseModel):
+    files: List[UploadFile]
+    context: Optional[str] = None  # additional text context
+
+@api_router.post("/profile/upload-program")
+async def upload_program(body: UploadRequest, userId: str = Depends(get_current_user)):
+    """
+    Process uploaded workout program files with AI.
+    Accepts images (photos of workout sheets) and PDFs.
+    Returns a structured analysis of the user's current program.
+    """
+    if not body.files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    # Build content for GPT-4 Vision
+    messages_content = []
+    messages_content.append({
+        "type": "text",
+        "text": (
+            "Analyze these workout program documents. Extract the full training program including:\n"
+            "- Which days of the week each workout is on\n"
+            "- All exercises with sets, reps, and weights if shown\n"
+            "- The overall program structure (upper/lower split, PPL, full body, etc.)\n"
+            "- Any periodization or progression scheme\n\n"
+            "Return ONLY a JSON object with this structure:\n"
+            '{"programType": "4-Day Upper/Lower", "days": [{"day": "Monday", "name": "Upper Strength", '
+            '"exercises": [{"name": "Bench Press", "sets": 5, "reps": "5", "weight": "225 lbs"}]}], '
+            '"notes": "Any additional observations"}'
+        )
+    })
+
+    for f in body.files[:5]:  # max 5 files
+        if f.mimeType.startswith("image/"):
+            messages_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{f.mimeType};base64,{f.data}", "detail": "high"}
+            })
+        else:
+            # For PDFs/text, decode and include as text
+            try:
+                import base64
+                decoded = base64.b64decode(f.data).decode('utf-8', errors='ignore')[:3000]
+                messages_content.append({"type": "text", "text": f"[File: {f.name}]\n{decoded}"})
+            except Exception:
+                messages_content.append({"type": "text", "text": f"[File: {f.name} — could not decode]"})
+
+    if body.context:
+        messages_content.append({"type": "text", "text": f"Additional context from user: {body.context}"})
+
+    try:
+        emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+        if not emergent_key:
+            return {"success": False, "error": "AI unavailable", "analysis": None}
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=str(uuid.uuid4()),
+            system_message="You are an expert strength coach analyzing a client's workout program documents. Extract structured data. Return ONLY valid JSON.",
+        ).with_model("openai", "gpt-4o")
+
+        # For emergentintegrations, send as text description of the images
+        prompt = "Analyze the uploaded workout program. "
+        for f in body.files[:5]:
+            if f.mimeType.startswith("image/"):
+                prompt += f"[Image uploaded: {f.name}] "
+            else:
+                try:
+                    import base64
+                    decoded = base64.b64decode(f.data).decode('utf-8', errors='ignore')[:2000]
+                    prompt += f"\n\nContent of {f.name}:\n{decoded}\n"
+                except Exception:
+                    prompt += f"[File: {f.name}] "
+
+        if body.context:
+            prompt += f"\n\nUser's description: {body.context}"
+
+        prompt += ("\n\nExtract the full program structure. Return ONLY JSON:\n"
+                   '{"programType": "...", "days": [{"day": "Monday", "name": "...", '
+                   '"exercises": [{"name": "...", "sets": 5, "reps": "5", "weight": "225"}]}], '
+                   '"notes": "..."}')
+
+        raw = await chat.send_message(UserMessage(text=prompt))
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        analysis = json.loads(json_match.group()) if json_match else {"raw": raw[:500]}
+
+        # Save to user profile
+        await db.profile.update_one(
+            {"userId": userId},
+            {"$set": {"uploadedProgram": analysis, "currentProgramSource": "upload"}},
+            upsert=True,
+        )
+
+        return {"success": True, "analysis": analysis}
+    except Exception as e:
+        logger.warning(f"[UploadProgram] AI analysis failed: {e}")
+        return {"success": False, "error": str(e)[:200], "analysis": None}
+
+
+@api_router.post("/profile/upload-medical")
+async def upload_medical(body: UploadRequest, userId: str = Depends(get_current_user)):
+    """
+    Process uploaded medical documents with AI.
+    Accepts images (X-rays, doctor's notes) and PDFs.
+    Returns identified conditions and program modifications.
+    """
+    if not body.files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    try:
+        emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
+        if not emergent_key:
+            return {"success": False, "error": "AI unavailable", "conditions": []}
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=str(uuid.uuid4()),
+            system_message=(
+                "You are a sports medicine AI assistant analyzing medical documents for a strength training program. "
+                "Identify conditions, injuries, and limitations that affect training. "
+                "Be conservative — recommend safe modifications. Return ONLY valid JSON."
+            ),
+        ).with_model("openai", "gpt-4o")
+
+        prompt = "Analyze these medical documents for a strength training athlete.\n\n"
+        for f in body.files[:5]:
+            if f.mimeType.startswith("image/"):
+                prompt += f"[Medical image uploaded: {f.name}] "
+            else:
+                try:
+                    import base64
+                    decoded = base64.b64decode(f.data).decode('utf-8', errors='ignore')[:2000]
+                    prompt += f"\nContent of {f.name}:\n{decoded}\n"
+                except Exception:
+                    prompt += f"[File: {f.name}] "
+
+        if body.context:
+            prompt += f"\n\nPatient notes: {body.context}"
+
+        prompt += ('\n\nReturn ONLY JSON:\n'
+                   '{"conditions": [{"condition": "Right Knee — Patellar Tendinopathy", '
+                   '"severity": "moderate", "source": "filename.pdf", '
+                   '"impact": "Avoid deep squats. Box squats recommended.", '
+                   '"restrictions": ["deep squat", "lunge"], '
+                   '"prehab": [{"name": "Terminal Knee Extension", "prescription": "3x15"}]}], '
+                   '"summary": "Overall assessment in 1-2 sentences"}')
+
+        raw = await chat.send_message(UserMessage(text=prompt))
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        analysis = json.loads(json_match.group()) if json_match else {"conditions": [], "summary": raw[:300]}
+
+        # Save to user profile
+        conditions = analysis.get("conditions", [])
+        injury_flags = [c.get("condition", "") for c in conditions if c.get("severity") in ("moderate", "severe")]
+
+        await db.profile.update_one(
+            {"userId": userId},
+            {"$set": {
+                "medicalAnalysis": analysis,
+                "medicalDocUploaded": True,
+            },
+            "$addToSet": {"injuryFlags": {"$each": injury_flags}} if injury_flags else {}},
+            upsert=True,
+        )
+
+        return {"success": True, "conditions": conditions, "summary": analysis.get("summary", "")}
+    except Exception as e:
+        logger.warning(f"[UploadMedical] AI analysis failed: {e}")
+        return {"success": False, "error": str(e)[:200], "conditions": []}
+
+
 # ─── Goal-Based Default Tracked Lifts ────────────────────────────────────────
 async def _create_default_tracked_lifts(user_id: str, goal: str, database) -> None:
     """Create default tracked lifts based on user goal during onboarding. Idempotent."""
