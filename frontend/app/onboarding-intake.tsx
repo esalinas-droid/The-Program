@@ -327,18 +327,18 @@ export default function OnboardingIntake() {
     qFade.setValue(0);     qSlide.setValue(20);
     oFade.setValue(0);     oSlide.setValue(20);
     containerFade.setValue(1);
-    Animated.stagger(85, [
+    Animated.stagger(120, [
       Animated.parallel([
-        Animated.timing(greetFade,  { toValue: 1, duration: 300, useNativeDriver: true }),
-        Animated.spring(greetSlide, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
+        Animated.timing(greetFade,  { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(greetSlide, { toValue: 0, duration: 350, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(qFade,  { toValue: 1, duration: 300, useNativeDriver: true }),
-        Animated.spring(qSlide, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
+        Animated.timing(qFade,  { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(qSlide, { toValue: 0, duration: 350, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(oFade,  { toValue: 1, duration: 300, useNativeDriver: true }),
-        Animated.spring(oSlide, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
+        Animated.timing(oFade,  { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(oSlide, { toValue: 0, duration: 350, useNativeDriver: true }),
       ]),
     ]).start();
   };
@@ -346,7 +346,12 @@ export default function OnboardingIntake() {
   const transition = (newStep: number) => {
     Animated.timing(containerFade, { toValue: 0, duration: 140, useNativeDriver: true }).start(() => {
       setStep(newStep);
-      animateIn();
+      // Delay animateIn to let React finish rendering the new step on Android
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          animateIn();
+        }, Platform.OS === 'android' ? 80 : 10);
+      });
     });
   };
 
