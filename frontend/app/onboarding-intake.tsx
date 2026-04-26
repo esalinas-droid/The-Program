@@ -322,6 +322,14 @@ export default function OnboardingIntake() {
 
   useEffect(() => { animateIn(); }, []);
 
+  // Warm up the backend as soon as onboarding starts. The hosting proxy can
+  // 404 on a cold-start, so we trigger a wake-up call now while the user
+  // spends a few minutes filling out the form. We don't care about the
+  // result — just that the container is awake by the time the user submits.
+  useEffect(() => {
+    profileApi.get().catch(() => { /* warmup-only; ignore errors */ });
+  }, []);
+
   const animateIn = () => {
     greetFade.setValue(0); greetSlide.setValue(20);
     qFade.setValue(0);     qSlide.setValue(20);

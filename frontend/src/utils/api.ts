@@ -1,27 +1,114 @@
+import { router } from 'expo-router';
 import {
   AthleteProfile,
   IntakeData, AnnualPlan, TodaySessionResponse, LogSetData,
   PostWorkoutReviewData, ExerciseAlternative, ProgramChangeEntry
 } from '../types';
-import { getAuthToken } from './auth';
+import { getAuthToken, clearAuth } from './auth';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
-async function api(path: string, options?: RequestInit) {
+// ── 401 handling ─────────────────────────────────────────────────────────────
+// On any 401 from the backend (token missing/invalid/expired), we clear stored
+// auth and redirect to the login screen. We guard against multiple concurrent
+// 401s firing the redirect more than once with a module-level flag.
+let _redirectingToAuth = false;
+async function handleUnauthorized(): Promise<void> {
+  if (_redirectingToAuth) return;
+  _redirectingToAuth = true;
+  try {
+    await clearAuth();
+  } catch {/* ignore */}
+  try {
+    router.replace('/auth');
+  } catch {/* ignore — router may not be mounted yet */}
+  // Reset the guard after a tick so subsequent fresh sessions can redirect again
+  setTimeout(() => { _redirectingToAuth = false; }, 1500);
+}
+
+// ── Retry config ─────────────────────────────────────────────────────────────
+// The hosting proxy occasionally returns 404 "404 page not found" (Go default)
+// or 502/503/504 when the backend container is cold-starting. These are
+// distinguishable from real app errors because:
+//   • Real FastAPI 404s return JSON like {"detail":"Not Found"}
+//   • Real app 404s have content-type: application/json
+//   • Proxy 404s are plain text and originate from outside the app
+// We retry transient gateway errors and proxy-style 404s, but never real app 4xx.
+type ApiOptions = RequestInit & { retry?: { attempts?: number; baseDelayMs?: number } };
+
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+function isProxy404(status: number, contentType: string | null, body: string): boolean {
+  // Proxy returns plain text "404 page not found" rather than JSON.
+  if (status !== 404) return false;
+  const ct = (contentType || '').toLowerCase();
+  if (ct.includes('application/json')) return false; // real FastAPI 404
+  return /404\s*page\s*not\s*found/i.test(body);
+}
+
+async function api(path: string, options?: ApiOptions) {
+  const attempts     = options?.retry?.attempts     ?? 1;   // 1 = no retry by default
+  const baseDelayMs  = options?.retry?.baseDelayMs  ?? 1500;
+
+  // Strip our custom field so it isn't passed to fetch()
+  const { retry: _retry, ...fetchOptions } = options || {};
+
   const token = await getAuthToken();
   const authHeader = token ? { 'Authorization': `Bearer ${token}` } : {};
-  const res = await fetch(`${BASE}/api${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeader,
-    },
-    ...options,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${path} error ${res.status}: ${text}`);
+
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(`${BASE}/api${path}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeader,
+        },
+        ...fetchOptions,
+      });
+
+      if (res.ok) {
+        return res.json();
+      }
+
+      // 401 = expired/invalid token. Clear auth, redirect to login, and stop.
+      // Never retry a 401 — retrying with the same dead token is pointless.
+      if (res.status === 401) {
+        await handleUnauthorized();
+        const text = await res.text().catch(() => '');
+        throw new Error(`API ${path} error 401: ${text || 'unauthorized'}`);
+      }
+
+      const text = await res.text();
+      const ct   = res.headers.get('content-type');
+      const transient =
+        TRANSIENT_GATEWAY_STATUSES.has(res.status) ||
+        isProxy404(res.status, ct, text);
+
+      if (transient && attempt < attempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1); // 1.5s, 3s, 6s...
+        console.log(`[API] Transient ${res.status} on ${path} — retry ${attempt}/${attempts - 1} in ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+
+      throw new Error(`API ${path} error ${res.status}: ${text}`);
+    } catch (err: any) {
+      // fetch() throws TypeError on network failure — retry those too
+      const isNetworkErr = err instanceof TypeError;
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (isNetworkErr && attempt < attempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`[API] Network error on ${path} — retry ${attempt}/${attempts - 1} in ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+      throw lastErr;
+    }
   }
-  return res.json();
+  // Unreachable, but TS wants it
+  throw lastErr ?? new Error(`API ${path} failed after ${attempts} attempts`);
 }
 
 // Profile
@@ -106,8 +193,14 @@ export const coachApi = {
 
 export const programApi = {
   // Intake → generates 12-month plan
+  // Uses retry-with-backoff because this is a heavy first-touch call that often
+  // hits a cold-starting backend; transient proxy 404s/502s are common here.
   submitIntake: (data: IntakeData): Promise<{ success: boolean; profile: any; plan: AnnualPlan }> =>
-    api('/profile/intake', { method: 'POST', body: JSON.stringify(data) }),
+    api('/profile/intake', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      retry: { attempts: 4, baseDelayMs: 2000 }, // ~2s, 4s, 8s = up to ~14s of recovery time
+    }),
 
   // Planning
   getYearPlan: (): Promise<AnnualPlan> => api('/plan/year'),
