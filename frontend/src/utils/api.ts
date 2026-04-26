@@ -1,11 +1,30 @@
+import { router } from 'expo-router';
 import {
   AthleteProfile,
   IntakeData, AnnualPlan, TodaySessionResponse, LogSetData,
   PostWorkoutReviewData, ExerciseAlternative, ProgramChangeEntry
 } from '../types';
-import { getAuthToken } from './auth';
+import { getAuthToken, clearAuth } from './auth';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+
+// ── 401 handling ─────────────────────────────────────────────────────────────
+// On any 401 from the backend (token missing/invalid/expired), we clear stored
+// auth and redirect to the login screen. We guard against multiple concurrent
+// 401s firing the redirect more than once with a module-level flag.
+let _redirectingToAuth = false;
+async function handleUnauthorized(): Promise<void> {
+  if (_redirectingToAuth) return;
+  _redirectingToAuth = true;
+  try {
+    await clearAuth();
+  } catch {/* ignore */}
+  try {
+    router.replace('/auth');
+  } catch {/* ignore — router may not be mounted yet */}
+  // Reset the guard after a tick so subsequent fresh sessions can redirect again
+  setTimeout(() => { _redirectingToAuth = false; }, 1500);
+}
 
 // ── Retry config ─────────────────────────────────────────────────────────────
 // The hosting proxy occasionally returns 404 "404 page not found" (Go default)
@@ -51,6 +70,14 @@ async function api(path: string, options?: ApiOptions) {
 
       if (res.ok) {
         return res.json();
+      }
+
+      // 401 = expired/invalid token. Clear auth, redirect to login, and stop.
+      // Never retry a 401 — retrying with the same dead token is pointless.
+      if (res.status === 401) {
+        await handleUnauthorized();
+        const text = await res.text().catch(() => '');
+        throw new Error(`API ${path} error 401: ${text || 'unauthorized'}`);
       }
 
       const text = await res.text();
