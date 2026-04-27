@@ -19,7 +19,14 @@
         "UIBackgroundModes": [
           "remote-notification"
         ]
-      }
+      },
+      "entitlements": {
+        "aps-environment": "production",
+        "com.apple.developer.applesignin": [
+          "Default"
+        ]
+      },
+      "buildNumber": "20"
     },
     "android": {
       "adaptiveIcon": {
@@ -70,6 +77,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "22450607-155d-450e-a3ad-5dfa37664b96"
+      }
     }
   }
 }

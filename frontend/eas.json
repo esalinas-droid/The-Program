@@ -20,13 +20,16 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.preview.emergentagent.com"
+        "EXPO_PUBLIC_BACKEND_URL": "https://d7nqsjr.emergentagent.com"
       }
     },
     "production": {
       "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.preview.emergentagent.com"
+        "EXPO_PUBLIC_BACKEND_URL": "https://d7nqsjr.emergentagent.com"
       }
     }
   },
@@ -34,8 +37,11 @@
     "production": {
       "ios": {
         "appleId": "ericsalinas017@gmail.com",
-        "ascAppId": "",
-        "appleTeamId": "SXDPX89KF5"
+        "appleTeamId": "SXDPX89KF5",
+        "ascAppId": "6763180157",
+        "ascApiKeyPath": "./AuthKey_W7HDN34HS7.p8",
+        "ascApiKeyIssuerId": "10f56536-c775-4f35-9a83-f53d37bd46d6",
+        "ascApiKeyId": "W7HDN34HS7"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json"
