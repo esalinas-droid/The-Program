@@ -119,6 +119,19 @@ export const profileApi = {
   reset: () => api('/profile/reset', { method: 'POST' }),
 };
 
+// Auth — endpoints under /api/auth that aren't login/register (those are
+// handled separately because they need to return the JWT for caller storage).
+export const authApi = {
+  /**
+   * Update user preferences (marketing opt-in, etc.). Goes through the api()
+   * helper so it picks up retry, 401 handling, and auth headers automatically.
+   * Audit Bug #7 fix: settings.tsx previously used raw fetch() which bypassed
+   * all of that — errors were silently swallowed and a 401 wouldn't redirect.
+   */
+  updatePreferences: (data: { marketingOptIn?: boolean }) =>
+    api('/auth/preferences', { method: 'PUT', body: JSON.stringify(data) }),
+};
+
 // Log
 export const logApi = {
   list: (params?: { week?: number; exercise?: string; startDate?: string; endDate?: string }) => {

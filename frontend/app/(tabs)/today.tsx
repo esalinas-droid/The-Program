@@ -1790,27 +1790,39 @@ export default function TodayScreen() {
     (async () => {
       try {
         const todayStr    = getLocalDateString();
-        // Restore set values
-        const savedVals   = await AsyncStorage.getItem(SET_VALUES_KEY);
-        if (savedVals) {
-          const parsed = JSON.parse(savedVals);
-          if (parsed && typeof parsed === 'object') {
-            setSetValues(prev => ({ ...prev, ...parsed }));
-          }
-        }
-        // Restore logged sets (only if date matches today)
+
+        // Audit Bug #9 fix: previously, stale setValues from a prior day
+        // would only get cleared if LOGGED_SETS_KEY existed AND its date was
+        // stale. If LOGGED_SETS_KEY was missing entirely (e.g., user closed
+        // the app before logging anything), the prior-day weights/reps would
+        // get restored into today's session. Now we check loggedSets date
+        // first and use it to decide whether to keep ANY stored state.
         const savedLogged = await AsyncStorage.getItem(LOGGED_SETS_KEY);
+        let dateValid = false;
+        let parsedLogged: any = null;
         if (savedLogged) {
-          const parsed = JSON.parse(savedLogged);
-          if (parsed?.date === todayStr) {
-            setLoggedSets(new Set(parsed.loggedSetIds  || []));
-            setLogEntryIds(parsed.entryIds            || {});
-          } else {
-            // Stale data from a previous day — remove it
-            await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]);
-            setSetValues({});
-          }
+          parsedLogged = JSON.parse(savedLogged);
+          dateValid = parsedLogged?.date === todayStr;
         }
+
+        if (!dateValid) {
+          // No valid same-day session data — wipe all related keys to avoid
+          // leaking yesterday's weights/reps into today's UI.
+          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]);
+          setSetValues({});
+        } else {
+          // Same-day data — restore both setValues and loggedSets.
+          const savedVals = await AsyncStorage.getItem(SET_VALUES_KEY);
+          if (savedVals) {
+            const parsed = JSON.parse(savedVals);
+            if (parsed && typeof parsed === 'object') {
+              setSetValues(prev => ({ ...prev, ...parsed }));
+            }
+          }
+          setLoggedSets(new Set(parsedLogged.loggedSetIds  || []));
+          setLogEntryIds(parsedLogged.entryIds            || {});
+        }
+
         // Restore sessionFinished state (SESSION COMPLETE ✓ button persists across remounts)
         const savedFinishedDate = await AsyncStorage.getItem(FINISHED_DATE_KEY);
         if (savedFinishedDate === todayStr) {
@@ -2322,7 +2334,12 @@ export default function TodayScreen() {
     || "Drive through today's session with full intent. Build deliberately to your peak and leave no doubt in those supplemental sets.";
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
-  const handleLog = async (setId: string, exerciseName?: string, set?: ExSet) => {
+  // Audit Bug #8 fix: exerciseName and set were typed as optional, but the
+  // optimistic UI update on line below this happens BEFORE the if-guard that
+  // checks for exerciseName. If a future caller is added without those args,
+  // the set would appear logged on screen but never persist to the server.
+  // Tightening the types so TypeScript catches that mistake at compile time.
+  const handleLog = async (setId: string, exerciseName: string, set: ExSet) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setLoggedSets(prev => new Set([...prev, setId]));
 
@@ -2510,10 +2527,16 @@ export default function TodayScreen() {
     const weight  = parseFloat(vals?.weight || '0') || 0;
     const reps    = parseInt(vals?.reps || '1') || 1;
     const setIdx  = ex.sets.findIndex(s => s.id === setId);
+    // Audit Bug #6 fix: capture old entry id BEFORE deleting, so we can roll
+    // back logEntryIds if the new entry create fails. Previously, if delete
+    // succeeded but create failed (network blip, validation error), the old
+    // id was forgotten and the set looked logged on screen but the server
+    // had no record.
+    const oldEntryId = logEntryIds[setId];
     try {
       // BUG 3 fix: delete old entry first to prevent duplicates
-      if (logEntryIds[setId]) {
-        await logApi.delete(logEntryIds[setId]).catch(() => {});
+      if (oldEntryId) {
+        await logApi.delete(oldEntryId).catch(() => {});
       }
       const todayStr  = getLocalDateString();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -2525,8 +2548,17 @@ export default function TodayScreen() {
       });
       if (result?._id || result?.id) {
         setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      } else {
+        // No id back from server — treat as failure, drop stale id from state
+        setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
       }
-    } catch (e) { console.warn('[Today] Edit save failed:', e); }
+    } catch (e) {
+      console.warn('[Today] Edit save failed:', e);
+      // Roll back: drop the stale id (the old entry was deleted, the new one
+      // didn't land). User will see the set as un-logged on next refresh and
+      // can retry. Better than showing it as logged when it isn't.
+      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+    }
   };
 
   const handleToggleExpand = (exId: string) => {

@@ -183,6 +183,13 @@ export default function AuthScreen() {
       setError('Password must be at least 8 characters.');
       return;
     }
+    // Audit Bug #10 fix: enforce name on register so the backend doesn't
+    // silently substitute the email prefix as the name (which would show up
+    // as "john" instead of the user's chosen name in the Home greeting).
+    if (mode === 'register' && !name.trim()) {
+      setError('Please enter your name.');
+      return;
+    }
     setLoading(true);
     try {
       const endpoint = mode === 'register' ? '/register' : '/login';
