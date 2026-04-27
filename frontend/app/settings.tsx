@@ -8,9 +8,9 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
-import { profileApi, planApi, InjuryPreviewResult } from '../src/utils/api';
+import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
 import { AthleteProfile } from '../src/types';
-import { clearAuth, getAuthToken, getStoredUser } from '../src/utils/auth';
+import { clearAuth, getStoredUser } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -432,15 +432,16 @@ export default function SettingsScreen() {
               onValueChange={async (val) => {
                 setMarketingOptIn(val);
                 try {
-                  const token = await getAuthToken();
-                  if (token) {
-                    await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL || ''}/api/auth/preferences`, {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                      body: JSON.stringify({ marketingOptIn: val }),
-                    });
-                  }
-                } catch {}
+                  // Audit Bug #7 fix: route through authApi.updatePreferences
+                  // so it picks up retry/401 handling like every other call.
+                  // Previously this used raw fetch() which silently swallowed
+                  // errors — toggle would appear to work but never persist.
+                  await authApi.updatePreferences({ marketingOptIn: val });
+                } catch (e) {
+                  console.warn('[Settings] marketing pref update failed:', e);
+                  // Roll back the visual toggle so it matches the actual state
+                  setMarketingOptIn(!val);
+                }
               }}
               trackColor={{ false: COLORS.surfaceHighlight, true: COLORS.accent }}
               thumbColor={COLORS.text.primary}

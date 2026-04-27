@@ -289,18 +289,18 @@ export default function OnboardingIntake() {
   // Step 8 — Injuries
   const [injuries, setInjuries] = useState<string[]>([]);
 
-  // Step 9 — Recovery profile
+  // Step 11 — Recovery profile (sleep / stress / occupation)
   const [selectedSleep,    setSelectedSleep]   = useState('');
   const [stressLevel,      setStressLevel]     = useState('');
   const [occupationType,   setOccupationType]  = useState('');
 
-  // Step 10 — Gym + Competition
+  // Step 13 — Gym + Competition (last step before Build My Program)
   const [gymTypes,         setGymTypes]        = useState<string[]>([]);
   const [hasCompetition,   setHasCompetition]  = useState<boolean | null>(null);
   const [competitionType,  setCompetitionType] = useState('');
   const [competitionDate,  setCompetitionDate] = useState('');
 
-  // Step 11 — Current Program (optional)
+  // Step 12 — Current Program (optional)
   const [currentProgram,   setCurrentProgram]  = useState('');
   const [programFiles,     setProgramFiles]    = useState<{uri: string; name: string; type: string}[]>([]);
   const [programMode,      setProgramMode]     = useState<'upload'|'type'|'skip'|null>(null);
