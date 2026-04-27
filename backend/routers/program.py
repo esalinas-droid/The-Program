@@ -42,211 +42,14 @@ def _id():
     return str(uuid.uuid4())[:12]
 
 
-# ─── Profile / Intake ────────────────────────────────────────────────────────
-
-@program_router.post("/profile/intake")
-async def submit_intake(intake: IntakeRequest, userId: str = Depends(get_current_user)):
-    """Save onboarding intake and generate 12-month plan."""
-    user_id = userId
-
-    # Create/update profile
-    profile = UserProfile(
-        userId=user_id,
-        goal=GoalType(intake.goal) if intake.goal in [g.value for g in GoalType] else GoalType.STRENGTH,
-        experience=ExperienceLevel(intake.experience) if intake.experience in [e.value for e in ExperienceLevel] else ExperienceLevel.INTERMEDIATE,
-        currentLifts=intake.lifts,
-        liftUnit=intake.liftUnit,
-        bodyweight=intake.bodyweight,
-        trainingDays=intake.frequency,
-        injuries=intake.injuries,
-        gymTypes=intake.gym,
-        onboardingComplete=True,
-    )
-    _store["profiles"][user_id] = profile
-
-    # Generate plan
-    plan = generate_plan(intake)
-    plan.userId = user_id
-    _store["plans"][user_id] = plan
-
-    # Persist plan to MongoDB so it survives server restarts
-    try:
-        plan_dict = plan.model_dump(mode='json')
-        plan_dict['_saved_at'] = datetime.utcnow().isoformat()
-        await db.saved_plans.replace_one({"userId": user_id}, plan_dict, upsert=True)
-    except Exception:
-        pass  # Non-critical — plan is in memory
-
-    # Mark onboarding as complete in db.users (if this is an authenticated user)
-    if user_id != DEFAULT_USER:
-        await db.users.update_one(
-            {"userId": user_id},
-            {"$set": {"onboardingComplete": True, "goal": intake.goal, "experience": intake.experience}},
-        )
-
-    # Create initial coach memory facts from intake
-    facts = []
-    if intake.injuries and "None" not in intake.injuries:
-        for injury in intake.injuries:
-            facts.append(CoachMemoryFact(
-                factId=_id(), userId=user_id,
-                factType="injury", factValue=injury,
-                source="onboarding", confirmed=True,
-            ))
-    if intake.gym:
-        facts.append(CoachMemoryFact(
-            factId=_id(), userId=user_id,
-            factType="equipment", factValue=", ".join(intake.gym),
-            source="onboarding", confirmed=True,
-        ))
-    _store["memory_facts"].extend(facts)
-
-    # Log initial program change
-    _store["changes"].append(ProgramChange(
-        changeId=_id(), userId=user_id,
-        triggerType=ChangeTrigger.USER_REQUEST,
-        scope=ChangeScope.YEAR,
-        oldValue="No program",
-        newValue=plan.planName,
-        explanation=f"Generated {plan.planName} based on your {intake.goal} goal as a {intake.experience}-level lifter training {intake.frequency} days/week.",
-    ))
-
-    return {
-        "success": True,
-        "profile": profile.model_dump(),
-        "plan": plan.model_dump(),
-    }
-
-
-
-# ─── Planning ─────────────────────────────────────────────────────────────────
-
-@program_router.get("/plan/year")
-async def get_year_plan(userId: str = Depends(get_current_user)):
-    """Get the full annual plan with phases."""
-    plan = _store["plans"].get(userId)
-    if not plan:
-        raise HTTPException(status_code=404, detail="No plan found. Complete onboarding first.")
-    return plan.model_dump()
-
-
-@program_router.get("/plan/block/current")
-async def get_current_block(userId: str = Depends(get_current_user)):
-    """Get the current active block with weeks and sessions."""
-    plan = _store["plans"].get(userId)
-    if not plan:
-        raise HTTPException(status_code=404, detail="No plan found.")
-
-    for phase in plan.phases:
-        if phase.status == PhaseStatus.CURRENT:
-            for block in phase.blocks:
-                if block.status == PhaseStatus.CURRENT:
-                    return {
-                        "phase": {
-                            "name": phase.phaseName,
-                            "number": phase.phaseNumber,
-                            "goal": phase.goal,
-                            "adaptation": phase.expectedAdaptation,
-                        },
-                        "block": block.model_dump(),
-                    }
-
-    # Fallback: return first block
-    if plan.phases and plan.phases[0].blocks:
-        phase = plan.phases[0]
-        block = phase.blocks[0]
-        return {
-            "phase": {
-                "name": phase.phaseName,
-                "number": phase.phaseNumber,
-                "goal": phase.goal,
-                "adaptation": phase.expectedAdaptation,
-            },
-            "block": block.model_dump(),
-        }
-
-    raise HTTPException(status_code=404, detail="No active block found.")
-
-
-@program_router.get("/plan/session/today")
-async def get_today_session(userId: str = Depends(get_current_user)):
-    """Get today's session with exercises, targets, and last performance."""
-    plan = _store["plans"].get(userId)
-    if not plan:
-        raise HTTPException(status_code=404, detail="No plan found.")
-
-    # Calculate today's day number (Monday=1, Tuesday=2, ... Sunday=7)
-    today_day = datetime.now().weekday() + 1  # weekday() returns 0=Mon
-
-    # Training calendar: maps calendar day → expected session type
-    # Monday=ME Lower, Tuesday=ME Upper, Thursday=DE Lower, Friday=DE Upper
-    TRAINING_CALENDAR = {
-        1: "Max Effort Lower",   # Monday
-        2: "Max Effort Upper",   # Tuesday
-        4: "Dynamic Effort Lower",  # Thursday
-        5: "Dynamic Effort Upper",  # Friday
-    }
-
-    # Find current phase → current block → session matching today's day
-    for phase in plan.phases:
-        if phase.status == PhaseStatus.CURRENT:
-            for block in phase.blocks:
-                if block.status == PhaseStatus.CURRENT:
-                    for week in block.weeks:
-                        # First try: match today's exact day number
-                        for session in week.sessions:
-                            if session.dayNumber == today_day and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
-                                return {
-                                    "phase": phase.phaseName,
-                                    "block": block.blockName,
-                                    "week": f"Week {week.weekNumber}",
-                                    "session": session.model_dump(),
-                                }
-                        # Second try: match by training calendar session type
-                        # (handles existing plans where dayNumbers are 1-4 not matching calendar days)
-                        expected_type = TRAINING_CALENDAR.get(today_day)
-                        if expected_type:
-                            for session in week.sessions:
-                                if session.sessionType == expected_type and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
-                                    return {
-                                        "phase": phase.phaseName,
-                                        "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}",
-                                        "session": session.model_dump(),
-                                    }
-                        # Third try: find next upcoming planned session (for rest days like Wed/Sat/Sun)
-                        for session in week.sessions:
-                            if session.dayNumber >= today_day and session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
-                                return {
-                                    "phase": phase.phaseName,
-                                    "block": block.blockName,
-                                    "week": f"Week {week.weekNumber}",
-                                    "session": session.model_dump(),
-                                }
-                        # Fourth try: first planned session in the week
-                        for session in week.sessions:
-                            if session.status in [SessionStatus.PLANNED, SessionStatus.IN_PROGRESS]:
-                                return {
-                                    "phase": phase.phaseName,
-                                    "block": block.blockName,
-                                    "week": f"Week {week.weekNumber}",
-                                    "session": session.model_dump(),
-                                }
-
-    # Fallback: first session in plan
-    if plan.phases and plan.phases[0].blocks and plan.phases[0].blocks[0].weeks:
-        phase = plan.phases[0]
-        block = phase.blocks[0]
-        week = block.weeks[0]
-        if week.sessions:
-            return {
-                "phase": phase.phaseName,
-                "block": block.blockName,
-                "week": f"Week {week.weekNumber}",
-                "session": week.sessions[0].model_dump(),
-            }
-
-    raise HTTPException(status_code=404, detail="No session found for today.")
+# NOTE: The following routes were previously defined here but are SHADOWED by
+# definitions in server.py (which registers api_router before program_router):
+#   POST /profile/intake     (live: server.py:3089)
+#   GET  /plan/year          (live: server.py:341)
+#   GET  /plan/block/current (live: server.py:351)
+#   GET  /plan/session/today (live: server.py:410)
+# The duplicate handlers were removed to prevent confusion. Do not re-add them
+# here without first removing them from server.py.
 
 
 # ─── Session Execution ────────────────────────────────────────────────────────
@@ -352,61 +155,8 @@ async def apply_adjustment(data: Dict, userId: str = Depends(get_current_user)):
     return {"success": True, "old": old_exercise, "new": new_exercise}
 
 
-@program_router.post("/session/finish")
-async def finish_session(data: FinishSessionRequest, userId: str = Depends(get_current_user)):
-    """Finish a session and generate post-workout review."""
-    session_id = data.sessionId
-
-    # Count logged sets for this session
-    session_sets = [s for s in _store["logged_sets"] if True]  # In production, filter by session
-    completed = len(session_sets)
-
-    # Generate wins and flags
-    wins = []
-    flags = []
-
-    pain_sets = [s for s in session_sets if s.painScore >= 2]
-    if not pain_sets:
-        wins.append("Clean session — no pain reported")
-    if completed > 0:
-        wins.append(f"Completed {completed} sets")
-
-    high_pain = [s for s in session_sets if s.painScore >= 3]
-    if high_pain:
-        flags.append(f"{len(high_pain)} sets had pain ≥ 3 — exercise modification recommended")
-
-    # Mark session completed
-    plan = _store["plans"].get(userId)
-    if plan:
-        for phase in plan.phases:
-            for block in phase.blocks:
-                for week in block.weeks:
-                    for session in week.sessions:
-                        if session.sessionId == session_id:
-                            session.status = SessionStatus.COMPLETED
-                            session.completedAt = datetime.now()
-
-    # Create workout log
-    log = WorkoutLog(
-        logId=_id(), userId=userId, sessionId=session_id,
-        completedSets=completed, totalSets=completed + 2,
-        duration=45, wins=wins, flags=flags,
-        coachReviewNote="Solid session. Keep the momentum going into your next training day."
-    )
-    _store["workout_logs"].append(log)
-
-    review = PostWorkoutReview(
-        sessionId=session_id,
-        completedSets=completed,
-        totalSets=completed + 2,
-        duration=45,
-        wins=wins,
-        flags=flags,
-        coachNote="Good work today. Recovery is the next priority — sleep, hydrate, eat.",
-        whatsNext="Next session: Dynamic Effort Upper. Speed work with accommodating resistance.",
-    )
-
-    return review.model_dump()
+# NOTE: POST /session/finish is shadowed by server.py:379 (api_router wins).
+# Removed the duplicate handler here.
 
 
 # ─── Pain ─────────────────────────────────────────────────────────────────────
@@ -443,20 +193,8 @@ async def get_pain_trends(userId: str = Depends(get_current_user)):
 
 # ─── Coach ────────────────────────────────────────────────────────────────────
 
-@program_router.get("/coach/change-log")
-async def get_change_log(userId: str = Depends(get_current_user)):
-    """Return a deduped, newest-first list of program changes."""
-    changes = [c for c in _store["changes"] if c.userId == userId]
-    changes.sort(key=lambda c: c.timestamp, reverse=True)
-    # Deduplicate: keep only the most recent entry per unique explanation
-    seen: set = set()
-    deduped = []
-    for c in changes:
-        key = c.explanation.strip()
-        if key not in seen:
-            seen.add(key)
-            deduped.append(c)
-    return {"changes": [c.model_dump() for c in deduped]}
+# NOTE: GET /coach/change-log is shadowed by server.py:4695 (api_router wins).
+# Removed the duplicate handler here.
 
 
 @program_router.get("/coach/memory")

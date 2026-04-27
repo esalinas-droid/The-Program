@@ -10,30 +10,45 @@ const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 /**
  * Validate the stored JWT against the backend before trusting it.
- * Returns true if the token is valid, false if it's missing/expired/invalid.
+ * Returns:
+ *   - { valid: false } if missing/invalid/expired
+ *   - { valid: true, onboardingComplete } if valid (with the backend's view)
  *
- * This prevents the user from briefly landing in the tabs (or any
- * authenticated screen) only to immediately get bounced to /auth when
- * the first API call fails with 401.
+ * `onboardingComplete` from the backend is the AUTHORITATIVE source of truth.
+ * Returning `undefined` means we couldn't reach the backend (offline) and the
+ * caller should fall back to local cache.
  *
- * Network errors are treated as "valid" (give the benefit of the doubt
- * when offline — the api() helper will handle 401s if/when they arrive).
+ * Why this matters: a user can have local AsyncStorage saying onboardingComplete=true
+ * (from a successful intake POST) while the backend has it as false (intake hit
+ * the user_001 fallback bug, never updated their real user record). If we trust
+ * local in that case, the user gets routed to tabs and sees an empty schedule
+ * forever. Trusting backend self-heals: they'll be routed to onboarding-intake
+ * and get a fresh, properly-attributed plan.
  */
-async function validateStoredToken(): Promise<boolean> {
+async function validateStoredToken(): Promise<{
+  valid: boolean;
+  onboardingComplete?: boolean;
+}> {
   const token = await getAuthToken();
-  if (!token) return false;
+  if (!token) return { valid: false };
   try {
     const res = await fetch(`${BASE}/api/auth/me`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if (res.status === 401) {
       await clearAuth();
-      return false;
+      return { valid: false };
     }
-    return res.ok;
+    if (!res.ok) {
+      // Server error — treat as valid; api() will surface real failures later
+      return { valid: true };
+    }
+    const data = await res.json();
+    return { valid: true, onboardingComplete: !!data?.onboardingComplete };
   } catch {
-    // Network error — assume valid; api() will handle later 401s if needed
-    return true;
+    // Network error — assume valid; api() will handle later 401s if needed.
+    // onboardingComplete left undefined → caller falls back to local cache.
+    return { valid: true };
   }
 }
 
@@ -54,15 +69,33 @@ export default function Index() {
         return;
       }
 
-      const tokenValid = await validateStoredToken();
-      if (!tokenValid) {
+      const { valid, onboardingComplete: backendOnboarded } = await validateStoredToken();
+      if (!valid) {
         setAuthed(false);
         setLoading(false);
         return;
       }
       setAuthed(true);
 
-      // 2. Check onboarding — first from stored user, then from local storage, then from API
+      // 2. Onboarding source-of-truth priority:
+      //    a) BACKEND (authoritative) if /api/auth/me succeeded — `backendOnboarded`
+      //       will be a boolean. We trust it absolutely. If false, we route to
+      //       onboarding regardless of what local cache says (this is what
+      //       self-heals the user_001 fallback bug).
+      //    b) Local cache only if the network call to /api/auth/me failed
+      //       (backendOnboarded === undefined) — better to let an offline user
+      //       see their app than to block them at launch.
+      if (backendOnboarded !== undefined) {
+        // Sync local cache to match backend so future offline launches also agree
+        if (backendOnboarded) {
+          await saveProfile({ onboardingComplete: true } as any);
+        }
+        setOnboarded(backendOnboarded);
+        setLoading(false);
+        return;
+      }
+
+      // ── Offline fallback path ──────────────────────────────────────────────
       const storedUser = await getStoredUser();
       if (storedUser?.onboardingComplete) {
         setOnboarded(true);
@@ -77,7 +110,7 @@ export default function Index() {
         return;
       }
 
-      // Fallback: check backend profile
+      // Last resort: try profile endpoint (may also be offline)
       try {
         const profile = await profileApi.get();
         if (profile?.onboardingComplete === true) {

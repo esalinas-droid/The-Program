@@ -14,7 +14,7 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
 import { programApi, profileApi, uploadApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
-import { getStoredUser, getAuthToken } from '../src/utils/auth';
+import { getStoredUser, getAuthToken, storeUser } from '../src/utils/auth';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -489,7 +489,21 @@ export default function OnboardingIntake() {
         }
       }
 
-      // 1. Save locally — keeps offline fallback
+      // ── ORDER OF OPERATIONS (matters!) ─────────────────────────────────────
+      // Previously this saved local profile with onboardingComplete=true BEFORE
+      // calling the backend. If the backend call failed for any reason, the
+      // user was permanently stuck "post-onboarding" locally with no plan on
+      // the server — they'd see an empty Schedule tab forever.
+      //
+      // Now we:
+      //   1. Build the payload
+      //   2. Save local profile WITHOUT onboardingComplete (offline cache only)
+      //   3. Call backend submitIntake — this is the source of truth
+      //   4. Only after backend confirms, set onboardingComplete locally and
+      //      sync the cached AuthUser via storeUser()
+      // ────────────────────────────────────────────────────────────────────────
+
+      // 1. Save locally (no onboardingComplete yet — backend hasn't confirmed)
       await saveProfile({
         name:            userName.trim() || authUser?.name || 'Athlete',
         goal:            GOAL_MAP[goal] || goal,
@@ -511,7 +525,7 @@ export default function OnboardingIntake() {
         trainingDaysCount: trainingDays,
         currentWeek:     1,
         programStartDate: getLocalDateString(),
-        onboardingComplete: true,
+        // onboardingComplete intentionally omitted — set only after backend success
         notifications: {
           dailyReminder:     true,
           dailyReminderTime: '08:00',
@@ -551,6 +565,27 @@ export default function OnboardingIntake() {
 
       const response = await programApi.submitIntake(payload);
       console.log('[Onboarding] Step 2 — Response received:', JSON.stringify(response, null, 2));
+
+      // ── BACKEND CONFIRMED — now safe to mark onboarding complete locally ───
+      // Update three things together so launch-flow checks all agree:
+      //   (a) local profile (used by isOnboardingComplete()/getProfile())
+      //   (b) cached AuthUser (used by index.tsx's storedUser?.onboardingComplete)
+      //   (c) backend profile (used by /api/auth/me)
+      // If any of these later disagree, the launch flow can self-heal.
+      try {
+        await saveProfile({ onboardingComplete: true } as any);
+      } catch (e) {
+        console.warn('[Onboarding] Local onboardingComplete save failed:', e);
+      }
+
+      try {
+        const currentUser = await getStoredUser();
+        if (currentUser) {
+          await storeUser({ ...currentUser, onboardingComplete: true });
+        }
+      } catch (e) {
+        console.warn('[Onboarding] storeUser sync failed (non-critical):', e);
+      }
 
       // 3. Sync all new fields to MongoDB profile (non-blocking)
       try {
