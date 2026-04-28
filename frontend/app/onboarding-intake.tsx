@@ -1495,9 +1495,9 @@ export default function OnboardingIntake() {
         {/* ── Footer ── */}
         <View style={s.footer}>
           <TouchableOpacity
-            style={[s.ctaBtn, isLastStep && s.ctaBtnFinal, !active && s.ctaBtnOff]}
+            style={[s.ctaBtn, active && isLastStep && s.ctaBtnFinal, !active && s.ctaBtnOff]}
             onPress={goNext}
-            disabled={saving || (!active && !isLastStep)}
+            disabled={saving || !active}
             activeOpacity={0.88}
           >
             {saving ? (

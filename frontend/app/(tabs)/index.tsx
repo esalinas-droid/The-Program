@@ -145,9 +145,8 @@ export default function Dashboard() {
   // ── Week overview state ───────────────────────────────────────────────────────
   const [weekEvents, setWeekEvents] = useState<any[]>([]);
 
-  // ── Today's session state (4-state card) ─────────────────────────────────────
-  const [todayLogs, setTodayLogs]               = useState<any[]>([]);
-  const [sessionFinishedToday, setSessionFinishedToday] = useState(false);
+  // ── Today's session state ───────────────────────────────────────────────────
+  // Derived in render from weekEvents + programSession — no extra state needed
 
   const loadData = useCallback(async () => {
     const prof = await getProfile();
@@ -327,6 +326,28 @@ export default function Dashboard() {
 
   const isRestDay     = displaySession?.sessionType === 'Off';
   const units         = profile.units || 'lbs';
+
+  // ── 4-state session card logic ──────────────────────────────────────────────
+  // COMPLETE  : calendar event for today exists AND isCompleted=true, AND no
+  //             active session from today endpoint (session formally finished)
+  // IN_PROGRESS: calendar event says done (has logs) but today endpoint still
+  //             returns a session (not formally finished yet)
+  // PENDING   : no logs yet — session waiting to start
+  // REST_DAY  : today is Off (handled by isRestDay above)
+  const todayDateStr  = new Date().toISOString().slice(0, 10);
+  const todayCalEvent = weekEvents.find(ev => ev.date === todayDateStr);
+  const todayCalDone  = todayCalEvent?.isCompleted === true;
+  const nextEvent     = weekEvents.find(
+    ev => ev.date > todayDateStr && ev.sessionType && ev.sessionType !== 'Off',
+  );
+
+  // sessionState derivation (priority: rest_day > complete > in_progress > pending)
+  type SessionCardState = 'pending' | 'in_progress' | 'complete' | 'rest_day';
+  const sessionCardState: SessionCardState =
+    (isRestDay || !displaySession)      ? 'rest_day'    // Off day OR no session data
+    : (todayCalDone && !programSession) ? 'complete'
+    : (todayCalDone &&  programSession) ? 'in_progress'
+    :                                     'pending';
   const { start: blockStart, end: blockEnd } = getBlockWeekRange(block);
   const blockProgress = Math.min((week - blockStart) / (blockEnd - blockStart + 1), 1);
   const coachingNote  = getCoachingDirective(week, block, phase);
@@ -377,40 +398,9 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* ── TODAY'S SESSION CARD (prominently first) ── */}
-        {!isRestDay && displaySession ? (
-          <View style={s.sessionCard}>
-            <View style={s.sessionCardTop}>
-              {(() => {
-                const sc = getSessionStyle(displaySession.sessionType);
-                return (
-                  <View style={[s.sessionTypeBadge, { backgroundColor: sc.bg, borderColor: sc.borderColor }]}>
-                    <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>{displaySession.sessionType}</Text>
-                  </View>
-                );
-              })()}
-              <Text style={s.sessionCardDay}>{todayName}</Text>
-            </View>
-            <Text style={s.sessionLift}>
-              {programSession?.session?.exercises?.[0]?.name ?? displaySession.mainLift ?? "Today's Session"}
-            </Text>
-            <Text style={s.sessionScheme}>
-              {programSession?.session?.exercises?.[0]?.prescription ?? displaySession.topSetScheme ?? ''}
-            </Text>
-            {programSession?.session?.coachNote ? (
-              <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
-            ) : null}
-            <TouchableOpacity
-              testID="today-session-card"
-              style={s.startBtn}
-              onPress={() => router.push('/(tabs)/today')}
-              activeOpacity={0.85}
-            >
-              <Text style={s.startBtnText}>START SESSION</Text>
-              <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
-            </TouchableOpacity>
-          </View>
-        ) : (
+        {/* ── TODAY'S SESSION CARD — 4-STATE (prominently first) ── */}
+        {sessionCardState === 'rest_day' ? (
+          /* ── REST DAY ── */
           <View testID="today-session-card" style={s.restDayCard}>
             <View style={s.restDayIcon}>
               <MaterialCommunityIcons name="weather-sunny" size={26} color={COLORS.accent} />
@@ -422,6 +412,115 @@ export default function Dashboard() {
               </Text>
             </View>
           </View>
+
+        ) : sessionCardState === 'complete' ? (
+          /* ── COMPLETE ── */
+          <View testID="today-session-card" style={[s.sessionCard, s.sessionCardComplete]}>
+            <View style={s.sessionCardTop}>
+              {(() => {
+                const sc = getSessionStyle(displaySession?.sessionType ?? '');
+                return (
+                  <View style={[s.sessionTypeBadge, { backgroundColor: sc.bg, borderColor: sc.borderColor }]}>
+                    <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>
+                      {displaySession?.sessionType ?? todayCalEvent?.sessionType ?? 'Training'}
+                    </Text>
+                  </View>
+                );
+              })()}
+              <Text style={s.sessionCardDay}>{todayName}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.accent} />
+              <Text style={s.sessionCompleteTitle}>Session Complete</Text>
+            </View>
+            <Text style={s.sessionScheme}>
+              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Today's training is done"}
+            </Text>
+            {nextEvent && (
+              <Text style={[s.sessionScheme, { marginTop: 2, color: COLORS.text.muted, fontSize: FONTS.sizes.xs }]}>
+                Next: {nextEvent.sessionType} {nextEvent.date ? `— ${new Date(nextEvent.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}
+              </Text>
+            )}
+            <TouchableOpacity
+              style={s.viewRecapBtn}
+              onPress={() => router.push('/(tabs)/today')}
+              activeOpacity={0.85}
+            >
+              <Text style={s.viewRecapBtnText}>VIEW RECAP</Text>
+              <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.accent} />
+            </TouchableOpacity>
+          </View>
+
+        ) : sessionCardState === 'in_progress' ? (
+          /* ── IN PROGRESS ── */
+          <View testID="today-session-card" style={s.sessionCard}>
+            <View style={s.sessionCardTop}>
+              {(() => {
+                const sc = getSessionStyle(displaySession?.sessionType ?? '');
+                return (
+                  <View style={[s.sessionTypeBadge, { backgroundColor: sc.bg, borderColor: sc.borderColor }]}>
+                    <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>
+                      {displaySession?.sessionType ?? todayCalEvent?.sessionType ?? 'Training'}
+                    </Text>
+                  </View>
+                );
+              })()}
+              <Text style={s.sessionCardDay}>{todayName}</Text>
+            </View>
+            <Text style={s.sessionLift}>
+              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Today's Session"}
+            </Text>
+            <Text style={s.sessionScheme}>
+              {programSession?.session?.exercises?.[0]?.prescription ?? displaySession?.topSetScheme ?? ''}
+            </Text>
+            {programSession?.session?.coachNote ? (
+              <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
+            ) : null}
+            <TouchableOpacity
+              style={[s.startBtn, { backgroundColor: COLORS.accentBlue }]}
+              onPress={() => router.push('/(tabs)/today')}
+              activeOpacity={0.85}
+            >
+              <Text style={s.startBtnText}>CONTINUE SESSION</Text>
+              <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+          </View>
+
+        ) : (
+          /* ── PENDING (default) — show when training day, not started ── */
+          (!displaySession ? null : (
+            <View style={s.sessionCard}>
+              <View style={s.sessionCardTop}>
+                {(() => {
+                  const sc = getSessionStyle(displaySession.sessionType);
+                  return (
+                    <View style={[s.sessionTypeBadge, { backgroundColor: sc.bg, borderColor: sc.borderColor }]}>
+                      <Text style={[s.sessionTypeBadgeText, { color: sc.text }]}>{displaySession.sessionType}</Text>
+                    </View>
+                  );
+                })()}
+                <Text style={s.sessionCardDay}>{todayName}</Text>
+              </View>
+              <Text style={s.sessionLift}>
+                {programSession?.session?.exercises?.[0]?.name ?? displaySession.mainLift ?? "Today's Session"}
+              </Text>
+              <Text style={s.sessionScheme}>
+                {programSession?.session?.exercises?.[0]?.prescription ?? displaySession.topSetScheme ?? ''}
+              </Text>
+              {programSession?.session?.coachNote ? (
+                <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
+              ) : null}
+              <TouchableOpacity
+                testID="today-session-card"
+                style={s.startBtn}
+                onPress={() => router.push('/(tabs)/today')}
+                activeOpacity={0.85}
+              >
+                <Text style={s.startBtnText}>START SESSION</Text>
+                <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+          ))
         )}
 
         {/* ── GAMIFICATION CARDS ── */}
@@ -874,6 +973,7 @@ const s = StyleSheet.create({
 
   // Today's session card (prominent)
   sessionCard:         { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 3 },
+  sessionCardComplete: { borderColor: COLORS.accent + '60', shadowColor: COLORS.accent, shadowOpacity: 0.12 },
   sessionCardTop:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
   sessionTypeBadge:    { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1 },
   sessionTypeBadgeText:{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
@@ -881,8 +981,13 @@ const s = StyleSheet.create({
   sessionLift:         { fontSize: FONTS.sizes.xxxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 38, marginBottom: 4 },
   sessionScheme:       { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, marginBottom: SPACING.sm, lineHeight: 22 },
   sessionCoachNote:    { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: SPACING.lg, lineHeight: 20 },
+  sessionCompleteTitle:{ fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.accent, lineHeight: 30, marginBottom: 2 },
+  // START SESSION button (gold — PENDING state)
   startBtn:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm, marginTop: SPACING.sm },
   startBtnText:        { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+  // VIEW RECAP button (outlined — COMPLETE state)
+  viewRecapBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 1.5, borderColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 14, gap: SPACING.sm, marginTop: SPACING.sm },
+  viewRecapBtnText:    { color: COLORS.accent, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
 
   // Rest day card
   restDayCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md, borderWidth: 1, borderColor: COLORS.border },

@@ -10,7 +10,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
-import { calendarApi, logApi } from '../../src/utils/api';
+import { calendarApi, logApi, programApi } from '../../src/utils/api';
 import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -246,13 +246,14 @@ function DayCard({
 
 // ── SessionHistoryCard (Parts 1D + 1E) ───────────────────────────────────────
 function SessionHistoryCard({
-  card, expanded, onToggle, onGoToSession, todayStr,
+  card, expanded, onToggle, onGoToSession, todayStr, todaySessionDone,
 }: {
   card: SessionCard;
   expanded: boolean;
   onToggle: () => void;
   onGoToSession: () => void;
   todayStr: string;
+  todaySessionDone?: boolean;
 }) {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
   const style      = getSessionStyle(card.sessionType);
@@ -400,14 +401,27 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
-      {/* VIEW SESSION — today is already completed */}
-      {card.status === 'completed' && isToday && (
+      {/* IN_PROGRESS — today has logs but session not formally finished */}
+      {card.status === 'completed' && isToday && !todaySessionDone && (
         <TouchableOpacity
-          style={[s.continueBtnSmall, { backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#2A2A2E' }]}
+          style={[s.continueBtnSmall, { backgroundColor: '#0D2A3A', borderWidth: 1.5, borderColor: '#2A7ABF' }]}
           onPress={onGoToSession}
           activeOpacity={0.8}>
-          <Text style={[s.continueBtnText, { color: '#888' }]}>VIEW SESSION</Text>
-          <MaterialCommunityIcons name="arrow-right" size={12} color="#888" />
+          <MaterialCommunityIcons name="play-circle-outline" size={14} color="#4A9FDF" style={{ marginRight: 2 }} />
+          <Text style={[s.continueBtnText, { color: '#4A9FDF' }]}>CONTINUE SESSION</Text>
+          <MaterialCommunityIcons name="arrow-right" size={12} color="#4A9FDF" />
+        </TouchableOpacity>
+      )}
+
+      {/* COMPLETE — today's session formally finished */}
+      {card.status === 'completed' && isToday && todaySessionDone && (
+        <TouchableOpacity
+          style={[s.continueBtnSmall, { backgroundColor: '#0A1F12', borderWidth: 1.5, borderColor: GOLD + '80' }]}
+          onPress={onGoToSession}
+          activeOpacity={0.8}>
+          <MaterialCommunityIcons name="check-circle" size={14} color={GOLD} style={{ marginRight: 2 }} />
+          <Text style={[s.continueBtnText, { color: GOLD }]}>VIEW RECAP</Text>
+          <MaterialCommunityIcons name="arrow-right" size={12} color={GOLD} />
         </TouchableOpacity>
       )}
 
@@ -504,6 +518,8 @@ export default function ScheduleScreen() {
   const [swapToast,    setSwapToast]    = useState<string | null>(null);
   const [swapping,     setSwapping]     = useState(false);
   const [calEventsRaw, setCalEventsRaw] = useState<any[]>([]);
+  // true when today's session is formally finished (programApi.getTodaySession returns 404)
+  const [todaySessionDone, setTodaySessionDone] = useState(false);
 
   const weekOffsetRef = useRef(0);
   const [weekOffset, _setWeekOffset]   = useState(0);
@@ -538,6 +554,18 @@ export default function ScheduleScreen() {
           return [];
         }),
       ]);
+
+      // On current week, check if today's session is formally done
+      if (offset === 0) {
+        try {
+          const todaySess = await programApi.getTodaySession();
+          // If getTodaySession returns null/no session → formally finished (404)
+          setTodaySessionDone(!todaySess?.session);
+        } catch {
+          // 404 or no plan → session is done / no plan exists
+          setTodaySessionDone(true);
+        }
+      }
 
       const events: any[] = evResp?.events || [];
       const allLogs: any[] = Array.isArray(logsResp) ? logsResp : (logsResp?.logs || []);
@@ -874,6 +902,7 @@ export default function ScheduleScreen() {
                     }
                   }}
                   todayStr={todayStr}
+                  todaySessionDone={todaySessionDone}
                 />
               ))
             )}
