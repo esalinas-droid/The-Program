@@ -146,7 +146,8 @@ export default function Dashboard() {
   const [weekEvents, setWeekEvents] = useState<any[]>([]);
 
   // ── Today's session state ───────────────────────────────────────────────────
-  // Derived in render from weekEvents + programSession — no extra state needed
+  // Derived in render from weekEvents + AsyncStorage finish flag — no extra state needed
+  const [todaySessionFinished, setTodaySessionFinished] = useState(false);
 
   const loadData = useCallback(async () => {
     const prof = await getProfile();
@@ -162,7 +163,22 @@ export default function Dashboard() {
     try {
       const apiSession = await programApi.getTodaySession();
       setProgramSession(apiSession);
-    } catch { /* No AI plan yet — use local data */ }
+    } catch {
+      // 404 = session completed, or no AI plan exists — clear stale value
+      setProgramSession(null);
+    }
+
+    // ── Check AsyncStorage for "session finished today" flag ──────────────────
+    // today.tsx writes AsyncStorage.setItem('today_finished_date', localDate) when
+    // the user presses FINISH SESSION. This is the authoritative completion signal.
+    // (The backend's finishSession API is intentionally skipped in today.tsx to
+    //  prevent re-sync bugs, so session.status stays 'planned' — never use that.)
+    try {
+      const finishedDate = await AsyncStorage.getItem('today_finished_date');
+      setTodaySessionFinished(finishedDate === getLocalDateString());
+    } catch {
+      setTodaySessionFinished(false);
+    }
 
     // Compute this week's Mon-Sun date range (local time, matches Schedule page)
     const now = new Date();
@@ -326,15 +342,16 @@ export default function Dashboard() {
 
   const isRestDay     = displaySession?.sessionType === 'Off';
   const units         = profile.units || 'lbs';
+  const todayDateStr  = getLocalDateString();   // local time — safe for any timezone
 
   // ── 4-state session card logic ──────────────────────────────────────────────
-  // COMPLETE  : calendar event for today exists AND isCompleted=true, AND no
-  //             active session from today endpoint (session formally finished)
-  // IN_PROGRESS: calendar event says done (has logs) but today endpoint still
-  //             returns a session (not formally finished yet)
-  // PENDING   : no logs yet — session waiting to start
-  // REST_DAY  : today is Off (handled by isRestDay above)
-  const todayDateStr  = new Date().toISOString().slice(0, 10);
+  // COMPLETE    : user hit FINISH SESSION today (AsyncStorage 'today_finished_date' == today)
+  //               This is the authoritative signal. today.tsx intentionally skips
+  //               the finishSession API so session.status stays 'planned' — never
+  //               rely on !programSession to detect completion.
+  // IN_PROGRESS : calendar has logs for today but FINISH hasn't been pressed yet
+  // PENDING     : no logs yet, session waiting to start
+  // REST_DAY    : today is Off (or no session data at all)
   const todayCalEvent = weekEvents.find(ev => ev.date === todayDateStr);
   const todayCalDone  = todayCalEvent?.isCompleted === true;
   const nextEvent     = weekEvents.find(
@@ -344,10 +361,10 @@ export default function Dashboard() {
   // sessionState derivation (priority: rest_day > complete > in_progress > pending)
   type SessionCardState = 'pending' | 'in_progress' | 'complete' | 'rest_day';
   const sessionCardState: SessionCardState =
-    (isRestDay || !displaySession)      ? 'rest_day'    // Off day OR no session data
-    : (todayCalDone && !programSession) ? 'complete'
-    : (todayCalDone &&  programSession) ? 'in_progress'
-    :                                     'pending';
+    (isRestDay || !displaySession) ? 'rest_day'
+    : todaySessionFinished         ? 'complete'
+    : todayCalDone                 ? 'in_progress'
+    :                                'pending';
   const { start: blockStart, end: blockEnd } = getBlockWeekRange(block);
   const blockProgress = Math.min((week - blockStart) / (blockEnd - blockStart + 1), 1);
   const coachingNote  = getCoachingDirective(week, block, phase);
@@ -427,28 +444,34 @@ export default function Dashboard() {
                   </View>
                 );
               })()}
-              <Text style={s.sessionCardDay}>{todayName}</Text>
+              {/* Completion indicator — upper-right (Issue 3C) */}
+              <View style={s.completedBadge}>
+                <MaterialCommunityIcons name="check-circle" size={13} color={COLORS.accent} />
+                <Text style={s.completedBadgeText}>DONE</Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.accent} />
-              <Text style={s.sessionCompleteTitle}>Session Complete</Text>
-            </View>
+            {/* Issue 3C: plain white headline, no inline checkmark */}
+            <Text style={s.sessionCompleteTitle}>Today's session — done</Text>
             <Text style={s.sessionScheme}>
-              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Today's training is done"}
+              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Good work today"}
             </Text>
-            {nextEvent && (
-              <Text style={[s.sessionScheme, { marginTop: 2, color: COLORS.text.muted, fontSize: FONTS.sizes.xs }]}>
-                Next: {nextEvent.sessionType} {nextEvent.date ? `— ${new Date(nextEvent.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}
-              </Text>
-            )}
-            <TouchableOpacity
-              style={s.viewRecapBtn}
-              onPress={() => router.push('/(tabs)/today')}
-              activeOpacity={0.85}
-            >
-              <Text style={s.viewRecapBtnText}>VIEW RECAP</Text>
-              <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.accent} />
-            </TouchableOpacity>
+            {/* Issue 2: two side-by-side outline buttons */}
+            <View style={s.sessionCompleteBtns}>
+              <TouchableOpacity
+                style={s.viewRecapBtn}
+                onPress={() => router.push('/(tabs)/today')}
+                activeOpacity={0.85}
+              >
+                <Text style={s.viewRecapBtnText}>View recap</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.tomorrowBtn}
+                onPress={() => router.push('/(tabs)/log')}
+                activeOpacity={0.85}
+              >
+                <Text style={s.tomorrowBtnText}>Tomorrow →</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
         ) : sessionCardState === 'in_progress' ? (
@@ -477,12 +500,11 @@ export default function Dashboard() {
               <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
             ) : null}
             <TouchableOpacity
-              style={[s.startBtn, { backgroundColor: COLORS.accentBlue }]}
+              style={s.startBtn}
               onPress={() => router.push('/(tabs)/today')}
               activeOpacity={0.85}
             >
-              <Text style={s.startBtnText}>CONTINUE SESSION</Text>
-              <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
+              <Text style={s.startBtnText}>RESUME SESSION →</Text>
             </TouchableOpacity>
           </View>
 
@@ -981,13 +1003,22 @@ const s = StyleSheet.create({
   sessionLift:         { fontSize: FONTS.sizes.xxxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 38, marginBottom: 4 },
   sessionScheme:       { fontSize: FONTS.sizes.base, color: COLORS.text.secondary, marginBottom: SPACING.sm, lineHeight: 22 },
   sessionCoachNote:    { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontStyle: 'italic', marginBottom: SPACING.lg, lineHeight: 20 },
-  sessionCompleteTitle:{ fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.accent, lineHeight: 30, marginBottom: 2 },
-  // START SESSION button (gold — PENDING state)
+  // COMPLETE state: "✓ DONE" badge (upper-right, next to session type pill)
+  completedBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  completedBadgeText:  { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 0.5 },
+  // COMPLETE state: headline — plain white, no checkmark (Issue 3C)
+  sessionCompleteTitle:{ fontSize: FONTS.sizes.xxl, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 30, marginBottom: 2 },
+  // COMPLETE state: two-button action row (Issue 2)
+  sessionCompleteBtns: { flexDirection: 'row', gap: 8, marginTop: SPACING.sm },
+  // START / RESUME SESSION button — gold, full-width (PENDING + IN_PROGRESS)
   startBtn:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, gap: SPACING.sm, marginTop: SPACING.sm },
   startBtnText:        { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
-  // VIEW RECAP button (outlined — COMPLETE state)
-  viewRecapBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 1.5, borderColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 14, gap: SPACING.sm, marginTop: SPACING.sm },
-  viewRecapBtnText:    { color: COLORS.accent, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+  // VIEW RECAP button — gold outline, flex:1 (COMPLETE state left button)
+  viewRecapBtn:        { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 1, borderColor: COLORS.accent, borderRadius: 8, paddingVertical: 11 },
+  viewRecapBtnText:    { color: COLORS.accent, fontWeight: '500', fontSize: 12, letterSpacing: 0.5, textAlign: 'center' },
+  // TOMORROW → button — muted outline, flex:1 (COMPLETE state right button)
+  tomorrowBtn:         { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0.5, borderColor: '#333', borderRadius: 8, paddingVertical: 11 },
+  tomorrowBtnText:     { color: COLORS.text.muted, fontWeight: '500', fontSize: 12, letterSpacing: 0.5, textAlign: 'center' },
 
   // Rest day card
   restDayCard:  { marginHorizontal: SPACING.lg, marginBottom: SPACING.md, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
