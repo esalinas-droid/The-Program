@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
-import { toLocalDateString } from '../../src/utils/dateHelpers';
+import { toLocalDateString, getLocalDateString } from '../../src/utils/dateHelpers';
 import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, calendarApi, api } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
@@ -144,6 +144,10 @@ export default function Dashboard() {
 
   // ── Week overview state ───────────────────────────────────────────────────────
   const [weekEvents, setWeekEvents] = useState<any[]>([]);
+
+  // ── Today's session state (4-state card) ─────────────────────────────────────
+  const [todayLogs, setTodayLogs]               = useState<any[]>([]);
+  const [sessionFinishedToday, setSessionFinishedToday] = useState(false);
 
   const loadData = useCallback(async () => {
     const prof = await getProfile();

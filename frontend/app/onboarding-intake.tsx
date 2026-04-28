@@ -382,7 +382,11 @@ export default function OnboardingIntake() {
       case 10: return true; // optional — medical documents
       case 11: return !!selectedSleep && !!stressLevel && !!occupationType;
       case 12: return true; // optional, can skip — current program
-      case 13: return gymTypes.length > 0 && hasCompetition !== null;
+      case 13: {
+      if (gymTypes.length === 0 || hasCompetition === null) return false;
+      if (hasCompetition === true) return competitionType !== '' && competitionDate.trim() !== '';
+      return true; // hasCompetition === false → no date needed, activate immediately
+    }
       default: return false;
     }
   };
