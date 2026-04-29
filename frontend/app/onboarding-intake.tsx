@@ -4,7 +4,7 @@ import {
   SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert, Image,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,7 +12,7 @@ import * as FileSystem from 'expo-file-system';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { saveProfile } from '../src/utils/storage';
-import { programApi, profileApi, uploadApi } from '../src/utils/api';
+import { programApi, profileApi, uploadApi, planApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { getStoredUser, getAuthToken, storeUser } from '../src/utils/auth';
 
@@ -251,6 +251,8 @@ const DAY_MAP: Record<number, string[]> = {
 
 export default function OnboardingIntake() {
   const router = useRouter();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const isRebuildMode = mode === 'rebuild';
 
   // ── Core state ──────────────────────────────────────────────────────────────
   const [step,         setStep]        = useState(1);
@@ -329,6 +331,77 @@ export default function OnboardingIntake() {
   useEffect(() => {
     profileApi.get().catch(() => { /* warmup-only; ignore errors */ });
   }, []);
+
+  // ── Rebuild mode: pre-populate from existing profile ─────────────────────────
+  useEffect(() => {
+    if (!isRebuildMode) return;
+    (async () => {
+      try {
+        const p: any = await profileApi.get();
+        if (!p) return;
+
+        // Step 1 — Name
+        if (p.name) setUserName(p.name);
+
+        // Step 2 — Goal (direct match, GOAL_MAP values equal labels)
+        if (p.goal) setGoal(p.goal);
+
+        // Step 3 — Experience
+        if (p.experience) setExperience(p.experience);
+
+        // Step 4 — Lifts (basePRs → string map)
+        if (p.basePRs) {
+          setLifts({
+            squat:    p.basePRs.squat    ? String(p.basePRs.squat)    : '',
+            bench:    p.basePRs.bench    ? String(p.basePRs.bench)    : '',
+            deadlift: p.basePRs.deadlift ? String(p.basePRs.deadlift) : '',
+            ohp:      p.basePRs.ohp      ? String(p.basePRs.ohp)      : '',
+            log:      p.basePRs.log      ? String(p.basePRs.log)      : '',
+            axle:     p.basePRs.axle     ? String(p.basePRs.axle)     : '',
+            yoke:     p.basePRs.yoke     ? String(p.basePRs.yoke)     : '',
+          });
+        }
+        if (p.units) setLiftUnit(p.units as 'lbs' | 'kg');
+
+        // Step 5 — Bodyweight
+        if (p.currentBodyweight) setBodyweight(String(p.currentBodyweight));
+        if (p.bw12WeekGoal)      setBw12Week(String(p.bw12WeekGoal));
+
+        // Step 6 — Training frequency & days
+        const daysCount = p.trainingDaysCount || 4;
+        setDays(daysCount);
+        setSelectedDays(p.preferredDays?.length ? p.preferredDays : (DAY_MAP[daysCount] || []));
+
+        // Step 7 — Primary weaknesses
+        if (p.primaryWeaknesses?.length) setPrimaryWeaknesses(p.primaryWeaknesses);
+
+        // Step 8 — Specialty equipment
+        if (p.specialtyEquipment?.length) setSpecialtyEquipment(p.specialtyEquipment);
+
+        // Step 9 — Injuries (ensure at least 'None' so canContinue passes)
+        const inj: string[] = p.injuryFlags || [];
+        setInjuries(inj.length > 0 ? inj : ['None']);
+
+        // Step 11 — Recovery
+        if (p.sleepHours != null) {
+          const h = p.sleepHours;
+          setSelectedSleep(h < 6 ? '5' : h < 7 ? '6' : h < 8 ? '7' : h < 9 ? '8' : '9');
+        }
+        if (p.stressLevel)    setStressLevel(p.stressLevel);
+        if (p.occupationType) setOccupationType(p.occupationType);
+
+        // Step 13 — Gym + Competition
+        if (p.gymTypes?.length) setGymTypes(p.gymTypes);
+        if (p.hasCompetition != null) setHasCompetition(p.hasCompetition);
+        if (p.competitionType) setCompetitionType(p.competitionType);
+        if (p.competitionDate) setCompetitionDate(p.competitionDate);
+
+        console.log('[Onboarding Rebuild] ✅ Pre-populated from profile:', p.name);
+      } catch (err) {
+        console.warn('[Onboarding Rebuild] Could not pre-populate:', err);
+      }
+    })();
+  }, [isRebuildMode]);
 
   const animateIn = () => {
     greetFade.setValue(0); greetSlide.setValue(20);
@@ -564,6 +637,43 @@ export default function OnboardingIntake() {
       // CHECK 3: Verify auth token exists before calling backend
       const _token = await getAuthToken();
       console.log('[Onboarding] AUTH TOKEN EXISTS:', !!_token, '| prefix:', _token?.substring(0, 20));
+
+      // ── REBUILD MODE: use /plans/rebuild — preserve all history ────────────
+      if (isRebuildMode) {
+        console.log('[Onboarding Rebuild] Calling planApi.rebuild...');
+        await planApi.rebuild(payload);
+
+        // Update local profile (keep history fields intact)
+        await saveProfile({
+          goal:              GOAL_MAP[goal] || goal,
+          experience,
+          basePRs:           currentLifts,
+          units:             liftUnit,
+          injuryFlags:       cleanInjuries,
+          gymTypes,
+          currentBodyweight: bwNum,
+          bw12WeekGoal:      bw12wNum,
+          primaryWeaknesses,
+          specialtyEquipment: cleanEquip,
+          sleepHours:         sleepNum,
+          stressLevel,
+          occupationType,
+          hasCompetition:    !!hasCompetition,
+          competitionDate:   hasCompetition ? competitionDate : undefined,
+          competitionType:   hasCompetition ? competitionType : undefined,
+          trainingDaysCount: trainingDays,
+          onboardingComplete: true,
+        } as any);
+
+        Alert.alert(
+          'Program Rebuilt! 🎉',
+          'Your new workout plan is ready. All training history, PRs, streaks, and logs are preserved.',
+          [{ text: "Let's Go", onPress: () => router.replace('/(tabs)') }]
+        );
+        setSaving(false);
+        return;
+      }
+      // ──────────────────────────────────────────────────────────────────────
 
       console.log('[Onboarding] Step 2 — Calling programApi.submitIntake with payload:', JSON.stringify(payload, null, 2));
 
@@ -1465,6 +1575,13 @@ export default function OnboardingIntake() {
         </View>
 
         {/* ── Scrollable content ── */}
+        {/* ── Rebuild mode banner ── */}
+        {isRebuildMode && (
+          <View style={s.rebuildBanner}>
+            <MaterialCommunityIcons name="update" size={13} color={COLORS.accent} />
+            <Text style={s.rebuildBannerText}>REBUILD MODE — history &amp; logs are safe</Text>
+          </View>
+        )}
         <Animated.View style={[s.contentWrap, { opacity: containerFade }]}>
           <ScrollView
             style={s.scroll}
@@ -1505,7 +1622,9 @@ export default function OnboardingIntake() {
             ) : (
               <>
                 <Text style={[s.ctaText, !active && s.ctaTextOff]}>
-                  {isLastStep ? 'Build My Program' : 'Continue'}
+                  {isLastStep
+                    ? (isRebuildMode ? 'Rebuild My Program' : 'Build My Program')
+                    : 'Continue'}
                 </Text>
                 {(active || isLastStep) && (
                   <MaterialCommunityIcons
@@ -1720,4 +1839,15 @@ const s = StyleSheet.create({
   ctaText:      { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.primary, letterSpacing: 0.5 },
   ctaTextOff:   { color: COLORS.text.muted },
   stepCounter:  { textAlign: 'center', fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+
+  // Rebuild mode banner
+  rebuildBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: 'rgba(201,168,76,0.07)', borderBottomWidth: 1,
+    borderBottomColor: 'rgba(201,168,76,0.18)', paddingVertical: 9,
+  },
+  rebuildBannerText: {
+    fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.bold as any,
+    letterSpacing: 1.2, textTransform: 'uppercase',
+  },
 });

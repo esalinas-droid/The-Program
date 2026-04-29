@@ -296,6 +296,12 @@ export const planApi = {
     api('/plan/injury-preview', { method: 'POST', body: JSON.stringify({ newInjuryFlags }) }),
   applyInjuryUpdate: (newInjuryFlags: string[]): Promise<{ success: boolean; message: string; added: string[]; removed: string[] }> =>
     api('/plan/apply-injury-update', { method: 'POST', body: JSON.stringify({ newInjuryFlags }) }),
+  rebuild: (data: any): Promise<{ success: boolean; message: string; plan: any; rag_enhanced: boolean }> =>
+    api('/plans/rebuild', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      retry: { attempts: 4, baseDelayMs: 2000 },
+    }),
 };
 
 // Pain Reports

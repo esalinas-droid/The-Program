@@ -228,21 +228,23 @@ export default function SettingsScreen() {
   };
 
   // ── Reset & Sign out ──────────────────────────────────────────────────────
-  function confirmReset() {
-    Alert.alert(
-      'Reset Program?',
-      'This will clear your training program, all logged sessions, and profile data. You will start fresh.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Reset Everything', style: 'destructive', onPress: async () => {
-          try { await profileApi.reset(); } catch {}
-          // Clear all local AsyncStorage profile data for a true clean slate
-          await saveProfile({});
-          router.replace('/onboarding-intake');
-        }},
-      ]
-    );
-  }
+
+  // ── Rebuild modal state ───────────────────────────────────────────────────
+  const [showRebuildModal, setShowRebuildModal] = useState(false);
+
+  // ── Beta reset modal state ─────────────────────────────────────────────────
+  const [showBetaResetModal, setShowBetaResetModal] = useState(false);
+  const [betaResetText,      setBetaResetText]      = useState('');
+  const [betaResetting,      setBetaResetting]      = useState(false);
+
+  const executeBetaReset = async () => {
+    setBetaResetting(true);
+    setShowBetaResetModal(false);
+    setBetaResetText('');
+    try { await profileApi.reset(); } catch {}
+    await saveProfile({});
+    router.replace('/onboarding-intake');
+  };
 
   function confirmSignOut() {
     Alert.alert(
@@ -478,14 +480,14 @@ export default function SettingsScreen() {
         {/* ── ACCOUNT ── */}
         <SectionHeader title="ACCOUNT" />
         <View style={s.card}>
-          {/* Reset program */}
-          <TouchableOpacity style={s.accountRow} onPress={confirmReset} activeOpacity={0.7}>
-            <View style={[s.accountIconWrap, { backgroundColor: '#FF980015' }]}>
-              <MaterialCommunityIcons name="refresh" size={16} color="#FF9800" />
+          {/* Rebuild program — non-destructive */}
+          <TouchableOpacity style={s.accountRow} onPress={() => setShowRebuildModal(true)} activeOpacity={0.7}>
+            <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
+              <MaterialCommunityIcons name="refresh" size={16} color={COLORS.accent} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={s.accountRowLabel}>Reset program</Text>
-              <Text style={s.accountRowDesc}>Clear program and restart onboarding</Text>
+              <Text style={s.accountRowLabel}>Rebuild program</Text>
+              <Text style={s.accountRowDesc}>Update goals & regenerate plan — history kept</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
           </TouchableOpacity>
@@ -502,6 +504,39 @@ export default function SettingsScreen() {
             <Text style={s.signOutText}>Sign out</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── BETA TESTER TOOLS (only visible when is_beta_tester=true) ── */}
+        {profile?.is_beta_tester === true && (
+          <>
+            <SectionHeader title="BETA TESTER TOOLS" />
+            <View style={[s.card, s.betaCard]}>
+              <View style={s.betaWarningRow}>
+                <MaterialCommunityIcons name="skull-outline" size={16} color="#EF5350" />
+                <Text style={s.betaWarningText}>
+                  Destructive actions. For developer & tester use only.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[s.accountRow, { paddingTop: SPACING.sm, marginTop: SPACING.sm, borderTopWidth: 1, borderTopColor: 'rgba(239,83,80,0.15)' }]}
+                onPress={() => { setBetaResetText(''); setShowBetaResetModal(true); }}
+                activeOpacity={0.7}
+                disabled={betaResetting}
+              >
+                <View style={[s.accountIconWrap, { backgroundColor: '#EF535015' }]}>
+                  {betaResetting
+                    ? <ActivityIndicator size="small" color="#EF5350" />
+                    : <MaterialCommunityIcons name="delete-forever-outline" size={16} color="#EF5350" />
+                  }
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.accountRowLabel, { color: '#EF5350' }]}>Reset everything</Text>
+                  <Text style={s.accountRowDesc}>Wipe all data — plan, history, logs, profile</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         {/* App version footer */}
         <View style={s.appVersionRow}>
@@ -648,6 +683,128 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* ── REBUILD CONFIRMATION MODAL ───────────────────────────────────── */}
+      <Modal visible={showRebuildModal} transparent animationType="slide" onRequestClose={() => setShowRebuildModal(false)}>
+        <View style={s.previewOverlay}>
+          <View style={s.previewSheet}>
+            <View style={s.previewHeader}>
+              <MaterialCommunityIcons name="refresh" size={22} color={COLORS.accent} />
+              <Text style={s.previewTitle}>Rebuild Your Program</Text>
+            </View>
+            <Text style={s.previewSummary}>
+              We'll take you through the setup flow so you can update your goals, training days, or any other preferences. Your new plan will be generated when you finish.
+            </Text>
+
+            {/* KEPT */}
+            <View style={s.rebuildSection}>
+              <View style={[s.rebuildSectionHeader, { backgroundColor: 'rgba(76,175,80,0.1)', borderColor: 'rgba(76,175,80,0.25)' }]}>
+                <MaterialCommunityIcons name="check-circle-outline" size={15} color="#4CAF50" />
+                <Text style={[s.rebuildSectionLabel, { color: '#4CAF50' }]}>KEPT</Text>
+              </View>
+              {[
+                'Training logs & session history',
+                'PRs & personal records',
+                'Coach memory & chat history',
+                'Streaks & badges',
+                'Body weight history',
+              ].map(item => (
+                <View key={item} style={s.rebuildItem}>
+                  <MaterialCommunityIcons name="check" size={13} color="#4CAF50" />
+                  <Text style={s.rebuildItemText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* UPDATED */}
+            <View style={[s.rebuildSection, { marginTop: SPACING.md }]}>
+              <View style={[s.rebuildSectionHeader, { backgroundColor: 'rgba(201,168,76,0.1)', borderColor: 'rgba(201,168,76,0.25)' }]}>
+                <MaterialCommunityIcons name="refresh" size={15} color={COLORS.accent} />
+                <Text style={[s.rebuildSectionLabel, { color: COLORS.accent }]}>UPDATED</Text>
+              </View>
+              {[
+                'Workout plan & programming',
+                'Exercise selection & rotation',
+                'Training split & frequency',
+                'Load prescriptions',
+              ].map(item => (
+                <View key={item} style={s.rebuildItem}>
+                  <MaterialCommunityIcons name="arrow-right" size={13} color={COLORS.accent} />
+                  <Text style={s.rebuildItemText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={[s.previewActions, { marginTop: SPACING.lg }]}>
+              <TouchableOpacity
+                style={s.acceptBtn}
+                onPress={() => {
+                  setShowRebuildModal(false);
+                  router.push({ pathname: '/onboarding-intake', params: { mode: 'rebuild' } });
+                }}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="refresh" size={18} color={COLORS.primary} />
+                <Text style={s.acceptBtnText}>Update My Program</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.cancelPreviewBtn} onPress={() => setShowRebuildModal(false)} activeOpacity={0.8}>
+                <Text style={s.cancelPreviewText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── BETA RESET TYPED CONFIRMATION MODAL ──────────────────────────── */}
+      <Modal visible={showBetaResetModal} transparent animationType="slide" onRequestClose={() => setShowBetaResetModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={s.previewOverlay}>
+            <View style={[s.previewSheet, s.betaModalSheet]}>
+              <View style={s.betaModalHeader}>
+                <MaterialCommunityIcons name="skull-outline" size={28} color="#EF5350" />
+                <Text style={s.betaModalTitle}>DANGER ZONE</Text>
+              </View>
+              <Text style={s.betaModalWarning}>
+                This wipes ALL data permanently: training plan, logs, PRs, profile, coach memory, streaks, and badges.
+              </Text>
+              <Text style={s.betaModalWarning2}>
+                This cannot be undone. There is no recovery.
+              </Text>
+
+              <Text style={s.betaModalInputLabel}>Type RESET to confirm</Text>
+              <TextInput
+                style={s.betaModalInput}
+                value={betaResetText}
+                onChangeText={t => setBetaResetText(t.toUpperCase())}
+                placeholder="RESET"
+                placeholderTextColor="#444"
+                autoCapitalize="characters"
+                returnKeyType="done"
+                autoFocus
+              />
+
+              <View style={[s.previewActions, { marginTop: SPACING.lg }]}>
+                <TouchableOpacity
+                  style={[s.betaResetBtn, betaResetText !== 'RESET' && { opacity: 0.4 }]}
+                  onPress={executeBetaReset}
+                  disabled={betaResetText !== 'RESET'}
+                  activeOpacity={0.85}
+                >
+                  <MaterialCommunityIcons name="delete-forever-outline" size={18} color="#fff" />
+                  <Text style={s.betaResetBtnText}>Delete Everything</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.cancelPreviewBtn}
+                  onPress={() => { setShowBetaResetModal(false); setBetaResetText(''); }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.cancelPreviewText}>Cancel — Keep My Data</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── INJURY PREVIEW MODAL ─────────────────────────────────────────── */}
@@ -914,4 +1071,27 @@ const s = StyleSheet.create({
   acceptBtnText:     { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.primary },
   cancelPreviewBtn:  { height: 44, justifyContent: 'center', alignItems: 'center' },
   cancelPreviewText: { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+
+  // Rebuild modal
+  rebuildSection:       { borderRadius: 14, overflow: 'hidden' },
+  rebuildSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.md, paddingVertical: 9, borderWidth: 1, borderRadius: 14, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  rebuildSectionLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, letterSpacing: 1.2, textTransform: 'uppercase' },
+  rebuildItem:          { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.md, paddingVertical: 8, backgroundColor: 'rgba(255,255,255,0.03)', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  rebuildItemText:      { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary },
+
+  // Beta tester section
+  betaCard:         { borderColor: 'rgba(239,83,80,0.2)', borderWidth: 1 },
+  betaWarningRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  betaWarningText:  { flex: 1, fontSize: FONTS.sizes.xs, color: '#EF5350', lineHeight: 18 },
+
+  // Beta reset modal
+  betaModalSheet:     { backgroundColor: '#110808' },
+  betaModalHeader:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
+  betaModalTitle:     { fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: '#EF5350', letterSpacing: 1.5 },
+  betaModalWarning:   { fontSize: FONTS.sizes.sm, color: '#EF5350', marginBottom: SPACING.sm, lineHeight: 20, opacity: 0.9 },
+  betaModalWarning2:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, marginBottom: SPACING.lg, lineHeight: 18, fontStyle: 'italic' },
+  betaModalInputLabel:{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: COLORS.text.muted, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: SPACING.sm },
+  betaModalInput:     { backgroundColor: '#1E0808', borderRadius: 12, paddingHorizontal: SPACING.md, height: 52, fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy, color: '#EF5350', borderWidth: 1.5, borderColor: 'rgba(239,83,80,0.3)', textAlign: 'center', letterSpacing: 4 },
+  betaResetBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: '#EF5350', borderRadius: 16, height: 52 },
+  betaResetBtnText:   { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: '#fff' },
 });

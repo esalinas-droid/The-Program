@@ -110,6 +110,7 @@ class AthleteProfile(BaseDocument):
     competitionType: Optional[str] = None
     gymTypes: List[str] = []
     trainingDaysCount: int = 4
+    is_beta_tester: bool = False
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -141,6 +142,7 @@ class AthleteProfileUpdate(BaseModel):
     competitionType: Optional[str] = None
     gymTypes: Optional[List[str]] = None
     trainingDaysCount: Optional[int] = None
+    is_beta_tester: Optional[bool] = None
 
 class WorkoutLogEntry(BaseDocument):
     userId: str = ""          # owner of this log entry
@@ -2820,6 +2822,112 @@ async def reset_profile_data(userId: str = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"[RESET] Failed to reset profile for {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Reset failed")
+
+
+@api_router.post("/plans/rebuild")
+async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current_user)):
+    """
+    Non-destructive plan rebuild.
+    Regenerates the workout plan from updated intake answers while strictly
+    preserving: log, tracked_lifts, readiness_checks, pain_reports,
+    calendar_overrides, weekly_reviews, PRs, streaks, badges, coach memory.
+    Only saved_plans is cleared so a fresh plan generation always wins.
+    """
+    from services.rag_plan_generator import generate_plan_with_rag
+    from models.schemas import (
+        UserProfile, GoalType, ExperienceLevel,
+        ProgramChange, ChangeScope, ChangeTrigger,
+    )
+
+    user_id = userId
+    logger.info(f"[REBUILD] userId: '{user_id}' — plan rebuild requested")
+    print(f"[REBUILD] Goal: '{intake.goal}' | Freq: {intake.frequency} | userId: {user_id}")
+
+    # Clear ONLY saved plans — all training history is preserved
+    try:
+        deleted = await db.saved_plans.delete_many({"userId": user_id})
+        _prog_store["plans"].pop(user_id, None)
+        logger.info(f"[REBUILD] Cleared {deleted.deleted_count} stale plan(s) for user: {user_id}")
+    except Exception as _e:
+        logger.warning(f"[REBUILD] Could not clear stale plans: {_e}")
+
+    # Resolve goal / experience enums (same logic as intake)
+    _goal_str = (intake.goal or "").strip()
+    goal_enum = next(
+        (g for g in GoalType if g.value.lower() == _goal_str.lower()),
+        GoalType.STRENGTH,
+    )
+    try:
+        exp_enum = ExperienceLevel(intake.experience)
+    except ValueError:
+        exp_enum = ExperienceLevel.INTERMEDIATE
+
+    profile = UserProfile(
+        userId=user_id,
+        goal=goal_enum,
+        experience=exp_enum,
+        currentLifts=intake.lifts,
+        liftUnit=intake.liftUnit,
+        bodyweight=intake.bodyweight,
+        trainingDays=intake.frequency,
+        injuries=intake.injuries,
+        gymTypes=intake.gym,
+        onboardingComplete=True,
+    )
+    _prog_store["profiles"][user_id] = profile
+
+    # Generate RAG-enhanced plan (graceful fallback inside)
+    plan = await generate_plan_with_rag(intake, _openai_client, _supabase_client)
+    plan.userId = user_id
+    _prog_store["plans"][user_id] = plan
+    rag_enhanced = "(Research-Optimized)" in plan.planName
+
+    # Persist plan to MongoDB
+    await _save_plan_to_db(plan, user_id)
+    print(f"[REBUILD] Plan saved: '{plan.planName}' for userId: {user_id}")
+
+    # Update profile fields — intentionally NOT touching currentWeek, programStartDate,
+    # or any history-adjacent fields.
+    injury_flags = [i for i in (intake.injuries or []) if i and i.lower() not in ("none", "")]
+    profile_update = {
+        "goal": intake.goal,
+        "trainingGoal": intake.goal,
+        "experience": intake.experience,
+        "trainingDaysCount": intake.frequency,
+        "updatedAt": datetime.now(timezone.utc),
+    }
+    if injury_flags:
+        profile_update["injuryFlags"] = injury_flags
+    if intake.bodyweight:
+        profile_update["currentBodyweight"] = intake.bodyweight
+    if intake.primaryWeaknesses:
+        profile_update["primaryWeaknesses"] = intake.primaryWeaknesses
+    if intake.specialtyEquipment:
+        profile_update["specialtyEquipment"] = intake.specialtyEquipment
+    if intake.preferredDays:
+        profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
+    await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
+
+    # Log the rebuild to changelog
+    _prog_store["changes"].append(ProgramChange(
+        changeId=_prog_id(), userId=user_id,
+        triggerType=ChangeTrigger.USER_REQUEST,
+        scope=ChangeScope.YEAR,
+        oldValue="Previous plan",
+        newValue=plan.planName,
+        explanation=(
+            f"Plan rebuilt: {plan.planName} — "
+            f"{intake.goal} goal, {intake.experience} level, "
+            f"{intake.frequency} days/week. Training history preserved."
+        ),
+    ))
+
+    return {
+        "success": True,
+        "message": "Plan rebuilt successfully. Training history preserved.",
+        "plan": plan.model_dump(),
+        "rag_enhanced": rag_enhanced,
+    }
 
 
 # ── Upload Processing Endpoints ────────────────────────────────────────────────

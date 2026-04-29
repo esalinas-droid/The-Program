@@ -26,6 +26,8 @@ export interface AthleteProfile {
   competitionType?: string;
   gymTypes?: string[];
   trainingDaysCount?: number;
+  is_beta_tester?: boolean;
+  preferredDays?: string[];
 }
 
 export interface NotificationSettings {
