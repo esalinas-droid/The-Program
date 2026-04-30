@@ -219,11 +219,9 @@ TRIGGERS = [
         ),
         "cta":      "Talk to Coach",
         "seed_prompt": lambda p: (
-            f"I see you flagged {', '.join(p['body_parts'])} pain recently. "
-            "Walk me through it — when does it hurt, what loads aggravate it, and what helps?"
+            f"I flagged {', '.join(p['body_parts'])} pain. Can we talk through it — when it hurts, what loads aggravate it, what helps?"
             if p.get("body_parts") else
-            "I see you flagged pain recently. Walk me through it — when does it hurt, "
-            "what loads aggravate it, and what helps?"
+            "I flagged some pain recently. Can we talk through it — when it hurts, what loads aggravate it, what helps?"
         ),
     },
     {
@@ -234,8 +232,7 @@ TRIGGERS = [
         "card_text": lambda p: f"You've missed {p.get('missed_count', 2)} sessions this week. Let's recalibrate.",
         "cta":      "Talk to Coach",
         "seed_prompt": lambda p: (
-            f"I see you missed {p.get('missed_count', 2)} sessions this week. Before we just push forward, "
-            "let's talk about what's getting in the way. Tight schedule, low energy, something else?"
+            f"I missed {p.get('missed_count', 2)} sessions this week. Help me figure out what's getting in the way before I just push forward — tight schedule, low energy, or something else?"
         ),
     },
     {
@@ -246,8 +243,7 @@ TRIGGERS = [
         "card_text": lambda p: f"Your volume jumped {p.get('pct', 30)}% this week. Time to dial it back?",
         "cta":      "Ask Coach",
         "seed_prompt": lambda p: (
-            f"Your volume is up significantly — {p.get('pct', 30)}% above your recent average. "
-            "This can be intentional or it can be a sign you're chasing the dragon. How do you feel?"
+            f"My volume jumped {p.get('pct', 30)}% this week. Is this intentional progress or a sign I'm chasing the dragon? Help me check in."
         ),
     },
     {
@@ -258,9 +254,7 @@ TRIGGERS = [
         "card_text": lambda p: f"Your RPE is climbing ({p.get('avg_recent', 9.0)}). Recovery check-in?",
         "cta":      "Ask Coach",
         "seed_prompt": lambda p: (
-            f"Your RPE has been creeping up — last 3 sessions averaged {p.get('avg_recent', 9.0)} "
-            f"vs. {p.get('avg_previous', 8.0)} before. This often means accumulated fatigue, life stress, "
-            "or load is too high. Which do you think it is?"
+            f"My RPE is climbing — last 3 sessions averaged {p.get('avg_recent', 9.0)} vs. {p.get('avg_previous', 8.0)} before. Is it accumulated fatigue, life stress, or load that's too high?"
         ),
     },
     {
@@ -271,9 +265,7 @@ TRIGGERS = [
         "card_text": lambda p: f"You're due for a recovery week (week {p.get('current_week', 4)}). Let's plan it.",
         "cta":      "Talk to Coach",
         "seed_prompt": lambda p: (
-            f"You've been pushing for {p.get('current_week', 4)} weeks straight. "
-            "A recovery week now will set up the next block better than pushing through. "
-            "Want to make this week your deload?"
+            f"I've been pushing for {p.get('current_week', 4)} weeks straight. Should I make this week a recovery week, or push through?"
         ),
     },
     {
@@ -284,9 +276,9 @@ TRIGGERS = [
         "card_text": lambda p: f"You hit {p.get('pr_count', 2)} PRs this week. Nice.",
         "cta":      "Tell Coach",
         "seed_prompt": lambda p: (
-            f"{p.get('pr_count', 2)} PRs this week — "
+            f"I hit {p.get('pr_count', 2)} PRs this week — "
             f"{', '.join(p.get('pr_exercises', []))}. "
-            "Talk to me about what felt different. Was it programming, sleep, technique?"
+            "What's clicking? Is it programming, sleep, technique?"
         ),
     },
 ]
