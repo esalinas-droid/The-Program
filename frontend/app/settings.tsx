@@ -145,11 +145,37 @@ export default function SettingsScreen() {
   async function updateProfile(updates: Partial<AthleteProfile>) {
     if (!profile) return;
     setSaving(true);
+
+    // Snapshot current state so we can roll back if the backend call fails
+    const previousProfile = profile;
+
+    // Optimistic update — show change immediately in UI and local cache
     const updated = { ...profile, ...updates };
     setProfile(updated as AthleteProfile);
     await saveProfile(updated as AthleteProfile);
-    try { await profileApi.update(updates); } catch {}
-    setSaving(false);
+
+    try {
+      await profileApi.update(updates);
+    } catch (e) {
+      // Fix A: backend sync failed — roll back both React state and AsyncStorage
+      // so the UI reflects the actual persisted state (not a ghost save).
+      setProfile(previousProfile);
+      await saveProfile(previousProfile);
+      console.warn('[Settings] Backend profile update failed — rolled back local cache:', e);
+      Alert.alert(
+        'Sync Failed',
+        "Couldn't save changes to the server. Your local view has been reverted.\n\nTap Retry to try again.",
+        [
+          { text: 'Dismiss', style: 'cancel' },
+          {
+            text: 'Retry',
+            onPress: () => updateProfile(updates),
+          },
+        ]
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ── Edit profile modal ────────────────────────────────────────────────────
@@ -211,7 +237,12 @@ export default function SettingsScreen() {
     setShowPreview(false);
     try {
       const result: any = await planApi.applyInjuryUpdate(liveInjuries);
-      await updateProfile({ injuryFlags: liveInjuries });
+      // applyInjuryUpdate already persists injuryFlags to MongoDB.
+      // Update local React state + AsyncStorage directly (no second backend call)
+      // so Fix A's rollback logic doesn't incorrectly fire on a succeeded operation.
+      const updatedProfile = { ...profile!, injuryFlags: liveInjuries };
+      setProfile(updatedProfile as AthleteProfile);
+      await saveProfile(updatedProfile as AthleteProfile);
       setInjuriesModified(false);
       const swapped = result?.exercises_swapped ?? 0;
       const msg = swapped > 0

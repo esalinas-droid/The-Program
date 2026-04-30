@@ -36,6 +36,16 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ── Preferred-day presets (mirrors frontend DAY_MAP) ─────────────────────────
+# Keyed by training frequency. Used to auto-populate preferredDays when the
+# user's intake doesn't specify explicit day picks, and during DB migration.
+_PREFERRED_DAY_DEFAULTS: dict[int, list[str]] = {
+    3: ["monday", "wednesday", "friday"],
+    4: ["monday", "tuesday", "thursday", "friday"],
+    5: ["monday", "tuesday", "thursday", "friday", "saturday"],
+    6: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+}
+
 # ── Exercise Name Canonical Migration Map ────────────────────────────────────
 # Maps old/incorrect exercise names → correct canonical names.
 # Used during startup migration and in any new lookup that needs normalization.
@@ -111,6 +121,7 @@ class AthleteProfile(BaseDocument):
     competitionType: Optional[str] = None
     gymTypes: List[str] = []
     trainingDaysCount: int = 4
+    preferredDays: List[str] = []        # e.g. ["monday","tuesday","thursday","friday"]
     is_beta_tester: bool = False
     training_mode: str = 'program'       # 'program' | 'free'
     has_imported_program: bool = False
@@ -145,6 +156,7 @@ class AthleteProfileUpdate(BaseModel):
     competitionType: Optional[str] = None
     gymTypes: Optional[List[str]] = None
     trainingDaysCount: Optional[int] = None
+    preferredDays: Optional[List[str]] = None      # sync with AthleteProfile.preferredDays
     is_beta_tester: Optional[bool] = None
     training_mode: Optional[str] = None
     has_imported_program: Optional[bool] = None
@@ -1950,6 +1962,57 @@ async def _migrate_training_mode():
         logger.warning(f"[MIGRATION] training_mode backfill failed: {e}")
 
 
+async def _migrate_preferred_days():
+    """
+    Fix D — One-time migration: sync preferredDays with trainingDaysCount.
+
+    Rules (in priority order):
+      1. trainingDaysCount set AND len(preferredDays) != trainingDaysCount
+         → regenerate preferredDays from _PREFERRED_DAY_DEFAULTS[trainingDaysCount]
+      2. preferredDays set but trainingDaysCount missing / 0
+         → infer trainingDaysCount = len(preferredDays)
+      3. Both missing / both empty → skip (next intake will populate both)
+    """
+    try:
+        profiles = await db.profile.find({}).to_list(5000)
+        modified = 0
+        for p in profiles:
+            tc  = p.get("trainingDaysCount") or 0
+            pd  = p.get("preferredDays") or []
+            uid = str(p.get("userId", p.get("_id", "?")))
+
+            if tc and len(pd) != tc:
+                # Primary rule: trainingDaysCount is authoritative — realign preferredDays
+                default_days = _PREFERRED_DAY_DEFAULTS.get(tc, [])
+                if default_days:
+                    await db.profile.update_one(
+                        {"_id": p["_id"]},
+                        {"$set": {"preferredDays": default_days}},
+                    )
+                    modified += 1
+                    logger.info(
+                        f"[MIGRATION] preferredDays fixed for user {uid}: "
+                        f"{len(pd)} entries → {len(default_days)} (DAY_MAP[{tc}])"
+                    )
+            elif pd and not tc:
+                # Reverse rule: infer trainingDaysCount from existing preferredDays
+                await db.profile.update_one(
+                    {"_id": p["_id"]},
+                    {"$set": {"trainingDaysCount": len(pd)}},
+                )
+                modified += 1
+                logger.info(
+                    f"[MIGRATION] trainingDaysCount inferred for user {uid}: {len(pd)} days"
+                )
+
+        if modified:
+            logger.info(f"[MIGRATION] preferredDays sync: {modified} profile(s) updated")
+        else:
+            logger.info("[MIGRATION] preferredDays sync: all profiles already consistent — no changes needed")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] preferredDays sync failed: {e}")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -1967,6 +2030,8 @@ async def load_models():
     await _migrate_exercise_names()
     # Backfill training_mode='program' on all existing onboarded profiles
     await _migrate_training_mode()
+    # Fix D: sync preferredDays with trainingDaysCount for all existing profiles
+    await _migrate_preferred_days()
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
@@ -3111,6 +3176,11 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
         profile_update["specialtyEquipment"] = intake.specialtyEquipment
     if intake.preferredDays:
         profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
+    else:
+        # Fix C: auto-populate from default map when not explicitly provided
+        default_days = _PREFERRED_DAY_DEFAULTS.get(intake.frequency, [])
+        if default_days:
+            profile_update["preferredDays"] = default_days
     await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
 
     # Log the rebuild to changelog
@@ -3531,6 +3601,11 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
         profile_update["specialtyEquipment"] = intake.specialtyEquipment
     if intake.preferredDays:
         profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
+    else:
+        # Fix C: auto-populate from default map when not explicitly provided
+        default_days = _PREFERRED_DAY_DEFAULTS.get(intake.frequency, [])
+        if default_days:
+            profile_update["preferredDays"] = default_days
     # Always upsert — creates profile for new users, updates existing users
     await db.profile.update_one({"userId": user_id}, {"$set": profile_update}, upsert=True)
 
