@@ -111,6 +111,8 @@ class AthleteProfile(BaseDocument):
     gymTypes: List[str] = []
     trainingDaysCount: int = 4
     is_beta_tester: bool = False
+    training_mode: str = 'program'       # 'program' | 'free'
+    has_imported_program: bool = False
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -143,6 +145,8 @@ class AthleteProfileUpdate(BaseModel):
     gymTypes: Optional[List[str]] = None
     trainingDaysCount: Optional[int] = None
     is_beta_tester: Optional[bool] = None
+    training_mode: Optional[str] = None
+    has_imported_program: Optional[bool] = None
 
 class WorkoutLogEntry(BaseDocument):
     userId: str = ""          # owner of this log entry
@@ -413,6 +417,10 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
 async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     """Get today's session — auto-loads plan from MongoDB if not in memory."""
     from models.schemas import PhaseStatus as _PhaseStatus, SessionStatus as _SessionStatus
+    # Free-training mode: no scheduled sessions
+    _profile_doc = await db.profile.find_one({"userId": userId})
+    if _profile_doc and _profile_doc.get("training_mode") == "free":
+        raise HTTPException(status_code=404, detail="Free training mode — no scheduled sessions")
     await _ensure_plan_loaded(userId)
     plan = _prog_store["plans"].get(userId)
     if not plan:
@@ -1845,6 +1853,21 @@ async def _migrate_exercise_names():
         logger.info("[MIGRATION] No exercise name migrations needed — all names are canonical")
 
 
+async def _migrate_training_mode():
+    """Backfill training_mode='program' for all profiles where onboardingComplete=True."""
+    try:
+        result = await db.profile.update_many(
+            {"onboardingComplete": True, "training_mode": {"$exists": False}},
+            {"$set": {"training_mode": "program"}}
+        )
+        if result.modified_count > 0:
+            logger.info(f"[MIGRATION] Backfilled training_mode='program' on {result.modified_count} profile(s)")
+        else:
+            logger.info("[MIGRATION] training_mode already set on all profiles — no backfill needed")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] training_mode backfill failed: {e}")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -1860,6 +1883,8 @@ async def load_models():
     await _migrate_log_entries_add_userid()
     # Run migration to canonicalize exercise names in tracked_lifts and log entries
     await _migrate_exercise_names()
+    # Backfill training_mode='program' on all existing onboarded profiles
+    await _migrate_training_mode()
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
@@ -3012,6 +3037,44 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
         "message": "Plan rebuilt successfully. Training history preserved.",
         "plan": plan.model_dump(),
         "rag_enhanced": rag_enhanced,
+    }
+
+
+@api_router.post("/profile/switch-mode")
+async def switch_training_mode(body: dict, userId: str = Depends(get_current_user)):
+    """Switch user between 'program' and 'free' training modes.
+    - 'free': archives current plan (not deleted), sets training_mode='free'
+    - 'program': sets training_mode='program', returns needsPathChoice=True so
+      frontend can route to the path picker
+    """
+    mode = body.get("mode")
+    if mode not in ("program", "free"):
+        raise HTTPException(status_code=400, detail="mode must be 'program' or 'free'")
+
+    if mode == "free":
+        # Archive current plan(s) — never delete
+        await db.saved_plans.update_many(
+            {"userId": userId, "status": {"$ne": "archived"}},
+            {"$set": {"status": "archived"}}
+        )
+        _prog_store["plans"].pop(userId, None)
+        logger.info(f"[SwitchMode] Archived active plan(s) for userId: {userId}")
+
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {"training_mode": mode, "updatedAt": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    logger.info(f"[SwitchMode] userId={userId} → training_mode='{mode}'")
+
+    doc = await db.profile.find_one({"userId": userId})
+    profile_out = AthleteProfile.from_mongo(doc).model_dump(exclude={"id"}) if doc else {}
+
+    return {
+        "success": True,
+        "mode": mode,
+        "needsPathChoice": mode == "program",
+        "profile": profile_out,
     }
 
 

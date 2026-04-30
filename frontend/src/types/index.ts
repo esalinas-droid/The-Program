@@ -27,6 +27,8 @@ export interface AthleteProfile {
   gymTypes?: string[];
   trainingDaysCount?: number;
   is_beta_tester?: boolean;
+  training_mode?: 'program' | 'free';
+  has_imported_program?: boolean;
   preferredDays?: string[];
 }
 

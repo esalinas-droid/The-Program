@@ -953,11 +953,23 @@ function StarterPrompts({ onSelect, profile }: { onSelect: (text: string) => voi
       {/* ── Context banner ── */}
       {hasProfile && (
         <View style={sp.contextBanner}>
-          <MaterialCommunityIcons name="map-marker-path" size={14} color={COLORS.accent} style={{ marginRight: 6 }} />
-          <Text style={sp.contextText}>
-            Currently coaching you through:{' '}
-            <Text style={sp.contextHighlight}>Block {block} — {phase} Phase, Week {week}</Text>
-          </Text>
+          <MaterialCommunityIcons
+            name={profile?.training_mode === 'free' ? 'notebook-outline' : 'map-marker-path'}
+            size={14}
+            color={profile?.training_mode === 'free' ? '#2A9D8F' : COLORS.accent}
+            style={{ marginRight: 6 }}
+          />
+          {profile?.training_mode === 'free' ? (
+            <Text style={[sp.contextText, { color: '#A0A0B0' }]}>
+              Coaching mode:{' '}
+              <Text style={[sp.contextHighlight, { color: '#2A9D8F' }]}>Free training. Ask me about anything in your training history.</Text>
+            </Text>
+          ) : (
+            <Text style={sp.contextText}>
+              Currently coaching you through:{' '}
+              <Text style={sp.contextHighlight}>Block {block} — {phase} Phase, Week {week}</Text>
+            </Text>
+          )}
         </View>
       )}
 

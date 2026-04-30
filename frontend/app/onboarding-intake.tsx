@@ -251,8 +251,10 @@ const DAY_MAP: Record<number, string[]> = {
 
 export default function OnboardingIntake() {
   const router = useRouter();
-  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const { mode, path } = useLocalSearchParams<{ mode?: string; path?: string }>();
   const isRebuildMode = mode === 'rebuild';
+  const isFreeMode    = path === 'free';
+  const FREE_TOTAL    = 3;  // free mode shows only 3 steps
 
   // ── Core state ──────────────────────────────────────────────────────────────
   const [step,         setStep]        = useState(1);
@@ -442,6 +444,16 @@ export default function OnboardingIntake() {
 
   // ── Validation ─────────────────────────────────────────────────────────────
   const canContinue = (): boolean => {
+    // ── Free mode: 3 simplified steps ────────────────────────────────────
+    if (isFreeMode) {
+      switch (step) {
+        case 1: return userName.trim().length >= 2 && !!experience;
+        case 2: return bodyweight.trim() !== '' && parseFloat(bodyweight) > 0;
+        case 3: return true; // injuries optional, always skippable
+        default: return false;
+      }
+    }
+    // ── Full mode: 13 steps ───────────────────────────────────────────────
     switch (step) {
       case 1:  return userName.trim().length >= 2;
       case 2:  return !!goal;
@@ -464,15 +476,17 @@ export default function OnboardingIntake() {
     }
   };
 
+  const _totalSteps = isFreeMode ? FREE_TOTAL : TOTAL_STEPS;
+
   // ── Navigation ─────────────────────────────────────────────────────────────
   const goNext = () => {
-    if (step === TOTAL_STEPS) { handleComplete(); return; }
+    if (step === _totalSteps) { handleComplete(); return; }
     if (!canContinue()) return;
     transition(step + 1);
   };
   const goBack = () => { if (step > 1) transition(step - 1); };
   const goSkip = () => {
-    if (step === TOTAL_STEPS) { handleComplete(); return; }
+    if (step === _totalSteps) { handleComplete(); return; }
     transition(step + 1);
   };
 
@@ -673,9 +687,35 @@ export default function OnboardingIntake() {
         setSaving(false);
         return;
       }
+      // ── FREE MODE: save profile only — no plan generated ──────────────────
+      if (isFreeMode) {
+        console.log('[Onboarding Free] Saving free-mode profile...');
+        const cleanInjFree = (injuries || []).filter(i => i && i.toLowerCase() !== 'none');
+        await profileApi.update({
+          name: userName.trim(),
+          experience,
+          currentBodyweight: parseFloat(bodyweight) || undefined,
+          units: liftUnit,
+          injuryFlags: cleanInjFree,
+          training_mode: 'free',
+          has_imported_program: false,
+          onboardingComplete: true,
+        } as any);
+        await saveProfile({
+          name: userName.trim(),
+          experience,
+          currentBodyweight: parseFloat(bodyweight) || undefined,
+          units: liftUnit,
+          injuryFlags: cleanInjFree,
+          training_mode: 'free',
+          has_imported_program: false,
+          onboardingComplete: true,
+        } as any);
+        setSaving(false);
+        router.replace('/(tabs)');
+        return;
+      }
       // ──────────────────────────────────────────────────────────────────────
-
-      console.log('[Onboarding] Step 2 — Calling programApi.submitIntake with payload:', JSON.stringify(payload, null, 2));
 
       const response = await programApi.submitIntake(payload);
       console.log('[Onboarding] Step 2 — Response received:', JSON.stringify(response, null, 2));
@@ -1513,7 +1553,26 @@ export default function OnboardingIntake() {
     </View>
   );
 
+  // ── Free mode: combined Name + Experience step ───────────────────────────
+  const renderFreeStep1 = () => (
+    <View>
+      {/* Name */}
+      {renderNameStep()}
+      {/* Experience — shown right below name in free mode */}
+      <Text style={[s.stepLabel, { marginTop: 28, marginBottom: 8 }]}>Experience level</Text>
+      {renderStep2()}
+    </View>
+  );
+
   const renderContent = () => {
+    if (isFreeMode) {
+      switch (step) {
+        case 1: return renderFreeStep1();    // Name + Experience
+        case 2: return renderStep4();        // Bodyweight + units
+        case 3: return renderStep8();        // Injuries
+        default: return null;
+      }
+    }
     switch (step) {
       case 1:  return renderNameStep();
       case 2:  return renderStep1();
@@ -1533,8 +1592,8 @@ export default function OnboardingIntake() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const meta       = STEP_META[step - 1];
-  const isLastStep = step === TOTAL_STEPS;
+  const meta       = isFreeMode ? { title: ['Set up your profile', 'Body weight', 'Injuries'][step - 1] || '' } : STEP_META[step - 1];
+  const isLastStep = step === _totalSteps;
   const active     = canContinue();
 
   return (
@@ -1550,7 +1609,7 @@ export default function OnboardingIntake() {
           )}
 
           <View style={s.dotsRow}>
-            {Array.from({ length: TOTAL_STEPS }, (_, i) => {
+            {Array.from({ length: _totalSteps }, (_, i) => {
               const n = i + 1;
               return (
                 <View
@@ -1580,6 +1639,13 @@ export default function OnboardingIntake() {
           <View style={s.rebuildBanner}>
             <MaterialCommunityIcons name="update" size={13} color={COLORS.accent} />
             <Text style={s.rebuildBannerText}>REBUILD MODE — history &amp; logs are safe</Text>
+          </View>
+        )}
+        {/* ── Free mode banner ── */}
+        {isFreeMode && (
+          <View style={[s.rebuildBanner, { backgroundColor: 'rgba(42,157,143,0.06)', borderBottomColor: 'rgba(42,157,143,0.18)' }]}>
+            <MaterialCommunityIcons name="notebook-outline" size={13} color="#2A9D8F" />
+            <Text style={[s.rebuildBannerText, { color: '#2A9D8F' }]}>FREE TRAINING — no plan generated</Text>
           </View>
         )}
         <Animated.View style={[s.contentWrap, { opacity: containerFade }]}>
@@ -1623,8 +1689,8 @@ export default function OnboardingIntake() {
               <>
                 <Text style={[s.ctaText, !active && s.ctaTextOff]}>
                   {isLastStep
-                    ? (isRebuildMode ? 'Rebuild My Program' : 'Build My Program')
-                    : 'Continue'}
+                    ? (isRebuildMode ? 'Rebuild My Program' : isFreeMode ? 'Done' : 'Build My Program')
+                    : (isFreeMode && step === _totalSteps - 1 ? 'Almost done' : 'Continue')}
                 </Text>
                 {(active || isLastStep) && (
                   <MaterialCommunityIcons
@@ -1637,7 +1703,7 @@ export default function OnboardingIntake() {
               </>
             )}
           </TouchableOpacity>
-          <Text style={s.stepCounter}>{step} of {TOTAL_STEPS}</Text>
+          <Text style={s.stepCounter}>{step} of {_totalSteps}</Text>
         </View>
     </SafeAreaView>
   );

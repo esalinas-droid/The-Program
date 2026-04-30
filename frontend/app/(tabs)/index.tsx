@@ -415,8 +415,21 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* ── TODAY'S SESSION CARD — 4-STATE (prominently first) ── */}
-        {sessionCardState === 'rest_day' ? (
+        {/* ── TODAY'S SESSION CARD — program mode or free training ── */}
+        {profile?.training_mode === 'free' ? (
+          /* ── FREE TRAINING CARD ── */
+          <View style={[s.restDayCard, { borderColor: '#2A9D8F30', backgroundColor: '#0E1614' }]}>
+            <View style={[s.restDayIcon, { backgroundColor: '#2A9D8F15' }]}>
+              <MaterialCommunityIcons name="notebook-outline" size={26} color="#2A9D8F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.restDayTitle, { color: '#2A9D8F' }]}>Free Training Mode</Text>
+              <Text style={s.restDayText}>
+                You're doing your own programming. Log when you train — the coach has full context of your training history.
+              </Text>
+            </View>
+          </View>
+        ) : sessionCardState === 'rest_day' ? (
           /* ── REST DAY ── */
           <View testID="today-session-card" style={s.restDayCard}>
             <View style={s.restDayIcon}>
@@ -646,7 +659,8 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ── COACH'S DIRECTIVE (condensed + expandable) ── */}
+        {/* ── COACH'S DIRECTIVE (program mode only) ── */}
+        {profile?.training_mode !== 'free' && (
         <View style={s.coachCard}>
           <View style={s.coachCardHeader}>
             <View style={s.coachIconBadge}>
@@ -674,9 +688,10 @@ export default function Dashboard() {
             <Text style={s.coachCardTag}>{phase} Phase</Text>
           </View>
         </View>
+        )} {/* end program-only coach directive */}
 
-        {/* ── THIS WEEK OVERVIEW ── */}
-        {weekEvents.length > 0 && (
+        {/* ── THIS WEEK OVERVIEW (program mode only) ── */}
+        {profile?.training_mode !== 'free' && weekEvents.length > 0 && (
           <View style={{ marginHorizontal: 16, marginBottom: 20 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <Text style={{ fontSize: 10, color: '#666', fontWeight: '700', letterSpacing: 1.2 }}>THIS WEEK</Text>
@@ -804,7 +819,8 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ── CURRENT BLOCK (compact) ── */}
+        {/* ── CURRENT BLOCK (program mode only, compact) ── */}
+        {profile?.training_mode !== 'free' && (
         <View style={s.compactBlockCard}>
           <View style={s.compactBlockRow}>
             <Text style={s.compactBlockLine}>
@@ -825,6 +841,7 @@ export default function Dashboard() {
           </View>
           <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
         </View>
+        )} {/* end program-only current block */}
 
         {/* ── EST. MAXES ── */}
         {bests && (

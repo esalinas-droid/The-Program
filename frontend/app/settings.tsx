@@ -112,6 +112,8 @@ export default function SettingsScreen() {
           // (these are flags the user cannot toggle from settings)
           const SERVER_AUTHORITATIVE_FIELDS: (keyof AthleteProfile)[] = [
             'is_beta_tester',
+            'training_mode',
+            'has_imported_program',
             'currentWeek',
             'programStartDate',
             'onboardingComplete',
@@ -251,6 +253,21 @@ export default function SettingsScreen() {
   // ── Rebuild modal state ───────────────────────────────────────────────────
   const [showRebuildModal, setShowRebuildModal] = useState(false);
 
+  // ── Mode-switch state ──────────────────────────────────────────────────────
+  const [showModeSwitchModal, setShowModeSwitchModal] = useState(false);
+  const [modeSwitching, setModeSwitching] = useState(false);
+
+  const executeSwitchToFree = async () => {
+    setModeSwitching(true);
+    setShowModeSwitchModal(false);
+    try {
+      await profileApi.switchMode('free');
+      await saveProfile({ ...profile, training_mode: 'free' } as any);
+    } catch (e) { console.warn('[ModeSwitchFree] error', e); }
+    setModeSwitching(false);
+    router.replace('/(tabs)');
+  };
+
   // ── Beta reset modal state ─────────────────────────────────────────────────
   const [showBetaResetModal, setShowBetaResetModal] = useState(false);
   const [betaResetText,      setBetaResetText]      = useState('');
@@ -341,9 +358,23 @@ export default function SettingsScreen() {
         {/* ── TRAINING PROFILE ── */}
         <SectionHeader title="TRAINING PROFILE" />
         <View style={s.card}>
-          <InfoRow label="Current week"   value={`Week ${profile?.currentWeek || 1}`} />
-          <InfoRow label="Program start"  value={formatDate(profile?.programStartDate)} />
-          <InfoRow label="Training days"  value={`${(profile as any)?.trainingDaysCount || 4} days/week`} last />
+          {profile?.training_mode === 'free' ? (
+            <View style={[s.accountRow, { borderBottomWidth: 0 }]}>
+              <View style={[s.accountIconWrap, { backgroundColor: 'rgba(42,157,143,0.1)' }]}>
+                <MaterialCommunityIcons name="notebook-outline" size={16} color="#2A9D8F" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.accountRowLabel}>Mode: Free training</Text>
+                <Text style={s.accountRowDesc}>No plan. Log sessions, track PRs, use the coach.</Text>
+              </View>
+            </View>
+          ) : (
+            <>
+              <InfoRow label="Current week"   value={`Week ${profile?.currentWeek || 1}`} />
+              <InfoRow label="Program start"  value={formatDate(profile?.programStartDate)} />
+              <InfoRow label="Training days"  value={`${(profile as any)?.trainingDaysCount || 4} days/week`} last />
+            </>
+          )}
         </View>
 
         {/* ── ACTIVE INJURIES ── */}
@@ -499,7 +530,36 @@ export default function SettingsScreen() {
         {/* ── ACCOUNT ── */}
         <SectionHeader title="ACCOUNT" />
         <View style={s.card}>
-          {/* Rebuild program — non-destructive */}
+          {/* Mode switcher row */}
+          {profile?.training_mode === 'free' ? (
+            <TouchableOpacity style={s.accountRow} onPress={() => router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } })} activeOpacity={0.7}>
+              <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
+                <MaterialCommunityIcons name="brain" size={16} color={COLORS.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.accountRowLabel}>Switch to a program</Text>
+                <Text style={s.accountRowDesc}>Get an AI-built or imported plan. Logs and coach history kept.</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={s.accountRow} onPress={() => setShowModeSwitchModal(true)} activeOpacity={0.7} disabled={modeSwitching}>
+              <View style={[s.accountIconWrap, { backgroundColor: 'rgba(42,157,143,0.1)' }]}>
+                {modeSwitching
+                  ? <ActivityIndicator size="small" color="#2A9D8F" />
+                  : <MaterialCommunityIcons name="notebook-outline" size={16} color="#2A9D8F" />
+                }
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.accountRowLabel}>Switch to free training</Text>
+                <Text style={s.accountRowDesc}>Drop the plan, keep your logs and coach</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+            </TouchableOpacity>
+          )}
+
+          {/* Rebuild program — non-destructive (program mode only) */}
+          {profile?.training_mode !== 'free' && (
           <TouchableOpacity style={s.accountRow} onPress={() => setShowRebuildModal(true)} activeOpacity={0.7}>
             <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
               <MaterialCommunityIcons name="refresh" size={16} color={COLORS.accent} />
@@ -510,6 +570,7 @@ export default function SettingsScreen() {
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
           </TouchableOpacity>
+          )}
 
           {/* Sign out */}
           <TouchableOpacity
@@ -702,6 +763,54 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* ── SWITCH TO FREE TRAINING CONFIRM MODAL ────────────────────────── */}
+      <Modal visible={showModeSwitchModal} transparent animationType="slide" onRequestClose={() => setShowModeSwitchModal(false)}>
+        <View style={s.previewOverlay}>
+          <View style={s.previewSheet}>
+            <View style={s.previewHeader}>
+              <MaterialCommunityIcons name="notebook-outline" size={22} color="#2A9D8F" />
+              <Text style={s.previewTitle}>Switch to free training?</Text>
+            </View>
+            <Text style={s.previewSummary}>
+              Your plan will be archived — not deleted. You'll keep all logs, PRs, and coach memory. You can switch back anytime via "Switch to a program."
+            </Text>
+            <View style={[s.rebuildSection, { marginBottom: SPACING.md }]}>
+              <View style={[s.rebuildSectionHeader, { backgroundColor: 'rgba(76,175,80,0.1)', borderColor: 'rgba(76,175,80,0.25)' }]}>
+                <MaterialCommunityIcons name="check-circle-outline" size={15} color="#4CAF50" />
+                <Text style={[s.rebuildSectionLabel, { color: '#4CAF50' }]}>KEPT</Text>
+              </View>
+              {['Training logs & sessions', 'PRs & personal records', 'Coach memory', 'Streaks & badges'].map(item => (
+                <View key={item} style={s.rebuildItem}>
+                  <MaterialCommunityIcons name="check" size={13} color="#4CAF50" />
+                  <Text style={s.rebuildItemText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={[s.rebuildSection, { marginBottom: SPACING.lg }]}>
+              <View style={[s.rebuildSectionHeader, { backgroundColor: 'rgba(120,120,140,0.1)', borderColor: 'rgba(120,120,140,0.25)' }]}>
+                <MaterialCommunityIcons name="archive-outline" size={15} color={COLORS.text.muted} />
+                <Text style={[s.rebuildSectionLabel, { color: COLORS.text.muted }]}>ARCHIVED</Text>
+              </View>
+              {['Workout plan', 'Scheduled sessions'].map(item => (
+                <View key={item} style={s.rebuildItem}>
+                  <MaterialCommunityIcons name="arrow-right" size={13} color={COLORS.text.muted} />
+                  <Text style={s.rebuildItemText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={s.previewActions}>
+              <TouchableOpacity style={[s.acceptBtn, { backgroundColor: '#2A9D8F' }]} onPress={executeSwitchToFree} activeOpacity={0.85}>
+                <MaterialCommunityIcons name="notebook-outline" size={18} color="#fff" />
+                <Text style={[s.acceptBtnText, { color: '#fff' }]}>Switch to free training</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.cancelPreviewBtn} onPress={() => setShowModeSwitchModal(false)} activeOpacity={0.8}>
+                <Text style={s.cancelPreviewText}>Cancel — keep my program</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* ── REBUILD CONFIRMATION MODAL ───────────────────────────────────── */}

@@ -137,7 +137,7 @@ export default function Index() {
 
   // Route: no token → auth screen, no onboarding → intake, else → tabs
   if (!authed) return <Redirect href="/auth" />;
-  if (!onboarded) return <Redirect href="/onboarding-intake" />;
+  if (!onboarded) return <Redirect href="/onboarding-path-picker" />;
   return <Redirect href="/(tabs)" />;
 }
 

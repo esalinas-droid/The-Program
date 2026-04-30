@@ -117,6 +117,8 @@ export const profileApi = {
   create: (data: Partial<AthleteProfile>) => api('/profile', { method: 'POST', body: JSON.stringify(data) }),
   update: (data: Partial<AthleteProfile>) => api('/profile', { method: 'PUT', body: JSON.stringify(data) }),
   reset: () => api('/profile/reset', { method: 'POST' }),
+  switchMode: (mode: 'program' | 'free'): Promise<{ success: boolean; mode: string; needsPathChoice: boolean; profile: any }> =>
+    api('/profile/switch-mode', { method: 'POST', body: JSON.stringify({ mode }) }),
 };
 
 // Auth — endpoints under /api/auth that aren't login/register (those are

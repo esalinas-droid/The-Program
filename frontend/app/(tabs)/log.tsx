@@ -520,6 +520,7 @@ export default function ScheduleScreen() {
   const [calEventsRaw, setCalEventsRaw] = useState<any[]>([]);
   // true when today's session is formally finished (programApi.getTodaySession returns 404)
   const [todaySessionDone, setTodaySessionDone] = useState(false);
+  const [trainingMode, setTrainingMode] = useState<'program' | 'free'>('program');
 
   const weekOffsetRef = useRef(0);
   const [weekOffset, _setWeekOffset]   = useState(0);
@@ -540,6 +541,10 @@ export default function ScheduleScreen() {
     const today = getLocalDateString();
     setLoading(true);
     try {
+      // Check training mode first
+      const prof = await import('../../src/utils/storage').then(m => m.getProfile());
+      setTrainingMode((prof?.training_mode as 'program' | 'free') || 'program');
+      if (prof?.training_mode === 'free') { setLoading(false); return; }
       const weekDates  = getWeekDates(offset);
       const startDate  = weekDates[0];
       const endDate    = weekDates[6];
@@ -768,6 +773,26 @@ export default function ScheduleScreen() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]} {...panResponder.panHandlers}>
+      {/* Free training mode: show empty state instead of schedule */}
+      {trainingMode === 'free' ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
+          <MaterialCommunityIcons name="calendar-blank-outline" size={48} color="#2A9D8F" />
+          <Text style={{ fontSize: 20, fontWeight: '700', color: '#F2F2F7', textAlign: 'center' }}>
+            Free training mode
+          </Text>
+          <Text style={{ fontSize: 15, color: '#A0A0B0', textAlign: 'center', lineHeight: 22 }}>
+            No scheduled sessions. Tap 'Log Session' to record a workout.
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
+            onPress={() => router.push('/session-detail')}
+            activeOpacity={0.85}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+      <>
       {/* Part 1A: Header with WeekRing */}
       <View style={s.header}>
         <View>
@@ -924,6 +949,8 @@ export default function ScheduleScreen() {
           </>
         )}
       </ScrollView>
+      </>
+      )}
     </View>
   );
 }

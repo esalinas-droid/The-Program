@@ -1516,7 +1516,8 @@ export default function TodayScreen() {
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
-  const [sessionFinished, setSessionFinished] = useState(false); // hides FINISH after completion
+  const [sessionFinished, setSessionFinished] = useState(false);
+  const [trainingMode, setTrainingMode] = useState<'program' | 'free'>('program');
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -2029,6 +2030,7 @@ export default function TodayScreen() {
       const w    = prof?.currentWeek || 1;
       setWeek(w);
       setInjuryFlags(prof?.injuryFlags || []);
+      setTrainingMode((prof?.training_mode as 'program' | 'free') || 'program');
       const day  = todayName === 'Sunday' ? 'Monday' : todayName;
       const sess = getProgramSession(w, day);
       setTodaySession(sess);
@@ -2666,6 +2668,30 @@ export default function TodayScreen() {
       <View style={s.loading}>
         <ActivityIndicator color={COLORS.accent} size="large" />
       </View>
+    );
+  }
+
+  // ── Free training mode: show empty state ────────────────────────────────────
+  if (trainingMode === 'free') {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
+          <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
+          <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
+            Free training mode
+          </Text>
+          <Text style={{ fontSize: 15, color: COLORS.text.muted, textAlign: 'center', lineHeight: 22 }}>
+            No session prescribed today. Use Log Session to record a workout.
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
+            onPress={() => router.push('/session-detail')}
+            activeOpacity={0.85}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
