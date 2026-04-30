@@ -264,7 +264,8 @@ class Milestone(BaseModel):
 class AnnualPlan(BaseModel):
     planId: str = ""
     userId: str = ""
-    planName: str = ""
+    planName: str = ""        # backend machine string, not user-facing
+    name: str = ""            # user-editable display name, e.g. "Strength · Apr 12, 2026"
     startDate: str = ""
     totalWeeks: int = 52
     trainingDays: int = 4     # days/week — set from intake.frequency
@@ -272,7 +273,10 @@ class AnnualPlan(BaseModel):
     milestones: List[Milestone] = []
     deloadWeeks: List[int] = []
     testingWeeks: List[int] = []
-    status: str = "active"
+    status: str = "active"    # "active" | "archived"
+    createdAt: Optional[datetime] = None      # set on first creation
+    archivedAt: Optional[datetime] = None     # set when archived, null if active
+    lastActiveWeek: int = 1   # snapshotted currentWeek at archive time; used for re-activate
     generatedAt: datetime = Field(default_factory=datetime.now)
     lastModified: datetime = Field(default_factory=datetime.now)
 

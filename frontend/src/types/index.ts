@@ -203,14 +203,25 @@ export interface ProgramPhase {
 
 export interface AnnualPlan {
   planId: string;
-  planName: string;
+  userId?: string;
+  planName: string;          // backend machine string
+  name: string;              // user-editable display name
   startDate: string;
   totalWeeks: number;
+  trainingDays: number;
   phases: ProgramPhase[];
   milestones: any[];
   deloadWeeks: number[];
   testingWeeks: number[];
-  status: string;
+  status: 'active' | 'archived';
+  createdAt?: string;
+  archivedAt?: string | null;
+  lastActiveWeek: number;
+  generatedAt?: string;
+  lastModified?: string;
+  // Stats embedded by GET /api/programs
+  sessions_completed?: number;
+  prs_hit?: number;
 }
 
 export interface LogSetData {

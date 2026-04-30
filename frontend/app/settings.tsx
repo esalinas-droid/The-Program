@@ -607,19 +607,21 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           )}
 
-          {/* Rebuild program — non-destructive (program mode only) */}
-          {profile?.training_mode !== 'free' && (
-          <TouchableOpacity style={s.accountRow} onPress={() => setShowRebuildModal(true)} activeOpacity={0.7}>
+          {/* Programs Library — replaces Rebuild program row */}
+          <TouchableOpacity
+            style={s.accountRow}
+            onPress={() => router.push('/programs')}
+            activeOpacity={0.7}
+          >
             <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
-              <MaterialCommunityIcons name="refresh" size={16} color={COLORS.accent} />
+              <MaterialCommunityIcons name="book-open-variant" size={16} color={COLORS.accent} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={s.accountRowLabel}>Rebuild program</Text>
-              <Text style={s.accountRowDesc}>Update goals & regenerate plan — history kept</Text>
+              <Text style={s.accountRowLabel}>Programs</Text>
+              <Text style={s.accountRowDesc}>View past programs · build new ones</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
           </TouchableOpacity>
-          )}
 
           {/* Sign out */}
           <TouchableOpacity

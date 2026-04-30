@@ -163,6 +163,7 @@ class AthleteProfileUpdate(BaseModel):
 
 class WorkoutLogEntry(BaseDocument):
     userId: str = ""          # owner of this log entry
+    planId: Optional[str] = None   # active plan at time of logging (None = free mode or pre-migration)
     date: str
     week: int
     day: str
@@ -365,6 +366,190 @@ async def get_year_plan_mongo(userId: str = Depends(get_current_user)):
     if not plan:
         raise HTTPException(status_code=404, detail="No plan found. Complete onboarding first.")
     return plan.model_dump()
+
+
+# ── Programs Library endpoints ────────────────────────────────────────────────
+
+async def _plan_stats(plan_id: str, user_id: str) -> dict:
+    """Return sessions_completed and prs_hit for a plan."""
+    # Sessions = distinct dates logged while this plan was active
+    logged_dates = await db.log.distinct("date", {"userId": user_id, "planId": plan_id})
+    sessions_completed = len(logged_dates)
+
+    # PRs hit = count of exercises where user set a new best e1rm during this plan
+    # vs. their personal best before the plan started
+    prs_hit = 0
+    try:
+        # Get the plan start date
+        plan_doc = await db.saved_plans.find_one({"planId": plan_id}, projection={"startDate": 1})
+        plan_start = (plan_doc or {}).get("startDate", "")
+
+        # Exercises logged during this plan with e1rm > 0
+        plan_logs = await db.log.find(
+            {"userId": user_id, "planId": plan_id, "e1rm": {"$gt": 0}},
+            projection={"exercise": 1, "e1rm": 1, "date": 1},
+        ).to_list(5000)
+
+        # Group max e1rm per exercise during this plan
+        during: dict[str, float] = {}
+        for entry in plan_logs:
+            ex = entry.get("exercise", "")
+            e1rm = float(entry.get("e1rm", 0))
+            if e1rm > during.get(ex, 0):
+                during[ex] = e1rm
+
+        # Compare against max e1rm before this plan started
+        for ex, max_during in during.items():
+            prior_logs = await db.log.find(
+                {"userId": user_id, "exercise": ex, "date": {"$lt": plan_start}, "e1rm": {"$gt": 0}},
+                projection={"e1rm": 1},
+            ).to_list(500)
+            max_before = max((float(e.get("e1rm", 0)) for e in prior_logs), default=0)
+            if max_during > max_before:
+                prs_hit += 1
+    except Exception:
+        prs_hit = 0
+
+    return {"sessions_completed": sessions_completed, "prs_hit": prs_hit}
+
+
+def _serialize_plan(doc: dict, stats: dict | None = None) -> dict:
+    """Convert a saved_plans MongoDB document to a clean API response dict."""
+    doc = {k: v for k, v in doc.items() if k not in ("_id", "_saved_at")}
+    # Serialize datetime fields to ISO strings
+    for field in ("createdAt", "archivedAt", "generatedAt", "lastModified"):
+        val = doc.get(field)
+        if hasattr(val, "isoformat"):
+            doc[field] = val.isoformat()
+    if stats:
+        doc["sessions_completed"] = stats["sessions_completed"]
+        doc["prs_hit"] = stats["prs_hit"]
+    return doc
+
+
+@api_router.get("/programs")
+async def get_programs(userId: str = Depends(get_current_user)):
+    """
+    Return the user's program library.
+    Response: { active: Plan | null, archived: Plan[] }
+    Stats (sessions_completed, prs_hit) are embedded in each plan object.
+    """
+    active_doc = await db.saved_plans.find_one(
+        {"userId": userId, "status": "active"},
+        sort=[("generatedAt", -1)],
+    )
+    archived_docs = await db.saved_plans.find(
+        {"userId": userId, "status": "archived"}
+    ).sort("archivedAt", -1).to_list(100)
+
+    active_plan = None
+    if active_doc:
+        stats = await _plan_stats(active_doc.get("planId", ""), userId)
+        active_plan = _serialize_plan(active_doc, stats)
+
+    archived_plans = []
+    for doc in archived_docs:
+        stats = await _plan_stats(doc.get("planId", ""), userId)
+        archived_plans.append(_serialize_plan(doc, stats))
+
+    return {"active": active_plan, "archived": archived_plans}
+
+
+@api_router.post("/programs/{plan_id}/activate")
+async def activate_program(plan_id: str, userId: str = Depends(get_current_user)):
+    """
+    Re-activate an archived plan. Archives the current active plan first.
+    Body for profile update supplied via optional query params.
+    Returns: { plan: <activated plan>, prompt_resume_choice: bool, last_active_week: int }
+    so the frontend can show the "Resume Week N / Start over" modal.
+    """
+    # Fetch the target plan and verify ownership
+    target = await db.saved_plans.find_one({"planId": plan_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Program not found.")
+    if target.get("userId") != userId:
+        raise HTTPException(status_code=403, detail="Not your program.")
+
+    # Free-mode check
+    profile_doc = await db.profile.find_one({"userId": userId}) or {}
+    if profile_doc.get("training_mode") == "free":
+        raise HTTPException(status_code=400, detail="Cannot activate a program in free training mode.")
+
+    # Archive current active plan (snapshot currentWeek)
+    now_utc = datetime.now(timezone.utc)
+    current_week = int(profile_doc.get("currentWeek", 1))
+    await db.saved_plans.update_one(
+        {"userId": userId, "status": "active"},
+        {"$set": {"status": "archived", "archivedAt": now_utc, "lastActiveWeek": current_week}},
+    )
+
+    # Activate the target plan
+    await db.saved_plans.update_one(
+        {"_id": target["_id"]},
+        {"$set": {"status": "active", "archivedAt": None}},
+    )
+
+    # Evict in-memory cache so _ensure_plan_loaded picks up the new active plan
+    _prog_store["plans"].pop(userId, None)
+
+    # Return activated plan + resume-choice signal
+    last_active_week = target.get("lastActiveWeek", 1)
+    updated = await db.saved_plans.find_one({"_id": target["_id"]})
+    return {
+        "plan": _serialize_plan(updated),
+        "prompt_resume_choice": True,
+        "last_active_week": last_active_week,
+        "total_weeks": target.get("totalWeeks", 52),
+    }
+
+
+@api_router.put("/programs/{plan_id}")
+async def update_program(
+    plan_id: str,
+    body: dict,
+    userId: str = Depends(get_current_user),
+):
+    """Update mutable fields on a plan (currently: name)."""
+    target = await db.saved_plans.find_one({"planId": plan_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Program not found.")
+    if target.get("userId") != userId:
+        raise HTTPException(status_code=403, detail="Not your program.")
+
+    allowed_updates: dict = {}
+    if "name" in body and isinstance(body["name"], str):
+        allowed_updates["name"] = body["name"].strip()[:120]
+
+    if not allowed_updates:
+        raise HTTPException(status_code=400, detail="No updatable fields provided.")
+
+    await db.saved_plans.update_one({"_id": target["_id"]}, {"$set": allowed_updates})
+    # Also update in-memory cache if this plan is currently active
+    if _prog_store["plans"].get(userId) and target.get("planId") == (
+        getattr(_prog_store["plans"][userId], "planId", None)
+    ):
+        _prog_store["plans"].pop(userId, None)
+
+    updated = await db.saved_plans.find_one({"_id": target["_id"]})
+    return _serialize_plan(updated)
+
+
+@api_router.delete("/programs/{plan_id}")
+async def delete_program(plan_id: str, userId: str = Depends(get_current_user)):
+    """Hard-delete an archived plan. Refuses if plan is active."""
+    target = await db.saved_plans.find_one({"planId": plan_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Program not found.")
+    if target.get("userId") != userId:
+        raise HTTPException(status_code=403, detail="Not your program.")
+    if target.get("status") == "active":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete an active program. Archive it first by building a new program.",
+        )
+
+    await db.saved_plans.delete_one({"_id": target["_id"]})
+    return {"deleted": True, "planId": plan_id}
 
 
 @api_router.get("/plan/block/current")
@@ -999,6 +1184,15 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
 async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     e1rm = epley_e1rm(entry.weight, entry.reps)
     log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
+    # Stamp planId from the user's currently active plan (None in free mode)
+    try:
+        active_plan_doc = await db.saved_plans.find_one(
+            {"userId": userId, "status": "active"}, projection={"planId": 1}
+        )
+        if active_plan_doc:
+            log.planId = active_plan_doc.get("planId")
+    except Exception:
+        pass
     data = log.to_mongo()
     result = await db.log.insert_one(data)
     doc = await db.log.find_one({"_id": result.inserted_id})
@@ -2013,6 +2207,150 @@ async def _migrate_preferred_days():
         logger.warning(f"[MIGRATION] preferredDays sync failed: {e}")
 
 
+# ── Startup: _migrate_plans_status ────────────────────────────────────────────
+
+def _generate_plan_display_name(goal: str, start_date: str, total_weeks: int) -> str:
+    """Generate a human-readable plan name from goal + date range."""
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        start = _dt.strptime(start_date[:10], "%Y-%m-%d")
+        end   = start + _td(weeks=total_weeks)
+        fmt   = "%b %-d, %Y"  # e.g. Apr 12, 2026
+        goal_str = (goal or "").title() or ""
+        date_range = f"{start.strftime(fmt)} → {end.strftime(fmt)}"
+        return f"{goal_str} · {date_range}" if goal_str else date_range
+    except Exception:
+        return start_date or "Untitled Program"
+
+
+async def _migrate_plans_status():
+    """
+    Multi-program migration (Prompt 6):
+      1. Add createdAt  — backfill from generatedAt or _id timestamp
+      2. Add name       — generate from goal + date range
+      3. Enforce single active plan per userId (latest by generatedAt = active,
+         all others = archived with archivedAt = their generatedAt)
+      4. Backfill planId on db.log entries (best-effort by date-range)
+         Also handles db.prs (which is computed from db.log, not a separate collection)
+    """
+    try:
+        plans_modified = 0
+        log_stamped    = 0
+        log_null       = 0
+
+        # ── 1. Group plans by userId ───────────────────────────────────────────
+        all_plans = await db.saved_plans.find({}).to_list(5000)
+        by_user: dict[str, list] = {}
+        for p in all_plans:
+            uid = p.get("userId") or ""
+            by_user.setdefault(uid, []).append(p)
+
+        # ── 2. Per-user: set name / createdAt / status / archivedAt ──────────
+        for uid, user_plans in by_user.items():
+            # Fetch profile for goal (for human-readable name)
+            prof = await db.profile.find_one({"userId": uid}) or {}
+            goal = (prof.get("trainingGoal") or prof.get("goal") or "").strip()
+
+            # Sort by generatedAt ascending so newest is last
+            def _sort_key(p):
+                g = p.get("generatedAt") or p.get("_saved_at") or ""
+                return str(g)
+            sorted_plans = sorted(user_plans, key=_sort_key)
+
+            for idx, p in enumerate(sorted_plans):
+                updates: dict = {}
+                is_newest = (idx == len(sorted_plans) - 1)
+
+                # createdAt — backfill from generatedAt
+                if not p.get("createdAt"):
+                    updates["createdAt"] = p.get("generatedAt") or datetime.now(timezone.utc)
+
+                # name — backfill if missing
+                if not p.get("name"):
+                    updates["name"] = _generate_plan_display_name(
+                        goal,
+                        p.get("startDate", ""),
+                        p.get("totalWeeks", 52),
+                    )
+
+                # status / archivedAt — enforce one-active-per-user
+                current_status = p.get("status", "active")
+                if is_newest:
+                    if current_status != "active":
+                        updates["status"]     = "active"
+                        updates["archivedAt"] = None
+                else:
+                    if current_status != "archived" or not p.get("archivedAt"):
+                        updates["status"]     = "archived"
+                        updates["archivedAt"] = (
+                            p.get("generatedAt") or datetime.now(timezone.utc)
+                        )
+
+                if updates:
+                    await db.saved_plans.update_one({"_id": p["_id"]}, {"$set": updates})
+                    plans_modified += 1
+
+        # ── 3. Backfill planId on db.log entries (best-effort) ───────────────
+        # Reload plans with final status/dates for accurate date-range mapping
+        all_plans_fresh = await db.saved_plans.find({}).to_list(5000)
+        by_user_fresh: dict[str, list] = {}
+        for p in all_plans_fresh:
+            uid = p.get("userId") or ""
+            by_user_fresh.setdefault(uid, []).append(p)
+
+        # Sort each user's plans by startDate ascending (stable coverage order)
+        for uid, user_plans in by_user_fresh.items():
+            user_plans.sort(key=lambda p: p.get("startDate", ""))
+
+        # Get all log entries missing planId
+        log_entries = await db.log.find({"planId": {"$exists": False}}).to_list(50000)
+
+        for entry in log_entries:
+            uid      = entry.get("userId", "")
+            log_date = entry.get("date", "")
+            if not uid or not log_date:
+                continue
+
+            plans_for_user = by_user_fresh.get(uid, [])
+            matched_plan_id = None
+            for p in plans_for_user:
+                plan_start = p.get("startDate", "")
+                if p.get("status") == "archived":
+                    plan_end = ""
+                    if p.get("archivedAt"):
+                        try:
+                            _at = p["archivedAt"]
+                            if isinstance(_at, datetime):
+                                plan_end = _at.strftime("%Y-%m-%d")
+                            else:
+                                plan_end = str(_at)[:10]
+                        except Exception:
+                            pass
+                else:
+                    # active plan: covers startDate → today
+                    plan_end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                if plan_start <= log_date <= plan_end:
+                    matched_plan_id = p.get("planId", "")
+                    break
+
+            if matched_plan_id:
+                await db.log.update_one(
+                    {"_id": entry["_id"]},
+                    {"$set": {"planId": matched_plan_id}},
+                )
+                log_stamped += 1
+            else:
+                log_null += 1
+
+        logger.info(
+            f"[MIGRATION] programs: {plans_modified} plan doc(s) updated; "
+            f"log backfill: {log_stamped} stamped, {log_null} unattributed"
+        )
+    except Exception as e:
+        logger.warning(f"[MIGRATION] programs migration failed: {e}")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -2032,6 +2370,8 @@ async def load_models():
     await _migrate_training_mode()
     # Fix D: sync preferredDays with trainingDaysCount for all existing profiles
     await _migrate_preferred_days()
+    # Backfill plan name/status/createdAt and log planId attribution
+    await _migrate_plans_status()
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
@@ -2429,14 +2769,21 @@ async def delete_conversation(conversation_id: str):
 
 
 async def _save_plan_to_db(plan, uid: str = None) -> None:
-    """Persist the in-memory plan to MongoDB so it survives server restarts."""
+    """Persist the in-memory plan to MongoDB so it survives server restarts.
+    Keyed by planId (not userId) to support multi-program storage.
+    """
     user_id = uid or (plan.userId if hasattr(plan, 'userId') else _PROG_USER)
     try:
         from models.schemas import AnnualPlan as _AnnualPlan  # local import to avoid circular
         plan_dict = plan.model_dump(mode='json')
         plan_dict['_saved_at'] = datetime.utcnow().isoformat()
+        # Ensure new plan documents always have createdAt set
+        if not plan_dict.get('createdAt'):
+            plan_dict['createdAt'] = datetime.now(timezone.utc).isoformat()
+        # Use planId as the unique key — one document per plan (not per user)
+        plan_id = plan_dict.get('planId') or user_id
         await db.saved_plans.replace_one(
-            {"userId": user_id},
+            {"planId": plan_id},
             plan_dict,
             upsert=True,
         )
@@ -2463,10 +2810,14 @@ async def _ensure_plan_loaded(uid: str = None) -> bool:
     if _prog_store["plans"].get(user_id):
         return True
 
-    # ── 1. Try loading the previously saved/modified plan from MongoDB ─────────
+    # ── 1. Try loading the active plan from MongoDB ────────────────────────
     try:
         from models.schemas import AnnualPlan as _AnnualPlan
-        saved = await db.saved_plans.find_one({"userId": user_id})
+        # Filter by status='active' so archived plans are never accidentally loaded
+        saved = await db.saved_plans.find_one(
+            {"userId": user_id, "status": "active"},
+            sort=[("generatedAt", -1)],
+        )
         if saved:
             saved.pop("_id", None)
             saved.pop("_saved_at", None)
@@ -3113,13 +3464,19 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
     logger.info(f"[REBUILD] userId: '{user_id}' — plan rebuild requested")
     print(f"[REBUILD] Goal: '{intake.goal}' | Freq: {intake.frequency} | userId: {user_id}")
 
-    # Clear ONLY saved plans — all training history is preserved
+    # Archive the current active plan instead of deleting it
     try:
-        deleted = await db.saved_plans.delete_many({"userId": user_id})
+        profile_doc = await db.profile.find_one({"userId": user_id}) or {}
+        current_week = int(profile_doc.get("currentWeek", 1))
+        now_utc = datetime.now(timezone.utc)
+        archived = await db.saved_plans.update_one(
+            {"userId": user_id, "status": "active"},
+            {"$set": {"status": "archived", "archivedAt": now_utc, "lastActiveWeek": current_week}},
+        )
         _prog_store["plans"].pop(user_id, None)
-        logger.info(f"[REBUILD] Cleared {deleted.deleted_count} stale plan(s) for user: {user_id}")
+        logger.info(f"[REBUILD] Archived {archived.modified_count} active plan(s) for user: {user_id}")
     except Exception as _e:
-        logger.warning(f"[REBUILD] Could not clear stale plans: {_e}")
+        logger.warning(f"[REBUILD] Could not archive active plan: {_e}")
 
     # Resolve goal / experience enums (same logic as intake)
     _goal_str = (intake.goal or "").strip()
@@ -3526,13 +3883,19 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
     logger.info(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}'")
     print(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}' | userId: {user_id}")
 
-    # ── Root Cause A Fix: Delete stale saved plans so a fresh generation always wins ──
+    # Archive the current active plan (if any) instead of hard-deleting it
     try:
-        deleted = await db.saved_plans.delete_many({"userId": user_id})
-        logger.info(f"[INTAKE] Deleted {deleted.deleted_count} stale saved plan(s) for user: {user_id}")
+        profile_doc_pre = await db.profile.find_one({"userId": user_id}) or {}
+        current_week_pre = int(profile_doc_pre.get("currentWeek", 1))
+        now_utc_pre = datetime.now(timezone.utc)
+        archived_pre = await db.saved_plans.update_one(
+            {"userId": user_id, "status": "active"},
+            {"$set": {"status": "archived", "archivedAt": now_utc_pre, "lastActiveWeek": current_week_pre}},
+        )
+        logger.info(f"[INTAKE] Archived {archived_pre.modified_count} active plan(s) for user: {user_id}")
         _prog_store["plans"].pop(user_id, None)
     except Exception as _e:
-        logger.warning(f"[INTAKE] Could not delete stale plans: {_e}")
+        logger.warning(f"[INTAKE] Could not archive stale plans: {_e}")
 
     # Build in-memory profile — use case-insensitive lookup to avoid ValueError crashes
     _goal_str = (intake.goal or "").strip()

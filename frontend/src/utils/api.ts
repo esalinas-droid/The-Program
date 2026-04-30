@@ -609,3 +609,20 @@ export const userExercisesApi = {
 
 // Generic api export for one-off calls
 export { api };
+
+// ── Programs Library API ──────────────────────────────────────────────────────
+export const programsApi = {
+  list: (): Promise<{ active: any | null; archived: any[] }> =>
+    api('/programs'),
+  activate: (planId: string): Promise<{
+    plan: any;
+    prompt_resume_choice: boolean;
+    last_active_week: number;
+    total_weeks: number;
+  }> =>
+    api(`/programs/${planId}/activate`, { method: 'POST' }),
+  rename: (planId: string, name: string): Promise<any> =>
+    api(`/programs/${planId}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  delete: (planId: string): Promise<{ deleted: boolean }> =>
+    api(`/programs/${planId}`, { method: 'DELETE' }),
+};
