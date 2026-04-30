@@ -118,6 +118,12 @@ export default function SettingsScreen() {
             'currentWeek',
             'programStartDate',
             'onboardingComplete',
+            // Schedule fields — set during intake / auto-aligned by migration.
+            // User cannot edit these from Settings directly; server is the only
+            // source of truth (same class of bug as is_beta_tester above).
+            'trainingDaysCount',
+            'preferredDays',
+            'avoidMovements',
           ];
 
           // Start with local (preserves user-edited fields like name, weight, weaknesses)
