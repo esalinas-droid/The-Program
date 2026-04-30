@@ -622,7 +622,7 @@ def _generate_calendar_events(
                         "phaseNumber":   phase.phaseNumber,
                         "phaseName":     phase.phaseName,
                         "blockName":     block.blockName,
-                        "exercises":     [e.model_dump() for e in (session.exercises or [])[:5]],
+                        "exercises":     [e.model_dump() for e in (session.exercises or [])],
                         "isCompleted":   is_completed,
                         "isOverridden":  display_date != date_str,
                         "isDeloadWeek":  week.isDeload,
@@ -1420,6 +1420,87 @@ async def get_substitutions(week: Optional[int] = None, userId: str = Depends(ge
         query["week"] = week
     docs = await db.substitutions.find(query).sort("timestamp", -1).to_list(200)
     return [SubstitutionLog.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
+
+# ── User Exercises (Custom) ──────────────────────────────────────────────────
+
+class UserExerciseCreate(BaseModel):
+    name: str
+    category: str = "custom"   # custom | main | supplemental | accessory | other
+    defaultPrescription: str = ""
+    notes: str = ""
+
+class UserExerciseUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    defaultPrescription: Optional[str] = None
+    notes: Optional[str] = None
+
+@api_router.get("/user-exercises")
+async def get_user_exercises(userId: str = Depends(get_current_user)):
+    """List all non-archived custom exercises for this user."""
+    docs = await db.user_exercises.find(
+        {"userId": userId, "isArchived": {"$ne": True}}
+    ).sort("createdAt", -1).to_list(500)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+    return {"exercises": docs}
+
+@api_router.post("/user-exercises")
+async def create_user_exercise(body: UserExerciseCreate, userId: str = Depends(get_current_user)):
+    """Create a new custom exercise for this user."""
+    now = datetime.now(timezone.utc)
+    doc = {
+        "userId": userId,
+        "name": body.name.strip(),
+        "category": body.category,
+        "defaultPrescription": body.defaultPrescription,
+        "notes": body.notes,
+        "isArchived": False,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    result = await db.user_exercises.insert_one(doc)
+    doc["id"] = str(result.inserted_id)
+    doc.pop("_id", None)
+    # Serialize datetime fields to ISO strings for JSON response
+    doc["createdAt"] = doc["createdAt"].isoformat()
+    doc["updatedAt"] = doc["updatedAt"].isoformat()
+    return doc
+
+@api_router.put("/user-exercises/{exercise_id}")
+async def update_user_exercise(
+    exercise_id: str,
+    body: UserExerciseUpdate,
+    userId: str = Depends(get_current_user),
+):
+    """Update a user's custom exercise."""
+    from bson import ObjectId
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    updates["updatedAt"] = datetime.now(timezone.utc)
+    result = await db.user_exercises.update_one(
+        {"_id": ObjectId(exercise_id), "userId": userId},
+        {"$set": updates},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    return {"success": True}
+
+@api_router.delete("/user-exercises/{exercise_id}")
+async def delete_user_exercise(
+    exercise_id: str,
+    userId: str = Depends(get_current_user),
+):
+    """Soft-delete a custom exercise (sets isArchived=True)."""
+    from bson import ObjectId
+    result = await db.user_exercises.update_one(
+        {"_id": ObjectId(exercise_id), "userId": userId},
+        {"$set": {"isArchived": True, "updatedAt": datetime.now(timezone.utc)}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    return {"success": True}
 
 # ── Pain Report Models & Endpoints ───────────────────────────────────────────
 

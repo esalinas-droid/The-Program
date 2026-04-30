@@ -104,11 +104,73 @@
 
 user_problem_statement: >
   Build a mobile-first strength training app "The Program" for advanced athletes.
-  CURRENT SESSION: 4-part Major Update:
-  1. PRE-WORKOUT READINESS AUTO-ADJUST: Backend POST /api/readiness now returns loadMultiplier (0.85/0.90/1.0) and adjustmentPercent (15/10/0) based on 1-5 score. Frontend today.tsx shows colored readiness banner with override button, and applies load multiplier to work set weights with strikethrough display.
-  2. RESET PROGRAM BUG FIX: Backend POST /api/profile/reset now deletes 8 collections (saved_plans, profile, tracked_lifts, readiness_checks, pain_reports, calendar_overrides, weekly_reviews, log). Frontend settings.tsx clears AsyncStorage on reset with saveProfile({}).
-  3. PROGRAM REVEAL REDESIGN: program-reveal.tsx fetches user goal and shows goal-specific split days and "Your Program Explained" section with timeline. Also adds plan retry logic.
-  4. PROGRAM QUALITY UPGRADE: plan_generator.py adds _build_re_upper, _build_re_lower, _build_full_body builders and GOAL_DAY_MAPS routing Hypertrophy->RE, Athletic->FULL_BODY, General->RE+Full mix.
+  CURRENT SESSION (Prompt 4): SCHEDULE REWORK + CUSTOM EXERCISE FLOW.
+  1. BACKEND: Added user_exercises collection with 4 CRUD endpoints (GET/POST/PUT/DELETE /api/user-exercises). Soft-delete via isArchived. Also removed the 5-exercise limit from _generate_calendar_events.
+  2. SHARED ExercisePicker: New component at src/components/ExercisePicker.tsx - full-screen modal with suggested swaps (reason filter chips using getAlternatives), custom exercises section, canonical MAIN/SUPPLEMENTAL/ACCESSORIES/PREHAB sections, search, inline create form.
+  3. ExerciseActionsSheet: New component at src/components/ExerciseActionsSheet.tsx - adaptive bottom sheet with Swap/Skip/Add note/View history actions based on session state.
+  4. SCHEDULE TAB REWORK (log.tsx): All sessions now expandable (today auto-expanded), exercise rows with category color dots + prescription + kebab menus, add-exercise footer per session, local swap/skip/note state wired to substitution API.
+  5. TODAY.TSX CONSOLIDATION: Replaced AdjustModal with shared ExercisePicker, handleConfirmSwap updated to use PickedExercise signature.
+
+backend:
+  - task: "PROMPT4-BE1: GET /api/user-exercises returns user's custom exercises"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added GET /api/user-exercises endpoint. Returns exercises for current userId where isArchived!=true."
+
+  - task: "PROMPT4-BE2: POST /api/user-exercises creates custom exercise"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added POST /api/user-exercises endpoint. Creates exercise with userId, name, category, defaultPrescription, notes, isArchived=False."
+
+  - task: "PROMPT4-BE3: PUT /api/user-exercises/{id} updates custom exercise"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added PUT endpoint. Updates only provided fields."
+
+  - task: "PROMPT4-BE4: DELETE /api/user-exercises/{id} soft-deletes exercise"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added DELETE endpoint. Sets isArchived=True (soft delete)."
+
+  - task: "PROMPT4-BE5: Calendar events return all exercises (no 5-exercise limit)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Removed [:5] slice from _generate_calendar_events."
 
 backend:
   - task: "TASK1 - POST /api/readiness returns loadMultiplier and adjustmentPercent"

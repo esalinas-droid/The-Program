@@ -583,5 +583,27 @@ export const groupsApi = {
   list:   ()             => api('/groups'),
 };
 
+// Custom Exercises (user_exercises collection)
+export interface UserExercise {
+  id: string;
+  name: string;
+  category: string;
+  defaultPrescription: string;
+  notes: string;
+  createdAt: string;
+  isArchived?: boolean;
+}
+
+export const userExercisesApi = {
+  list: (): Promise<{ exercises: UserExercise[] }> =>
+    api('/user-exercises'),
+  create: (data: { name: string; category?: string; defaultPrescription?: string; notes?: string }): Promise<UserExercise> =>
+    api('/user-exercises', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { name?: string; category?: string; defaultPrescription?: string; notes?: string }) =>
+    api(`/user-exercises/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    api(`/user-exercises/${id}`, { method: 'DELETE' }),
+};
+
 // Generic api export for one-off calls
 export { api };

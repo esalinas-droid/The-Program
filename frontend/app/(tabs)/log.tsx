@@ -10,8 +10,10 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
-import { calendarApi, logApi, programApi } from '../../src/utils/api';
+import { calendarApi, logApi, programApi, substitutionApi } from '../../src/utils/api';
 import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
+import ExercisePicker, { PickedExercise } from '../../src/components/ExercisePicker';
+import ExerciseActionsSheet, { SessionStateType, ActionExercise } from '../../src/components/ExerciseActionsSheet';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -25,6 +27,8 @@ const AMBER = '#FF9800';
 const BG    = '#0A0A0C';
 const CARD  = '#111114';
 const BORDER = '#1E1E22';
+const TEXT  = '#E8E8E6';
+const MUTED = '#666';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DayStatus = 'completed' | 'today' | 'upcoming' | 'missed' | 'rest';
@@ -244,7 +248,7 @@ function DayCard({
   );
 }
 
-// ── SessionHistoryCard (Parts 1D + 1E) ───────────────────────────────────────
+// ── SessionHistoryCard (Reworked — all sessions expandable with exercise rows) ─
 function SessionHistoryCard({
   card, expanded, onToggle, onGoToSession, todayStr, todaySessionDone,
 }: {
@@ -262,10 +266,104 @@ function SessionHistoryCard({
   const hasLogs    = card.logEntries.length > 0;
   const isToday    = card.date === todayStr;
   const isPremiumToday = isToday && card.status === 'today';
-  const isExpandable   = card.status === 'completed' || card.status === 'missed';
+  // All cards are now expandable
   const exerciseList   = card.exerciseNames.length > 0
     ? card.exerciseNames.join(' · ')
     : Object.keys(grouped).join(' · ') || 'Session planned';
+
+  // ── Per-session action state ─────────────────────────────────────────────
+  const [actionSheetEx,  setActionSheetEx]  = useState<ActionExercise | null>(null);
+  const [pickerForSwap,  setPickerForSwap]  = useState(false);
+  const [addPickerOpen,  setAddPickerOpen]  = useState(false);
+  const [localOverrides, setLocalOverrides] = useState<Record<string, { name: string; category: string }>>({});
+  const [localSkipped,   setLocalSkipped]   = useState<Set<string>>(new Set());
+  const [localNotes,     setLocalNotes]     = useState<Record<string, string>>({});
+  const [localAdded,     setLocalAdded]     = useState<Array<{ name: string; category: string }>>([]);
+
+  const sessionStateForActions: SessionStateType =
+    card.status === 'today'     ? 'today'     :
+    card.status === 'upcoming'  ? 'upcoming'  :
+    card.status === 'completed' ? 'completed' : 'missed';
+
+  const getDayName = (dateStr: string) =>
+    new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+
+  const handleSwapConfirm = async (picked: PickedExercise) => {
+    if (!actionSheetEx) return;
+    const key = actionSheetEx.exerciseId || actionSheetEx.name;
+    setLocalOverrides(prev => ({ ...prev, [key]: { name: picked.name, category: picked.category || '' } }));
+    try {
+      await substitutionApi.log({
+        date: card.date, week: card.weekNumber, day: getDayName(card.date),
+        sessionType: card.sessionType,
+        originalExercise: actionSheetEx.name,
+        replacementExercise: picked.name,
+        reason: picked.reason || 'user_swap',
+      });
+    } catch {}
+    setPickerForSwap(false);
+  };
+
+  const handleSkip = async () => {
+    if (!actionSheetEx) return;
+    const key = actionSheetEx.exerciseId || actionSheetEx.name;
+    setLocalSkipped(prev => new Set([...prev, key]));
+    try {
+      await substitutionApi.log({
+        date: card.date, week: card.weekNumber, day: getDayName(card.date),
+        sessionType: card.sessionType,
+        originalExercise: actionSheetEx.name, replacementExercise: '(skipped)', reason: 'user_skipped',
+      });
+    } catch {}
+  };
+
+  const handleAddNote = (note: string) => {
+    if (!actionSheetEx) return;
+    const key = actionSheetEx.exerciseId || actionSheetEx.name;
+    setLocalNotes(prev => ({ ...prev, [key]: note }));
+  };
+
+  const handleAddExercise = async (picked: PickedExercise) => {
+    setLocalAdded(prev => [...prev, { name: picked.name, category: picked.category }]);
+    try {
+      await substitutionApi.log({
+        date: card.date, week: card.weekNumber, day: getDayName(card.date),
+        sessionType: card.sessionType,
+        originalExercise: '(none)', replacementExercise: picked.name, reason: 'user_added',
+      });
+    } catch {}
+  };
+
+  // Build display exercise list (plan exercises + local additions)
+  const displayExercises = [
+    ...card.exercises.map((ex: any) => {
+      const key = ex.exerciseId || ex.name;
+      const override = localOverrides[key];
+      return {
+        ...ex,
+        displayName: override?.name || ex.name,
+        displayCategory: override?.category || ex.category,
+        isSwapped: !!override, isSkipped: localSkipped.has(key),
+        note: localNotes[key], isAdded: false,
+      };
+    }),
+    ...localAdded.map((ex, i) => ({
+      exerciseId: `added-${i}`, name: ex.name, category: ex.category,
+      prescription: '', targetSets: [], order: 999,
+      displayName: ex.name, displayCategory: ex.category,
+      isSwapped: false, isSkipped: false, note: undefined, isAdded: true,
+    })),
+  ];
+
+  const getCatColor = (cat: string) => {
+    const c = (cat || '').toLowerCase();
+    if (c === 'main')         return RED;
+    if (c === 'supplemental') return AMBER;
+    if (c === 'accessory')    return '#4A9FDF';
+    if (c === 'prehab')       return GREEN;
+    if (c === 'custom')       return GOLD;
+    return '#555';
+  };
 
   useEffect(() => {
     if (isPremiumToday) {
@@ -289,15 +387,15 @@ function SessionHistoryCard({
         <View style={{ height: 2, backgroundColor: GOLD, position: 'absolute', top: 0, left: 0, right: 0 }} />
       )}
 
-      {/* Header row */}
+      {/* Header row — always tappable */}
       <TouchableOpacity
         style={[s.sessCardHeader, isToday && { paddingTop: 14 }]}
-        onPress={isExpandable ? () => {
+        onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
           onToggle();
-        } : undefined}
-        activeOpacity={isExpandable ? 0.7 : 1}
+        }}
+        activeOpacity={0.75}
       >
         <View style={s.sessCardLeft}>
           <View style={[s.sessBadge, { backgroundColor: style.bg, borderColor: style.borderColor }]}>
@@ -333,12 +431,11 @@ function SessionHistoryCard({
         </View>
         <View style={s.sessCardRight}>
           <Text style={s.sessDate}>{card.dateLabel}</Text>
-          {isExpandable && (
-            <MaterialCommunityIcons
-              name={expanded ? 'chevron-up' : 'chevron-down'}
-              size={18} color={COLORS.text.muted}
-            />
-          )}
+          {/* Always show chevron */}
+          <MaterialCommunityIcons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={18} color={COLORS.text.muted}
+          />
         </View>
       </TouchableOpacity>
 
@@ -436,68 +533,149 @@ function SessionHistoryCard({
         </TouchableOpacity>
       )}
 
-      {/* Part 1E: Bottom progress bar for completed cards */}
-      {card.status === 'completed' && stats.sets > 0 && (
-        <View style={{ height: 3, backgroundColor: '#1A1A1E' }}>
-          <View style={{ height: '100%', width: '100%', backgroundColor: RED }} />
-        </View>
-      )}
-
-      {/* Expanded detail */}
-      {isExpandable && expanded && (
+      {/* ── EXPANDED: Full exercise rows with kebab menus ── */}
+      {expanded && (
         <View style={s.expandDetail}>
-          {hasLogs ? (
-            Object.entries(grouped).map(([exName, entries]) => {
-              const topEntry = entries.reduce((mx, e) =>
-                (parseFloat(e.weight) || 0) > (parseFloat(mx.weight) || 0) ? e : mx, entries[0]);
+          {displayExercises.length === 0 ? (
+            <Text style={{ fontSize: 12, color: MUTED, fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 }}>
+              No exercises in this session
+            </Text>
+          ) : (
+            displayExercises.map((ex: any, idx: number) => {
+              const catColor = getCatColor(ex.displayCategory);
+              const logEntriesForEx = card.logEntries.filter((e: any) =>
+                (e.exercise || '').toLowerCase() === (ex.displayName || ex.name || '').toLowerCase()
+              );
               return (
-                <View key={exName} style={s.exDetailRow}>
-                  <Text style={s.exDetailName} numberOfLines={1}>{exName}</Text>
-                  <View style={s.setPillsRow}>
-                    {entries.slice(0, 4).map((e, i) => {
-                      const isTop = e === topEntry;
-                      return (
-                        <View key={i} style={[s.setPill, isTop && s.setPillTop]}>
-                          <Text style={[s.setPillTxt, isTop && s.setPillTxtTop]}>
-                            {e.weight ? `${e.weight}×${e.reps}` : `—×${e.reps}`}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                    {entries.length > 4 && (
-                      <View style={s.setPill}>
-                        <Text style={s.setPillTxt}>+{entries.length - 4}</Text>
+                <View
+                  key={ex.exerciseId || idx}
+                  style={[s.exRow, idx < displayExercises.length - 1 && { borderBottomWidth: 1, borderBottomColor: '#13131A' }]}
+                >
+                  {/* Main row: indicator dot · name · badge · kebab */}
+                  <View style={s.exRowMain}>
+                    <View style={[s.exCatDot, { backgroundColor: catColor }]} />
+                    <View style={{ flex: 1 }}>
+                      {/* Name + status badges */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5 }}>
+                        <Text
+                          style={[s.exRowName, ex.isSkipped && s.exRowNameSkipped]}
+                          numberOfLines={1}
+                        >
+                          {ex.isSwapped ? ex.displayName : ex.name}
+                        </Text>
+                        {ex.isSwapped && (
+                          <View style={s.swappedBadge}>
+                            <Text style={s.swappedBadgeText}>SWAPPED</Text>
+                          </View>
+                        )}
+                        {ex.isSkipped && (
+                          <View style={s.skippedBadge}>
+                            <Text style={s.skippedBadgeText}>SKIPPED</Text>
+                          </View>
+                        )}
+                        {ex.isAdded && (
+                          <View style={s.addedBadge}>
+                            <Text style={s.addedBadgeText}>ADDED</Text>
+                          </View>
+                        )}
                       </View>
+                      {ex.isSwapped && (
+                        <Text style={s.exOriginalName} numberOfLines={1}>was: {ex.name}</Text>
+                      )}
+                      {!!ex.prescription && !ex.isSkipped && (
+                        <Text style={s.exPrescription}>{ex.prescription}</Text>
+                      )}
+                      {!!ex.note && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                          <MaterialCommunityIcons name="pencil-outline" size={11} color="#4A9FDF" />
+                          <Text style={{ fontSize: 11, color: '#4A9FDF', flex: 1 }} numberOfLines={2}>{ex.note}</Text>
+                        </View>
+                      )}
+                    </View>
+                    {/* Kebab button */}
+                    {!ex.isSkipped && (
+                      <TouchableOpacity
+                        style={s.kebabBtn}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setActionSheetEx({
+                            name: ex.displayName || ex.name,
+                            category: ex.displayCategory,
+                            prescription: ex.prescription,
+                            exerciseId: ex.exerciseId,
+                          });
+                        }}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <MaterialCommunityIcons name="dots-vertical" size={18} color={MUTED} />
+                      </TouchableOpacity>
                     )}
                   </View>
+                  {/* Logged set pills for completed sessions */}
+                  {card.status === 'completed' && logEntriesForEx.length > 0 && (
+                    <View style={s.setPillsRow}>
+                      {logEntriesForEx.slice(0, 5).map((e: any, i: number) => {
+                        const isTop = e === logEntriesForEx.reduce((mx: any, le: any) =>
+                          (parseFloat(le.weight) || 0) > (parseFloat(mx.weight) || 0) ? le : mx, logEntriesForEx[0]);
+                        return (
+                          <View key={i} style={[s.setPill, isTop && s.setPillTop]}>
+                            <Text style={[s.setPillTxt, isTop && s.setPillTxtTop]}>
+                              {e.weight ? `${e.weight}×${e.reps}` : `—×${e.reps}`}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                      {logEntriesForEx.length > 5 && (
+                        <View style={s.setPill}>
+                          <Text style={s.setPillTxt}>+{logEntriesForEx.length - 5}</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
                 </View>
               );
             })
-          ) : (
-            <>
-              <Text style={s.plannedLabel}>Planned exercises</Text>
-              {card.exercises.length > 0 ? (
-                card.exercises.map((ex: any, i: number) => (
-                  <View key={i} style={s.plannedRow}>
-                    <View style={s.plannedDot} />
-                    <Text style={s.plannedName}>{ex.name || ex}</Text>
-                    {ex.sets && ex.reps ? (
-                      <Text style={s.plannedPrescription}>{ex.sets} × {ex.reps}</Text>
-                    ) : null}
-                  </View>
-                ))
-              ) : (
-                card.exerciseNames.map((name, i) => (
-                  <View key={i} style={s.plannedRow}>
-                    <View style={s.plannedDot} />
-                    <Text style={s.plannedName}>{name}</Text>
-                  </View>
-                ))
-              )}
-            </>
           )}
+          {/* ── Add exercise footer ── */}
+          <TouchableOpacity
+            style={s.addExBtn}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setAddPickerOpen(true);
+            }}
+            activeOpacity={0.75}
+          >
+            <MaterialCommunityIcons name="plus" size={14} color={GREEN} />
+            <Text style={s.addExBtnText}>Add exercise to this session</Text>
+          </TouchableOpacity>
         </View>
       )}
+
+      {/* ── Action Sheet ── */}
+      <ExerciseActionsSheet
+        visible={!!actionSheetEx}
+        onClose={() => setActionSheetEx(null)}
+        exercise={actionSheetEx || { name: '' }}
+        sessionState={sessionStateForActions}
+        onSwap={() => setPickerForSwap(true)}
+        onSkip={handleSkip}
+        onAddNote={handleAddNote}
+      />
+      {/* ── Picker: Swap exercise ── */}
+      <ExercisePicker
+        visible={pickerForSwap}
+        onClose={() => setPickerForSwap(false)}
+        onSelect={handleSwapConfirm}
+        originalExerciseName={actionSheetEx?.name}
+        title="Swap Exercise"
+      />
+      {/* ── Picker: Add exercise to session ── */}
+      <ExercisePicker
+        visible={addPickerOpen}
+        onClose={() => setAddPickerOpen(false)}
+        onSelect={handleAddExercise}
+        title="Add Exercise"
+      />
     </View>
   );
 }
@@ -644,6 +822,12 @@ export default function ScheduleScreen() {
         return a.date.localeCompare(b.date);
       });
       setSessions(cards);
+
+      // ── Auto-expand today's card on current week load ─────────────────────────
+      if (offset === 0) {
+        const todayCard = cards.find((c: SessionCard) => c.date === today);
+        if (todayCard) setExpandedCard(todayCard.date);
+      }
 
       // ── Week header info ──────────────────────────────────────────────────────
       const firstEv = events[0];
@@ -1040,12 +1224,24 @@ const s = StyleSheet.create({
   setPillTxt:    { fontSize: 10, color: COLORS.text.muted },
   setPillTxtTop: { color: GOLD, fontWeight: FONTS.weights.semibold },
 
+  // ── New exercise row styles ──────────────────────────────────────────────────
   loadingBox: { paddingVertical: 60, alignItems: 'center' },
+  exRow:       { paddingVertical: 10, paddingHorizontal: 0 },
+  exRowMain:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  exCatDot:    { width: 8, height: 8, borderRadius: 4, flexShrink: 0, marginTop: 2 },
+  exRowName:   { fontSize: 13, fontWeight: '600', color: TEXT, flex: 1 },
+  exRowNameSkipped: { textDecorationLine: 'line-through', color: MUTED },
+  exOriginalName:   { fontSize: 11, color: MUTED, marginTop: 1 },
+  exPrescription:   { fontSize: 11, color: MUTED, marginTop: 2 },
+  kebabBtn:    { padding: 4 },
 
-  // Missed session planned-exercise view
-  plannedLabel: { fontSize: 10, color: AMBER, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
-  plannedRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
-  plannedDot:   { width: 4, height: 4, borderRadius: 2, backgroundColor: AMBER + '80' },
-  plannedName:  { flex: 1, fontSize: 12, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
-  plannedPrescription: { fontSize: 11, color: COLORS.text.muted, fontVariant: ['tabular-nums'] },
+  swappedBadge:  { backgroundColor: GOLD + '20', borderWidth: 1, borderColor: GOLD + '40', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
+  swappedBadgeText: { fontSize: 8, fontWeight: '800', color: GOLD, letterSpacing: 0.6 },
+  skippedBadge:  { backgroundColor: AMBER + '20', borderWidth: 1, borderColor: AMBER + '40', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
+  skippedBadgeText: { fontSize: 8, fontWeight: '800', color: AMBER, letterSpacing: 0.6 },
+  addedBadge:    { backgroundColor: GREEN + '20', borderWidth: 1, borderColor: GREEN + '40', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
+  addedBadgeText: { fontSize: 8, fontWeight: '800', color: GREEN, letterSpacing: 0.6 },
+
+  addExBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginTop: 4, borderTopWidth: 1, borderTopColor: '#1A1A1E', justifyContent: 'center' },
+  addExBtnText: { fontSize: 12, color: GREEN, fontWeight: '600' },
 });

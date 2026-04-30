@@ -21,6 +21,7 @@ import {
   getAlternatives, extractExerciseName,
 } from '../../src/data/substitutions';
 import { ProgramSession, TodaySessionResponse } from '../../src/types';
+import ExercisePicker, { PickedExercise } from '../../src/components/ExercisePicker';
 
 // ── Additional palette ────────────────────────────────────────────────────────
 const TEAL = '#4DCEA6';
@@ -2579,8 +2580,12 @@ export default function TodayScreen() {
     setAdjustKey(id); setAdjustName(name); setModal(true);
   };
 
-  const handleConfirmSwap = async (key: string, original: string, replacement: string, reason: AdjustReason) => {
+  const handleConfirmSwap = async (picked: PickedExercise) => {
     setModal(false);
+    const key = adjustKey;
+    const original = adjustName;
+    const replacement = picked.name;
+    const reason: AdjustReason = (picked.reason as AdjustReason) || 'Preference';
     setSwaps(prev => ({ ...prev, [key]: { original, replacement, reason } }));
     try {
       const day = todayName === 'Sunday' ? 'Monday' : todayName;
@@ -3053,13 +3058,13 @@ export default function TodayScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── ADJUST EXERCISE MODAL ── */}
-      <AdjustModal
+      {/* ── ADJUST EXERCISE MODAL (consolidated to ExercisePicker) ── */}
+      <ExercisePicker
         visible={modalVisible}
-        exerciseKey={adjustKey}
-        exerciseName={adjustName}
         onClose={() => setModal(false)}
-        onConfirm={handleConfirmSwap}
+        onSelect={handleConfirmSwap}
+        originalExerciseName={adjustName ? extractExerciseName(adjustName) : undefined}
+        title="Swap Exercise"
       />
 
       {/* ── READINESS CHECK MODAL — suppressed while celebration is visible ── */}

@@ -1,0 +1,31 @@
+{
+  "summary": "Backend-only testing of User Exercises (Custom) CRUD endpoints and calendar no-limit removal. All 14 tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_user_exercises.py",
+    "/app/test_reports/pytest/iter67_user_exercises.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "GET /api/user-exercises correctly filters isArchived != true",
+    "POST returns 422 on missing name field (Pydantic validation working)",
+    "PUT and DELETE both return 404 for nonexistent/wrong-user exercise IDs",
+    "Soft delete (isArchived=True) correctly hides exercise from GET list",
+    "_id excluded from responses correctly"
+  ],
+  "updated_files": ["/app/backend/tests/test_user_exercises.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "N/A"},
+  "seed_data_creation": "Created TEST_Romanian Deadlift Pause exercise during test run; soft-deleted after tests",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "User Exercises CRUD endpoints fully verified. All flows pass: GET (empty/populated), POST (create + 422 validation), PUT (update + verify), DELETE (soft-delete + verify hidden). Calendar events endpoint also accessible with no exercise limit."
+}
