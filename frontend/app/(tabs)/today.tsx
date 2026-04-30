@@ -22,6 +22,7 @@ import {
 } from '../../src/data/substitutions';
 import { ProgramSession, TodaySessionResponse } from '../../src/types';
 import ExercisePicker, { PickedExercise } from '../../src/components/ExercisePicker';
+import AskCoachButton from '../../src/components/AskCoachButton';
 
 // ── Additional palette ────────────────────────────────────────────────────────
 const TEAL = '#4DCEA6';
@@ -2731,6 +2732,13 @@ export default function TodayScreen() {
           </Text>
           <Text style={s.sessionTitle}>{sessionType}</Text>
           {sessionObj ? <Text style={s.sessionObj}>{sessionObj}</Text> : null}
+          {/* ── Ask Coach about today's session ── */}
+          <AskCoachButton
+            seedPrompt={`I'm about to start my ${sessionType} session. Anything I should focus on or watch out for?`}
+            triggerName="today_session_inquiry"
+            label="Ask Coach"
+            style={{ marginTop: 8 }}
+          />
         </View>
 
         {/* ── Part 2F: SESSION PROGRESS BAR ── */}

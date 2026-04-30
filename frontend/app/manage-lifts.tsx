@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { liftsApi } from '../src/utils/api';
+import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -85,29 +86,39 @@ function LiftRow({
 }) {
   const showStar = lift.isFeatured || canFeature;
   return (
-    <View style={lr.row}>
-      <View style={[lr.dot, { backgroundColor: lift.isFeatured ? GOLD : COLORS.border }]} />
-      <View style={lr.info}>
-        <Text style={lr.name}>{lift.exercise}</Text>
-        <Text style={lr.details} numberOfLines={1}>
-          {lift.bestWeight > 0 ? `${lift.bestWeight} × ${lift.bestReps}` : 'No PR recorded'}
-          {lift.lastDate ? ` · ${fmtDate(lift.lastDate)}` : ''}
-          {lift.bestE1rm > 0 ? ` · Est. max ${lift.bestE1rm}` : ''}
-        </Text>
-      </View>
-      <View style={lr.actions}>
-        {showStar && (
-          <TouchableOpacity onPress={onToggleFeatured} style={lr.btn} activeOpacity={0.75}>
-            <MaterialCommunityIcons name={lift.isFeatured ? 'star' : 'star-outline'} size={20} color={GOLD} />
+    <View>
+      <View style={lr.row}>
+        <View style={[lr.dot, { backgroundColor: lift.isFeatured ? GOLD : COLORS.border }]} />
+        <View style={lr.info}>
+          <Text style={lr.name}>{lift.exercise}</Text>
+          <Text style={lr.details} numberOfLines={1}>
+            {lift.bestWeight > 0 ? `${lift.bestWeight} × ${lift.bestReps}` : 'No PR recorded'}
+            {lift.lastDate ? ` · ${fmtDate(lift.lastDate)}` : ''}
+            {lift.bestE1rm > 0 ? ` · Est. max ${lift.bestE1rm}` : ''}
+          </Text>
+        </View>
+        <View style={lr.actions}>
+          {showStar && (
+            <TouchableOpacity onPress={onToggleFeatured} style={lr.btn} activeOpacity={0.75}>
+              <MaterialCommunityIcons name={lift.isFeatured ? 'star' : 'star-outline'} size={20} color={GOLD} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={onEdit} style={lr.btn} activeOpacity={0.75}>
+            <MaterialCommunityIcons name="pencil" size={20} color={BLUE} />
           </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={onEdit} style={lr.btn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name="pencil" size={20} color={BLUE} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onDelete} style={lr.btn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name="trash-can-outline" size={20} color={RED} />
-        </TouchableOpacity>
+          <TouchableOpacity onPress={onDelete} style={lr.btn} activeOpacity={0.75}>
+            <MaterialCommunityIcons name="trash-can-outline" size={20} color={RED} />
+          </TouchableOpacity>
+        </View>
       </View>
+      {/* ── Ask Coach about this lift ── */}
+      <AskCoachButton
+        seedPrompt={`Look at my ${lift.exercise} progress. What's the next phase of work for this lift?`}
+        triggerName="lift_progress_inquiry"
+        label={`Coach on ${lift.exercise.split(' ')[0]}`}
+        size="sm"
+        style={{ marginLeft: 26, marginBottom: 8, marginTop: -4 }}
+      />
     </View>
   );
 }

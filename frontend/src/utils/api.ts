@@ -185,15 +185,17 @@ export const seedApi = {
 
 // Coach
 export const coachApi = {
-  chat: (message: string, history: { role: string; content: string }[], conversationId?: string | null) =>
+  chat: (message: string, history: { role: string; content: string }[], conversationId?: string | null, source: string = 'user_typed') =>
     api('/coach/chat', {
       method: 'POST',
       body: JSON.stringify({
         message,
         conversation_history: history,
         conversation_id: conversationId ?? null,
+        source,
       }),
     }),
+  activeTrigger: () => api('/coach/active-trigger'),
   getConversations: () => api('/coach/conversations'),
   getConversation: (id: string) => api(`/coach/conversations/${id}`),
   deleteConversation: (id: string) => api(`/coach/conversations/${id}`, { method: 'DELETE' }),

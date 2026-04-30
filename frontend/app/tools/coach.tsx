@@ -4,12 +4,13 @@ import {
   SafeAreaView, KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
   Alert, ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { coachApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
 import { getBlock, getPhase } from '../../src/utils/calculations';
+import { consumeCoachSeed } from '../../src/store/coachSeedStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExerciseSwap {
@@ -106,11 +107,31 @@ export default function CoachScreen() {
   const [appliedResults, setAppliedResults] = useState<Record<string, ApplyResult>>({});
   const [applySuccessMsg, setApplySuccessMsg] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
+  // Prevent double-firing the seed (e.g. React StrictMode double-effect)
+  const seedFiredRef = useRef(false);
 
   useEffect(() => {
     getProfile().then(setProfile);
     loadConversations();
   }, []);
+
+  // ── Seed auto-send on focus (Option B) ────────────────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      const seed = consumeCoachSeed();
+      if (seed && !seedFiredRef.current) {
+        seedFiredRef.current = true;
+        // Start fresh so seed doesn't bleed into existing conversation
+        setMessages([]);
+        setConversationId(null);
+        // Small delay to let React flush state before sending
+        setTimeout(() => {
+          seedFiredRef.current = false;
+          sendMessage(seed.seedPrompt, 'system_seed');
+        }, 250);
+      }
+    }, [])
+  );
 
   const loadConversations = async () => {
     try {
@@ -195,7 +216,7 @@ export default function CoachScreen() {
     setApplyingId(null);
   }
 
-  async function sendMessage(text: string) {
+  async function sendMessage(text: string, source: string = 'user_typed') {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
@@ -212,7 +233,7 @@ export default function CoachScreen() {
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
-      const result = await coachApi.chat(trimmed, history, conversationId);
+      const result = await coachApi.chat(trimmed, history, conversationId, source);
 
       // Update conversationId from response
       if (result.conversation_id && result.conversation_id !== conversationId) {

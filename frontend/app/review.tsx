@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../src/constants/theme';
 import { sessionRatingApi } from '../src/utils/api';
+import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDuration(secs: number): string {
@@ -315,6 +316,15 @@ export default function ReviewScreen() {
             <MaterialCommunityIcons name="chart-line" size={15} color={COLORS.text.muted} />
             <Text style={s.nextText}>Check the Track tab for your updated PRs</Text>
           </View>
+
+          {/* ── Ask Coach to review this session ── */}
+          <AskCoachButton
+            seedPrompt={`Review my ${params.sessionType || 'training'} session. What's the takeaway? What should I do differently next time?`}
+            triggerName="session_review_inquiry"
+            label="Review with Coach"
+            size="sm"
+            style={{ marginTop: 12, alignSelf: 'center' }}
+          />
         </Animated.View>
 
         <View style={{ height: 130 }} />

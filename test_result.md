@@ -160,17 +160,43 @@ backend:
         agent: "main"
         comment: "Added DELETE endpoint. Sets isArchived=True (soft delete)."
 
-  - task: "PROMPT4-BE5: Calendar events return all exercises (no 5-exercise limit)"
+  - task: "PROMPT5-BE1: GET /api/coach/active-trigger returns highest-priority active trigger or null"
     implemented: true
     working: "NA"
-    file: "backend/server.py"
+    file: "backend/server.py + backend/coach_triggers.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
-        comment: "Removed [:5] slice from _generate_calendar_events."
+        comment: "Added trigger endpoint + 6 check functions in coach_triggers.py. Imports get_active_trigger in server.py."
+
+  - task: "PROMPT5-BE2: All 6 trigger check functions (pain=90, missed=80, volume=60, rpe=50, deload=40, pr=20)"
+    implemented: true
+    working: "NA"
+    file: "backend/coach_triggers.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "check_pain_flag_recent, check_missed_two_sessions, check_volume_spike, check_rpe_climb, check_deload_due, check_pr_streak all implemented."
+
+  - task: "PROMPT5-BE3: source field added to CoachRequest and user_msg_doc"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added source: Optional[str] = 'user_typed' to CoachRequest. Passed through to user_msg_doc persisted in db.conversations."
+
+
 
 backend:
   - task: "TASK1 - POST /api/readiness returns loadMultiplier and adjustmentPercent"

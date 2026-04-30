@@ -10,6 +10,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { prApi, bwApi, analyticsApi, profileApi, programApi, liftsApi, streakApi, badgesApi, questApi } from '../../src/utils/api';
+import AskCoachButton from '../../src/components/AskCoachButton';
 
 // ── Palette ────────────────────────────────────────────────────────────────────
 const GOLD  = '#C9A84C';
@@ -812,6 +813,17 @@ export default function TrackScreen() {
             </View>
           </View>
         ))}
+
+        {/* ── Ask Coach about PR history ── */}
+        {prBoardLifts.length > 0 && (
+          <AskCoachButton
+            seedPrompt={`Look at my PR history${selectedLift ? ` for ${selectedLift}` : ''}. What's the trend? What should I focus on next?`}
+            triggerName="pr_history_inquiry"
+            label="Analyse PRs with Coach"
+            size="sm"
+            style={{ marginTop: 12, alignSelf: 'center' }}
+          />
+        )}
       </Animated.View>
 
       {/* Full Strength Trend */}

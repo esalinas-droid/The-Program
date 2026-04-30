@@ -11,6 +11,7 @@ import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
 import { AthleteProfile } from '../src/types';
 import { clearAuth, getStoredUser } from '../src/utils/auth';
+import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -422,6 +423,17 @@ export default function SettingsScreen() {
                 </>
               )}
             </TouchableOpacity>
+          )}
+
+          {/* ── Ask Coach about injuries ── */}
+          {liveInjuries.length > 0 && (
+            <AskCoachButton
+              seedPrompt={`Given my injury list (${liveInjuries.join(', ')}), what modifications should I make to my training right now?`}
+              triggerName="injury_modification_inquiry"
+              label="Ask Coach about injuries"
+              size="sm"
+              style={{ marginTop: 10 }}
+            />
           )}
         </View>
 

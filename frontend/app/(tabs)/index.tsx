@@ -14,6 +14,7 @@ import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
+import CoachRebalanceCard from '../../src/components/CoachRebalanceCard';
 
 // ── Greeting & date helpers ───────────────────────────────────────────────────
 function getGreeting(): string {
@@ -658,6 +659,9 @@ export default function Dashboard() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* ── COACH REBALANCE CARD (between Quest and Directive) ── */}
+        <CoachRebalanceCard />
 
         {/* ── COACH'S DIRECTIVE (program mode only) ── */}
         {profile?.training_mode !== 'free' && (

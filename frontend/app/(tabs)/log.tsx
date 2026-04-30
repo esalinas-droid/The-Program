@@ -14,6 +14,7 @@ import { calendarApi, logApi, programApi, substitutionApi } from '../../src/util
 import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
 import ExercisePicker, { PickedExercise } from '../../src/components/ExercisePicker';
 import ExerciseActionsSheet, { SessionStateType, ActionExercise } from '../../src/components/ExerciseActionsSheet';
+import AskCoachButton from '../../src/components/AskCoachButton';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -636,6 +637,19 @@ function SessionHistoryCard({
               );
             })
           )}
+          {/* ── Ask Coach about this session ── */}
+          <AskCoachButton
+            seedPrompt={
+              card.status === 'completed'
+                ? `Review my ${card.sessionType} session on ${card.dateLabel}. How did I do?`
+                : card.status === 'missed'
+                ? `I missed my ${card.sessionType} session on ${card.dateLabel}. Should I make it up or move on?`
+                : `Walk me through my ${card.sessionType} session on ${card.dateLabel}. What's the goal?`
+            }
+            triggerName="schedule_session_inquiry"
+            style={{ alignSelf: 'center', marginBottom: 4, marginTop: 4 }}
+          />
+
           {/* ── Add exercise footer ── */}
           <TouchableOpacity
             style={s.addExBtn}

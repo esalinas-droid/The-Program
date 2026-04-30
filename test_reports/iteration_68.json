@@ -1,0 +1,35 @@
+{
+  "summary": "Backend-only testing for Coach Rebalance + Contextual Ask Coach Flow. Tested GET /api/coach/active-trigger (6 trigger checks) and POST /api/coach/chat with new source field. All 13 tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_triggers.py",
+    "/app/test_reports/pytest/iter68_coach_triggers.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "coach_triggers.py: check_pr_streak — when hist_doc is None, old_best defaults to 0 correctly. No crash for users with no prior log entries.",
+    "get_active_trigger wraps each trigger call in try/except — no single trigger failure can crash the endpoint. Good defensive pattern.",
+    "source field on CoachRequest has default='user_typed' and is stored in message doc at line 2273. Both 'user_typed' and 'system_seed' accepted without 422.",
+    "pain_flag_recent trigger uses db.pain_reports.find() with date >= 3 days ago — correctly fires when pain report exists (verified: pain_flag_recent returned as triggerName after seeding a pain report)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coach_triggers.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "not tested"
+  },
+  "seed_data_creation": "Created 1 pain_report for user_a during test (TEST_ notes prefix). Not cleaned up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "GET /api/coach/active-trigger fully functional. Returns {triggerName: null} when no triggers active, returns full trigger object with triggerName/cardText/cta/seedPrompt/payload when active. pain_flag_recent fires correctly after pain report. source field on POST /api/coach/chat stored correctly. pr_streak does not crash for users with no recent PRs. User A (program mode) — active trigger at time of testing was pain_flag_recent due to seeded pain report."
+}

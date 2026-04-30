@@ -1,6 +1,7 @@
 from routers.program import program_router, _store as _prog_store, _id as _prog_id
 from routers.auth import auth_router, admin_router
 from middleware import DEFAULT_USER as _PROG_USER, get_current_user
+from coach_triggers import get_active_trigger
 from models.schemas import (
     IntakeRequest as _IntakeRequest,
     CurrentLifts as _CurrentLifts,
@@ -1978,6 +1979,7 @@ class CoachRequest(BaseModel):
     message: str
     conversation_history: List[ChatMessage] = []
     conversation_id: Optional[str] = None
+    source: Optional[str] = "user_typed"  # "user_typed" | "system_seed"
 
 class CoachConversation(BaseDocument):
     userId: str = "default"
@@ -1986,6 +1988,18 @@ class CoachConversation(BaseDocument):
     hasProgramChange: bool = False
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# ── GET /api/coach/active-trigger ────────────────────────────────────────────
+@api_router.get("/coach/active-trigger")
+async def get_coach_active_trigger(userId: str = Depends(get_current_user)):
+    """
+    Run the trigger engine and return the highest-priority active trigger,
+    or {triggerName: null} if nothing fires. Stateless — computed fresh on each call.
+    """
+    result = await get_active_trigger(db, userId)
+    if result is None:
+        return {"triggerName": None}
+    return result
 
 # ── POST /api/coach/chat ──────────────────────────────────────────────────────
 @api_router.post("/coach/chat")
@@ -2256,7 +2270,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     # ── 11. Persist conversation to MongoDB (userId-scoped) ───────────────────
     now = datetime.now(timezone.utc)
     conversation_id = request.conversation_id
-    user_msg_doc = {"role": "user", "content": request.message, "timestamp": now.isoformat()}
+    user_msg_doc = {"role": "user", "content": request.message, "timestamp": now.isoformat(), "source": request.source or "user_typed"}
     assistant_msg_doc = {
         "role": "assistant", "content": clean_response, "timestamp": now.isoformat(),
         "hasProgramChange": has_program_change, "programChange": program_change,
