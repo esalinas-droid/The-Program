@@ -108,7 +108,26 @@ export default function SettingsScreen() {
       try {
         const backendProfile = await profileApi.get();
         if (backendProfile) {
-          p = { ...backendProfile, ...p };
+          // Server-controlled fields always win on fetch
+          // (these are flags the user cannot toggle from settings)
+          const SERVER_AUTHORITATIVE_FIELDS: (keyof AthleteProfile)[] = [
+            'is_beta_tester',
+            'currentWeek',
+            'programStartDate',
+            'onboardingComplete',
+          ];
+
+          // Start with local (preserves user-edited fields like name, weight, weaknesses)
+          const merged: any = { ...backendProfile, ...p };
+
+          // Override any server-authoritative field with the backend value
+          for (const field of SERVER_AUTHORITATIVE_FIELDS) {
+            if (field in backendProfile) {
+              merged[field] = (backendProfile as any)[field];
+            }
+          }
+
+          p = merged;
           await saveProfile(p);
         }
       } catch {}
