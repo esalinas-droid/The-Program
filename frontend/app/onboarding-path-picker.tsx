@@ -45,7 +45,7 @@ export default function OnboardingPathPicker() {
   };
 
   const handleImport = () => {
-    showToast('Document upload arrives next release — for now, choose Build or Track');
+    router.push('/import-document' as any);
   };
 
   const handleFree = () => {
@@ -90,28 +90,28 @@ export default function OnboardingPathPicker() {
             </View>
           </TouchableOpacity>
 
-          {/* CARD 2 — Import my program (disabled) */}
+          {/* CARD 2 — Import my program (now active) */}
           <TouchableOpacity
-            style={[s.card, s.cardDisabled]}
+            style={s.card}
             onPress={handleImport}
-            activeOpacity={0.65}
+            activeOpacity={0.82}
           >
             <View style={s.cardLeft}>
-              <View style={[s.iconWrap, { backgroundColor: 'rgba(120,120,140,0.1)' }]}>
-                <MaterialCommunityIcons name="upload-outline" size={26} color={MUTED} />
+              <View style={[s.iconWrap, { backgroundColor: 'rgba(42,157,143,0.12)' }]}>
+                <MaterialCommunityIcons name="upload-outline" size={26} color={TEAL} />
               </View>
               <View style={s.cardText}>
-                <Text style={[s.cardTitle, { color: TEXT2 }]}>Import my program</Text>
+                <Text style={s.cardTitle}>Import my program</Text>
                 <Text style={s.cardDesc}>
-                  I have a coach-built program (PDF, doc, screenshot) — upload it and the app will adapt
+                  I have a coach-built program (PDF, doc, screenshot) — upload it and the app will extract the text
                 </Text>
               </View>
             </View>
             <View style={s.cardFooter}>
-              <View style={[s.pill, s.pillMuted]}>
-                <Text style={[s.pillText, { color: MUTED }]}>Coming in next update</Text>
+              <View style={[s.pill, { backgroundColor: 'rgba(42,157,143,0.12)', borderColor: 'rgba(42,157,143,0.25)' }]}>
+                <Text style={[s.pillText, { color: TEAL }]}>Upload & extract</Text>
               </View>
-              <MaterialCommunityIcons name="lock-outline" size={18} color={MUTED} />
+              <MaterialCommunityIcons name="chevron-right" size={20} color={MUTED} />
             </View>
           </TouchableOpacity>
 

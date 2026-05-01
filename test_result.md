@@ -1603,3 +1603,42 @@ agent_communication:
 
       Test credentials: user_a@theprogram.app / StrongmanA123
       Active test user userId: 3f772246-75fc-46c0-b951-765879ded605
+
+
+  - agent: "main"
+    message: >
+      PROMPT 7A FRONTEND COMPLETE — Document Upload + Parsing Pipeline.
+
+      WHAT WAS IMPLEMENTED:
+      1. api.ts: Added documentsApi (list, get, reparse, delete) + UserDocument type.
+      2. app/import-document.tsx (NEW): File upload screen with real 0-100% progress bar
+         using FileSystem.createUploadTask (native) and XHR upload.onprogress (web).
+         States: idle → selected → uploading (with animated progress) → navigates to detail.
+         Supports PDF/DOCX/TXT via DocumentPicker, JPG/PNG via ImagePicker.
+      3. app/documents/[id].tsx (NEW): Document detail screen.
+         - Polls backend every 2s while parseStatus is pending/parsing.
+         - Shows metadata card (filename, type, size, pages, upload/parse dates).
+         - Shows parsed text in monospaced scrollable view when complete.
+         - Shows error + "Retry Extraction" button when failed.
+         - "Use this to build my plan" button is DISABLED (Prompt 7B scope).
+         - Delete with confirmation.
+      4. onboarding-path-picker.tsx: "Import my program" card ACTIVATED (removed disabled
+         state, teal icon, "Upload & extract" pill, navigates to /import-document).
+      5. programs.tsx: Added "Import from document" secondary button below "+ New Program".
+
+      PARSE PIPELINE TEST RESULTS (backend direct tests):
+      - TXT: ✅ 530 chars, verbatim extraction
+      - DOCX: ✅ 324 chars, paragraphs + table cells extracted
+      - PDF (text): ✅ 1016 chars, 2 pages, clean pdfplumber extraction
+      - JPG: ✅ 246 chars, OCR works (minor character noise expected)
+      - PDF (scan): ✅ 298 chars, OCR path triggered correctly
+
+      SCOPE BOUNDARY: "Use this to build my plan" button is DISABLED. Prompt 7B is NOT
+      implemented (LLM extraction to convert parsed text into an active plan).
+
+      FILES MODIFIED:
+      - /app/frontend/src/utils/api.ts (documentsApi added)
+      - /app/frontend/app/import-document.tsx (created)
+      - /app/frontend/app/documents/[id].tsx (created)
+      - /app/frontend/app/onboarding-path-picker.tsx (import card activated)
+      - /app/frontend/app/programs.tsx (import button added)

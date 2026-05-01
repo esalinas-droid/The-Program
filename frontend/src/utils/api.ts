@@ -610,6 +610,34 @@ export const userExercisesApi = {
 // Generic api export for one-off calls
 export { api };
 
+// ── Documents API (Prompt 7A) ──────────────────────────────────────────────────
+export interface UserDocument {
+  documentId:   string;
+  userId:       string;
+  filename:     string;
+  contentType:  string;
+  sizeBytes:    number;
+  storagePath:  string;
+  uploadedAt:   string;
+  parsedText?:  string;
+  parseStatus:  'pending' | 'parsing' | 'complete' | 'failed';
+  parseError?:  string | null;
+  parsedAt?:    string | null;
+  pageCount?:   number | null;
+  documentType: string;
+}
+
+export const documentsApi = {
+  list: (): Promise<UserDocument[]> =>
+    api('/documents'),
+  get: (docId: string): Promise<UserDocument> =>
+    api(`/documents/${docId}`),
+  reparse: (docId: string): Promise<{ documentId: string; parseStatus: string }> =>
+    api(`/documents/${docId}/reparse`, { method: 'POST' }),
+  delete: (docId: string): Promise<{ deleted: boolean; documentId: string }> =>
+    api(`/documents/${docId}`, { method: 'DELETE' }),
+};
+
 // ── Programs Library API ──────────────────────────────────────────────────────
 export const programsApi = {
   list: (): Promise<{ active: any | null; archived: any[] }> =>

@@ -253,6 +253,14 @@ export default function ProgramsScreen() {
             <MaterialCommunityIcons name="plus" size={18} color={COLORS.surface} />
             <Text style={s.newBtnText}>+ New Program</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={s.importBtn}
+            onPress={() => router.push('/import-document' as any)}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons name="upload-outline" size={15} color={COLORS.accent} />
+            <Text style={s.importBtnText}>Import from document</Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -448,5 +456,18 @@ const s = StyleSheet.create({
     fontSize: FONTS.sizes.md,
     fontWeight: FONTS.weights.bold,
     color: COLORS.surface,
+  },
+  importBtn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             SPACING.xs,
+    marginTop:       SPACING.sm,
+    paddingVertical: SPACING.sm + 2,
+  },
+  importBtnText: {
+    fontSize:   FONTS.sizes.sm,
+    fontWeight: FONTS.weights.medium,
+    color:      COLORS.accent,
   },
 });
