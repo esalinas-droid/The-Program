@@ -1642,3 +1642,13 @@ agent_communication:
       - /app/frontend/app/documents/[id].tsx (created)
       - /app/frontend/app/onboarding-path-picker.tsx (import card activated)
       - /app/frontend/app/programs.tsx (import button added)
+
+  - agent: "main"
+    message: >
+      PROMPT 7B COMPLETE — LLM Extraction to Active Plan.
+      Backend: build-plan + activate-extracted-plan endpoints, plan_extractor.py service,
+      sourceDocumentId field added to AnnualPlan schema, db.llm_extractions cost logging.
+      Frontend: documents/[id]/index.tsx (activated button), documents/[id]/build-plan.tsx
+      (preview screen with loading/preview/skeleton/activate/cancel states), api.ts types updated.
+      All 5 extraction formats tested: PASS.
+

@@ -279,6 +279,7 @@ class AnnualPlan(BaseModel):
     lastActiveWeek: int = 1   # snapshotted currentWeek at archive time; used for re-activate
     generatedAt: datetime = Field(default_factory=datetime.now)
     lastModified: datetime = Field(default_factory=datetime.now)
+    sourceDocumentId: Optional[str] = None  # set when plan was imported from a document (Prompt 7B)
 
 
 # ─── Logged Set ───────────────────────────────────────────────────────────────

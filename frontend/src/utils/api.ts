@@ -636,7 +636,38 @@ export const documentsApi = {
     api(`/documents/${docId}/reparse`, { method: 'POST' }),
   delete: (docId: string): Promise<{ deleted: boolean; documentId: string }> =>
     api(`/documents/${docId}`, { method: 'DELETE' }),
+  // Prompt 7B
+  buildPlan: (docId: string): Promise<BuildPlanResponse> =>
+    api(`/documents/${docId}/build-plan`, { method: 'POST' }),
+  activatePlan: (docId: string, body: ActivatePlanBody): Promise<{ success: boolean; planId: string }> =>
+    api(`/documents/${docId}/activate-extracted-plan`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    }),
 };
+
+export interface BuildPlanResponse {
+  proposedPlan:   Record<string, any>;
+  confidence:     ExtractionConfidence;
+  documentId:     string;
+  skeletonMode:   boolean;
+  approxCostUsd:  number;
+  latencySeconds: number;
+}
+
+export interface ExtractionConfidence {
+  summary:                   string;
+  high:                      string[];
+  low:                       string[];
+  assumptions:               Array<{ field: string; what_you_assumed: string; why: string }>;
+  couldn_extract_sessions?:  boolean;
+}
+
+export interface ActivatePlanBody {
+  planName?:    string;
+  proposedPlan: Record<string, any>;
+}
 
 // ── Programs Library API ──────────────────────────────────────────────────────
 export const programsApi = {
