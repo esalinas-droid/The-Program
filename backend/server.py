@@ -2561,6 +2561,121 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         r_lines = [f"- {d.get('date')}: {d.get('sessionType')} RPE {d.get('rpe')}/10, {d.get('completionPct', 0):.0f}% completion" for d in rating_docs]
         rating_context = "Recent session ratings:\n" + "\n".join(r_lines)
 
+    # ── 6b. Today's prescribed session + current block directive ─────────────
+    # Both context strings are injected into the coach system prompt so it can
+    # answer "what's my next workout?" and "what's this block about?" precisely.
+    today_session_context   = ""
+    block_directive_context = ""
+    _coach_mode = (profile_doc or {}).get("training_mode", "program")
+    if _coach_mode == "free":
+        today_session_context = "Today: free-training mode — no prescribed session."
+    else:
+        try:
+            from models.schemas import PhaseStatus as _PS, SessionStatus as _SS
+            await _ensure_plan_loaded(userId)
+            _cp = _prog_store["plans"].get(userId)  # _cp = coach plan
+            if _cp:
+                # ── i: today's session ─────────────────────────────────────────
+                _t_num   = datetime.now().weekday() + 1          # 1=Mon…7=Sun
+                _t_local = datetime.now().strftime("%Y-%m-%d")
+                _TC2     = {1: "Heavy Lower", 2: "Heavy Upper", 4: "Speed Lower", 5: "Speed Upper"}
+
+                _mv_to   = await db.calendar_overrides.find_one({"userId": userId, "newDate":       _t_local})
+                _mv_from = await db.calendar_overrides.find_one({"userId": userId, "originalDate": _t_local})
+
+                _fs = None   # found session
+                _fm = {}     # found metadata {phase, block, week}
+
+                if _mv_to:
+                    _mtype = _mv_to.get("sessionType", "")
+                    for _ph in _cp.phases:
+                        for _bl in (_ph.blocks or []):
+                            for _wk in (_bl.weeks or []):
+                                for _se in (_wk.sessions or []):
+                                    if _se.sessionType == _mtype:
+                                        _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                if _fs: break
+                            if _fs: break
+                        if _fs: break
+                elif _mv_from:
+                    today_session_context = "Today: session was moved to another day — rest day."
+
+                if not _fs and not today_session_context:
+                    for _ph in _cp.phases:
+                        if _ph.status == _PS.CURRENT:
+                            for _bl in _ph.blocks:
+                                if _bl.status == _PS.CURRENT:
+                                    for _wk in _bl.weeks:
+                                        # 1st: exact day match
+                                        for _se in _wk.sessions:
+                                            if _se.dayNumber == _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                        # 2nd: calendar-type match
+                                        if not _fs:
+                                            _exp = _TC2.get(_t_num)
+                                            if _exp:
+                                                for _se in _wk.sessions:
+                                                    if _se.sessionType == _exp and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                        _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                        # 3rd: next upcoming session in week
+                                        if not _fs:
+                                            for _se in _wk.sessions:
+                                                if _se.dayNumber >= _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                    _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                        # 4th: any planned session this week
+                                        if not _fs:
+                                            for _se in _wk.sessions:
+                                                if _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                    _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                        if _fs: break
+                                    if _fs: break
+                                if _fs: break
+                            if _fs: break
+
+                if _fs:
+                    _ex_lines = []
+                    for _ex in (_fs.exercises or []):
+                        _cat   = _ex.category.value if hasattr(_ex.category, "value") else str(_ex.category)
+                        _presc = _ex.prescription or "(see prescription)"
+                        _ex_lines.append(f"  - {_ex.name} [{_cat}]: {_presc}")
+                    today_session_context = (
+                        f"Phase: {_fm.get('phase','?')} | Block: {_fm.get('block','?')} | Week {_fm.get('week','?')}\n"
+                        f"Session Type: {_fs.sessionType}\n"
+                        f"Exercises:\n" + ("\n".join(_ex_lines) if _ex_lines else "  (none listed)")
+                    )
+                elif not today_session_context:
+                    today_session_context = "Today: rest day — no prescribed session."
+
+                # ── ii: current block directive ────────────────────────────────
+                _c_phase = None
+                _c_block = None
+                for _ph in _cp.phases:
+                    if _ph.status == _PS.CURRENT:
+                        for _bl in _ph.blocks:
+                            if _bl.status == _PS.CURRENT:
+                                _c_phase = _ph; _c_block = _bl; break
+                        if _c_block: break
+                if not _c_block and _cp.phases and _cp.phases[0].blocks:
+                    _c_phase = _cp.phases[0]
+                    _c_block = _cp.phases[0].blocks[0]
+                if _c_phase and _c_block:
+                    _directive = _c_block.progressionLogic or _c_block.blockGoal or ""
+                    block_directive_context = (
+                        f"Block {_c_block.blockNumber}: {_c_block.blockName} ({_c_block.blockGoal})\n"
+                        f"Phase: {_c_phase.phaseName} — Goal: {_c_phase.goal}\n"
+                        f"Expected Adaptation: {_c_phase.expectedAdaptation}\n"
+                        f"Directive: {_directive if _directive else '(not specified)'}\n"
+                        f"Block Length: {_c_block.weekCount} week(s)"
+                    )
+            else:
+                today_session_context = "Today: rest day or free-training mode — no prescribed session."
+        except Exception as _plan_err:
+            logger.warning(f"[CoachChat] Program context fetch failed: {_plan_err}")
+
+    # Pre-format conditional injection strings (empty → no noise in prompt)
+    _session_ctx_str = f"\n\nTODAY'S PRESCRIBED SESSION:\n{today_session_context}" if today_session_context else ""
+    _block_ctx_str   = f"\n\nCURRENT BLOCK DIRECTIVE:\n{block_directive_context}"   if block_directive_context else ""
+
     # ── 7. RAG: retrieve relevant passages ────────────────────────────────────
     embedding_response = await _openai_client.embeddings.create(
         model='text-embedding-3-small',
@@ -2607,7 +2722,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
 
         "WHO YOU'RE TALKING TO\n"
         "The user is an adult athlete who has chosen to train under structure. They have:\n"
-        "- A program (or none, if they've chosen free-training mode — check before assuming)\n"
+        "- A program with a current block, weekly session structure, and today's prescribed exercises — all visible to you below in TODAY'S PRESCRIBED SESSION and CURRENT BLOCK DIRECTIVE. Reference these explicitly when the user asks about their workout.\n"
         "- A history of logged sessions, PRs, and a change log of past edits\n"
         "- Often: injury flags, weakness targets, and sometimes uploaded medical or coaching documents\n"
         "- Sometimes: meet dates, body weight, and experience level\n\n"
@@ -2660,6 +2775,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "- From uploaded documents: \"From your shoulder MRI report, the labrum tear was on the left.\" Make it clear you're using their info.\n"
         "- From the knowledge base: cite the source name when you have it; don't fabricate citations or invent author names.\n"
         "- From their logged history: \"Your last heavy bench was 14 days ago at 315×3.\" Be exact.\n"
+        "- From their program: 'Your Heavy Lower today is squat 5×3 @ RPE 7 — that's the priority lift, not the accessories.' Be specific about exercise names, sets, reps, and intensity targets.\n"
         "If you don't have relevant context, say so. Don't invent.\n\n"
 
         "YOU NEVER\n"
@@ -2703,6 +2819,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
         f"\n\nRECENT SESSIONS:\n{recent_log}"
+        f"{_session_ctx_str}{_block_ctx_str}"
         f"{coaching_intelligence}"
         f"{rag_section}"
     )
