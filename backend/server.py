@@ -12,6 +12,7 @@ from models.schemas import (
 )
 from services.plan_generator import generate_plan as _generate_plan
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile as FAUploadFile
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -128,6 +129,7 @@ class AthleteProfile(BaseDocument):
     has_imported_program: bool = False
     has_completed_tour:   bool = False  # True after user finishes/skips the guided tour
     tour_version:         int  = 0      # bumped by TOUR_VERSION_CONSTANT when tour schema changes
+    auto_play_coach_responses: bool = False   # Prompt 9B: auto-play TTS on new coach replies
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -165,6 +167,7 @@ class AthleteProfileUpdate(BaseModel):
     has_imported_program: Optional[bool] = None
     has_completed_tour:   Optional[bool] = None
     tour_version:         Optional[int]  = None
+    auto_play_coach_responses: Optional[bool] = None   # Prompt 9B
 
 class WorkoutLogEntry(BaseDocument):
     userId: str = ""          # owner of this log entry
@@ -2946,6 +2949,98 @@ async def coach_transcribe(
                 os.unlink(tmp_path)
             except Exception:
                 pass
+
+
+# ── POST /api/coach/speak ─────────────────────────────────────────────────────
+@api_router.post("/coach/speak")
+async def coach_speak(
+    body: dict,
+    userId: str = Depends(get_current_user),
+):
+    """
+    Generate TTS audio for a coach response via OpenAI TTS API.
+    Returns MP3 audio bytes as a StreamingResponse.
+    """
+    import io as _io, time as _time
+
+    VALID_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+    MAX_CHARS    = 4096
+
+    text  = (body.get("text") or "").strip()
+    voice = body.get("voice", "onyx")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required.")
+    if len(text) > MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail="Response too long for voice playback.",
+        )
+    if voice not in VALID_VOICES:
+        voice = "onyx"
+    if not _openai_client:
+        raise HTTPException(status_code=503, detail="Voice service unavailable.")
+
+    t_start = _time.time()
+    try:
+        response = await _openai_client.audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text,
+            response_format="mp3",
+        )
+        # Collect audio bytes from the async response stream
+        buf = _io.BytesIO()
+        async for chunk in response.iter_bytes(chunk_size=4096):
+            buf.write(chunk)
+        audio_bytes  = buf.getvalue()
+        latency      = round(_time.time() - t_start, 2)
+        audio_size   = len(audio_bytes)
+        # MP3 at ~128 kbps ≈ 16 000 bytes / second
+        est_duration = round(audio_size / 16_000, 1)
+        approx_cost  = round(len(text) / 1000 * 0.015, 5)   # $0.015 / 1K chars
+
+        # ── Observability log ─────────────────────────────────────────────
+        try:
+            await db.coach_voice_tts.insert_one({
+                "userId":               userId,
+                "textCharCount":        len(text),
+                "audioDurationSeconds": est_duration,
+                "audioSizeBytes":       audio_size,
+                "latencySeconds":       latency,
+                "approximateCost":      approx_cost,
+                "success":              True,
+                "timestamp":            datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass  # non-fatal
+
+        return StreamingResponse(
+            _io.BytesIO(audio_bytes),
+            media_type="audio/mpeg",
+            headers={
+                "Content-Length":      str(audio_size),
+                "Content-Disposition": "inline; filename=coach_reply.mp3",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[TTS] speech generation failed: {exc}")
+        try:
+            await db.coach_voice_tts.insert_one({
+                "userId":    userId,
+                "success":   False,
+                "error":     str(exc),
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail="Voice generation failed. Please try again or read the response.",
+        )
 
 
 async def _save_plan_to_db(plan, uid: str = None) -> None:
