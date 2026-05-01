@@ -74,7 +74,7 @@ const PROGRAM_STEPS: TourStep[] = [
   {
     id: 'session', target: 'sessionCard',
     title: 'Your daily anchor',
-    body: "Today's session lives here. Tap Start when you're ready to train. The card adapts based on your status.",
+    body: "Today's session lives here. Tap Start when you're ready to train. The card adapts based on your status — Pending, In Progress, Complete, Rest Day.",
   },
   {
     id: 'coach', target: 'coachCard',
@@ -94,7 +94,7 @@ const PROGRAM_STEPS: TourStep[] = [
   {
     id: 'coach_tab', target: 'tabTools',
     title: 'Talk to your Pocket Coach',
-    body: "Real coaching questions. The coach knows your program, injuries, recent sessions, and PRs. Ask anything — or tap any 'Ask Coach' button for contextual help.",
+    body: "Tools holds your Coach. The coach knows your program, injuries, recent sessions, and PRs. Ask anything — or tap any 'Ask Coach' button across the app for contextual help.",
   },
   {
     id: 'settings', target: 'settingsGear',
@@ -108,28 +108,28 @@ const FREE_STEPS: TourStep[] = [
   {
     id: 'welcome', isWelcome: true, target: 'none',
     title: 'Quick tour',
-    body: "30 seconds. I'll show you the 5 things that matter most. Skip anytime.",
+    body: "30 seconds. Here's what's here for you in free training mode. Skip anytime.",
     ctaLabel: 'Start tour',
   },
   {
     id: 'session', target: 'sessionCard',
     title: 'Track-only mode',
-    body: "You're in free training — no prescribed plan. Log sessions when you train; the coach has full context on everything you record.",
+    body: "You're in free training. No prescribed plan. Log sessions when you train; the coach has full context of your training history.",
   },
   {
     id: 'track', target: 'tabTrack',
     title: "What you're hitting",
-    body: 'Track shows your PRs across every lift. The board updates automatically when you hit a new max.',
+    body: 'Track shows your PRs across every lift. The board updates when you log a new max.',
   },
   {
     id: 'coach_tab', target: 'tabTools',
-    title: 'Talk to your Pocket Coach',
-    body: "Real coaching questions. Ask anything — the coach has full context on your training history and PRs.",
+    title: 'Your Pocket Coach',
+    body: "The coach knows your training history — every logged session, every PR. Ask about programming, technique, injuries, anything.",
   },
   {
     id: 'settings', target: 'settingsGear',
-    title: 'Manage everything',
-    body: 'Settings has Programs (switch to a full program anytime), training mode switcher, and the replay-tour button.',
+    title: 'Switch modes anytime',
+    body: "Settings → Switch to a program if you want an AI- or coach-built plan. Replay this tour anytime from there too.",
     ctaLabel: 'Done',
   },
 ];

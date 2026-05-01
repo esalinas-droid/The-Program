@@ -9,6 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
+import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
 import { AthleteProfile } from '../src/types';
 import { clearAuth, getStoredUser } from '../src/utils/auth';
 import AskCoachButton from '../src/components/AskCoachButton';
@@ -336,6 +337,19 @@ export default function SettingsScreen() {
     );
   }
 
+  // ── Replay tour ───────────────────────────────────────────────────────────
+  const handleReplayTour = async () => {
+    try {
+      await profileApi.resetTour();
+      // Clear local cache so tour triggers on Home focus
+      const p = await getProfile();
+      if (p) await saveProfile({ ...p, has_completed_tour: false, tour_version: 0 });
+    } catch (e) {
+      console.warn('[Settings] replay tour error', e);
+    }
+    router.replace('/(tabs)');
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <View style={s.loading}><ActivityIndicator color={COLORS.accent} /></View>;
 
@@ -623,6 +637,21 @@ export default function SettingsScreen() {
               <Text style={s.accountRowDesc}>View past programs · build new ones</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+          </TouchableOpacity>
+
+          {/* Replay tour */}
+          <TouchableOpacity
+            style={[s.accountRow, { borderTopWidth: 1, borderTopColor: COLORS.border, marginTop: 4, paddingTop: SPACING.md + 2 }]}
+            onPress={handleReplayTour}
+            activeOpacity={0.7}
+          >
+            <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
+              <MaterialCommunityIcons name="compass-outline" size={16} color={COLORS.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.accountRowLabel}>Replay tour</Text>
+              <Text style={s.accountRowDesc}>Walk through the key features again</Text>
+            </View>
           </TouchableOpacity>
 
           {/* Sign out */}

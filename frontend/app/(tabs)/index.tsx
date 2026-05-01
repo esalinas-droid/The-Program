@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, RefreshControl, ActivityIndicator, Animated,
@@ -7,14 +7,15 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
-import { getProfile } from '../../src/utils/storage';
+import { getProfile, saveProfile } from '../../src/utils/storage';
 import { getStoredUser } from '../../src/utils/auth';
 import { toLocalDateString, getLocalDateString } from '../../src/utils/dateHelpers';
-import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, calendarApi, api } from '../../src/utils/api';
+import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, calendarApi, api, profileApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
 import CoachRebalanceCard from '../../src/components/CoachRebalanceCard';
+import TourOverlay, { TourRefs, TOUR_VERSION_CONSTANT } from '../../src/components/TourOverlay';
 
 // ── Greeting & date helpers ───────────────────────────────────────────────────
 function getGreeting(): string {
@@ -125,6 +126,20 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [expandedCoach, setExpandedCoach] = useState(false);
   const [expandedAlerts, setExpandedAlerts] = useState(false);
+
+  // ── Tour refs & state ────────────────────────────────────────────────────────
+  const sessionCardRef  = useRef<View>(null);
+  const coachCardRef    = useRef<View>(null);
+  const settingsGearRef = useRef<View>(null);
+  const [showTour, setShowTour] = useState(false);
+  // Use ref (not state) for the tour-triggered guard — avoids useCallback dep loop
+  const tourTriggeredRef = useRef(false);
+
+  const tourRefs: TourRefs = {
+    sessionCard:  sessionCardRef,
+    coachCard:    coachCardRef,
+    settingsGear: settingsGearRef,
+  };
 
   // ── Priority card state ──────────────────────────────────────────────────────
   const [flaggedRegions, setFlaggedRegions] = useState<string[]>([]);
@@ -301,11 +316,40 @@ export default function Dashboard() {
     } catch { /* Non-critical */ }
 
     setLoading(false);
+
+    // ── Tour trigger — after page has fully loaded ─────────────────────────
+    // Uses a ref (not state) to avoid re-render dependency loops.
+    if (
+      prof.onboardingComplete &&
+      !prof.has_completed_tour &&
+      (prof.tour_version ?? 0) < TOUR_VERSION_CONSTANT &&
+      !tourTriggeredRef.current
+    ) {
+      tourTriggeredRef.current = true;
+      setTimeout(() => setShowTour(true), 600);
+    }
   }, []);
 
-  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
+  useFocusEffect(useCallback(() => {
+    // Reset tour guard on focus so Replay Tour (from Settings) can re-trigger
+    tourTriggeredRef.current = false;
+    loadData();
+  }, [loadData]));
 
   const onRefresh = async () => { setRefreshing(true); await loadData(); setRefreshing(false); };
+
+  // ── Tour complete handler ──────────────────────────────────────────────────
+  const handleTourComplete = useCallback(async () => {
+    // Update local cache FIRST so useFocusEffect can't re-trigger the tour
+    // if it fires when the modal closes (React Navigation focus event).
+    try {
+      const p = await getProfile();
+      if (p) await saveProfile({ ...p, has_completed_tour: true, tour_version: TOUR_VERSION_CONSTANT });
+    } catch {}
+    setShowTour(false);
+    // Fire-and-forget backend sync (local cache already authoritative)
+    profileApi.completeTour().catch(e => console.warn('[Tour] completeTour failed:', e));
+  }, []);
 
   if (loading) {
     return (
@@ -411,7 +455,13 @@ export default function Dashboard() {
             <Text style={s.greeting}>{getGreeting()}, {profile.name || authUserName || 'Athlete'}</Text>
             <Text style={s.date}>{getFormattedDate()}</Text>
           </View>
-          <TouchableOpacity testID="settings-btn" onPress={() => router.push('/settings')} style={s.settingsBtn}>
+          <TouchableOpacity
+            ref={settingsGearRef as any}
+            collapsable={false}
+            testID="settings-btn"
+            onPress={() => router.push('/settings')}
+            style={s.settingsBtn}
+          >
             <MaterialCommunityIcons name="cog-outline" size={26} color={COLORS.text.secondary} />
           </TouchableOpacity>
         </View>
@@ -419,7 +469,11 @@ export default function Dashboard() {
         {/* ── TODAY'S SESSION CARD — program mode or free training ── */}
         {profile?.training_mode === 'free' ? (
           /* ── FREE TRAINING CARD ── */
-          <View style={[s.restDayCard, { borderColor: '#2A9D8F30', backgroundColor: '#0E1614' }]}>
+          <View
+            ref={sessionCardRef}
+            collapsable={false}
+            style={[s.restDayCard, { borderColor: '#2A9D8F30', backgroundColor: '#0E1614' }]}
+          >
             <View style={[s.restDayIcon, { backgroundColor: '#2A9D8F15' }]}>
               <MaterialCommunityIcons name="notebook-outline" size={26} color="#2A9D8F" />
             </View>
@@ -432,7 +486,7 @@ export default function Dashboard() {
           </View>
         ) : sessionCardState === 'rest_day' ? (
           /* ── REST DAY ── */
-          <View testID="today-session-card" style={s.restDayCard}>
+          <View ref={sessionCardRef} collapsable={false} testID="today-session-card" style={s.restDayCard}>
             <View style={s.restDayIcon}>
               <MaterialCommunityIcons name="weather-sunny" size={26} color={COLORS.accent} />
             </View>
@@ -446,7 +500,7 @@ export default function Dashboard() {
 
         ) : sessionCardState === 'complete' ? (
           /* ── COMPLETE ── */
-          <View testID="today-session-card" style={[s.sessionCard, s.sessionCardComplete]}>
+          <View ref={sessionCardRef} collapsable={false} testID="today-session-card" style={[s.sessionCard, s.sessionCardComplete]}>
             <View style={s.sessionCardTop}>
               {(() => {
                 const sc = getSessionStyle(displaySession?.sessionType ?? '');
@@ -490,7 +544,7 @@ export default function Dashboard() {
 
         ) : sessionCardState === 'in_progress' ? (
           /* ── IN PROGRESS ── */
-          <View testID="today-session-card" style={s.sessionCard}>
+          <View ref={sessionCardRef} collapsable={false} testID="today-session-card" style={s.sessionCard}>
             <View style={s.sessionCardTop}>
               {(() => {
                 const sc = getSessionStyle(displaySession?.sessionType ?? '');
@@ -525,7 +579,7 @@ export default function Dashboard() {
         ) : (
           /* ── PENDING (default) — show when training day, not started ── */
           (!displaySession ? null : (
-            <View style={s.sessionCard}>
+            <View ref={sessionCardRef} collapsable={false} style={s.sessionCard}>
               <View style={s.sessionCardTop}>
                 {(() => {
                   const sc = getSessionStyle(displaySession.sessionType);
@@ -665,7 +719,7 @@ export default function Dashboard() {
 
         {/* ── COACH'S DIRECTIVE (program mode only) ── */}
         {profile?.training_mode !== 'free' && (
-        <View style={s.coachCard}>
+        <View ref={coachCardRef} collapsable={false} style={s.coachCard}>
           <View style={s.coachCardHeader}>
             <View style={s.coachIconBadge}>
               <MaterialCommunityIcons name="brain" size={14} color={COLORS.accent} />
@@ -924,6 +978,14 @@ export default function Dashboard() {
 
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
+
+      {/* ── GUIDED TOUR OVERLAY ── */}
+      <TourOverlay
+        isVisible={showTour}
+        trainingMode={profile?.training_mode === 'free' ? 'free' : 'program'}
+        targetRefs={tourRefs}
+        onComplete={handleTourComplete}
+      />
     </SafeAreaView>
   );
 }
