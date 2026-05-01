@@ -12,6 +12,7 @@ import { getProfile } from '../../src/utils/storage';
 import { getBlock, getPhase } from '../../src/utils/calculations';
 import { consumeCoachSeed } from '../../src/store/coachSeedStore';
 import VoiceInputButton from '../../src/components/VoiceInputButton';
+import SpeakerButton from '../../src/components/SpeakerButton';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExerciseSwap {
@@ -111,10 +112,30 @@ export default function CoachScreen() {
   // Prevent double-firing the seed (e.g. React StrictMode double-effect)
   const seedFiredRef = useRef(false);
 
+  // ── TTS auto-play: track which messages have already been "seen" so we
+  // never auto-play history loaded from the server, only freshly-arrived msgs.
+  const seenMessageIdsRef  = useRef<Set<string>>(new Set());
+  const [autoPlayMessageId, setAutoPlayMessageId] = useState<string | null>(null);
+
   useEffect(() => {
     getProfile().then(setProfile);
     loadConversations();
   }, []);
+
+  // ── Auto-play: detect newly-arrived assistant messages ─────────────────────
+  // Profile is intentionally not in the dep array — once a message is marked
+  // as "seen" it cannot retroactively trigger auto-play even if profile reloads.
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'assistant') return;
+    if (seenMessageIdsRef.current.has(lastMsg.id)) return;
+    // Mark seen first — prevents the effect from firing twice for same message
+    seenMessageIdsRef.current.add(lastMsg.id);
+    if (profile?.auto_play_coach_responses) {
+      setAutoPlayMessageId(lastMsg.id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   // ── Seed auto-send on focus (Option B) ────────────────────────────────────
   useFocusEffect(
@@ -165,6 +186,8 @@ export default function CoachScreen() {
       setMessages(msgs);
       setConversationId(conv.id);
       setShowHistory(false);
+      // Mark all history messages as "seen" so they never trigger auto-play
+      msgs.forEach(m => seenMessageIdsRef.current.add(m.id));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200);
     } catch {
       Alert.alert('Error', 'Could not load conversation.');
@@ -318,6 +341,7 @@ export default function CoachScreen() {
               applying={applyingId === item.id}
               applied={appliedMessages[item.id] || false}
               applyResult={appliedResults[item.id]}
+              autoPlay={autoPlayMessageId === item.id}
             />
           )}
           ListFooterComponent={loading ? <LoadingDots /> : null}
@@ -685,12 +709,14 @@ function MessageBubble({
   applying,
   applied,
   applyResult,
+  autoPlay,
 }: {
   message: Message;
   onApply: () => void;
   applying: boolean;
   applied: boolean;
   applyResult?: ApplyResult;
+  autoPlay?: boolean;
 }) {
   const isUser  = message.role === 'user';
   const timeStr = formatTime(message.timestamp);
@@ -731,6 +757,7 @@ function MessageBubble({
             <MaterialCommunityIcons name="brain" size={13} color={COLORS.accent} />
           </View>
           <Text style={mb.coachLabel}>Coach</Text>
+          <SpeakerButton text={message.content} autoPlay={autoPlay ?? false} />
         </View>
 
         {/* Rendered markdown — NO sources footer */}

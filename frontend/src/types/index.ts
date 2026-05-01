@@ -32,6 +32,7 @@ export interface AthleteProfile {
   has_completed_tour?: boolean;
   tour_version?: number;
   preferredDays?: string[];
+  auto_play_coach_responses?: boolean;
 }
 
 export interface NotificationSettings {

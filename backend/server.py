@@ -2989,9 +2989,9 @@ async def coach_speak(
             input=text,
             response_format="mp3",
         )
-        # Collect audio bytes from the async response stream
+        # iter_bytes() returns a sync generator — use regular for, not async for
         buf = _io.BytesIO()
-        async for chunk in response.iter_bytes(chunk_size=4096):
+        for chunk in response.iter_bytes(chunk_size=4096):
             buf.write(chunk)
         audio_bytes  = buf.getvalue()
         latency      = round(_time.time() - t_start, 2)

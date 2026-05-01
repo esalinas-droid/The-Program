@@ -127,6 +127,9 @@ export default function SettingsScreen() {
             'trainingDaysCount',
             'preferredDays',
             'avoidMovements',
+            // Prompt 9B: TTS preference — server is canonical so two devices
+            // stay in sync. User sets it via the toggle below which calls PUT /profile.
+            'auto_play_coach_responses',
           ];
 
           // Start with local (preserves user-edited fields like name, weight, weaknesses)
@@ -560,6 +563,23 @@ export default function SettingsScreen() {
                   setMarketingOptIn(!val);
                 }
               }}
+              trackColor={{ false: COLORS.surfaceHighlight, true: COLORS.accent }}
+              thumbColor={COLORS.text.primary}
+            />
+          </View>
+        </View>
+
+        {/* ── POCKET COACH ── */}
+        <SectionHeader title="POCKET COACH" />
+        <View style={s.card}>
+          <View style={s.settingRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.settingLabel}>Auto-play voice responses</Text>
+              <Text style={s.settingDesc}>Hear coach replies spoken aloud automatically</Text>
+            </View>
+            <Switch
+              value={profile?.auto_play_coach_responses ?? false}
+              onValueChange={(val) => updateProfile({ auto_play_coach_responses: val })}
               trackColor={{ false: COLORS.surfaceHighlight, true: COLORS.accent }}
               thumbColor={COLORS.text.primary}
             />
