@@ -29,6 +29,8 @@ export interface AthleteProfile {
   is_beta_tester?: boolean;
   training_mode?: 'program' | 'free';
   has_imported_program?: boolean;
+  has_completed_tour?: boolean;
+  tour_version?: number;
   preferredDays?: string[];
 }
 

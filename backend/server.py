@@ -126,6 +126,8 @@ class AthleteProfile(BaseDocument):
     is_beta_tester: bool = False
     training_mode: str = 'program'       # 'program' | 'free'
     has_imported_program: bool = False
+    has_completed_tour:   bool = False  # True after user finishes/skips the guided tour
+    tour_version:         int  = 0      # bumped by TOUR_VERSION_CONSTANT when tour schema changes
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -161,6 +163,8 @@ class AthleteProfileUpdate(BaseModel):
     is_beta_tester: Optional[bool] = None
     training_mode: Optional[str] = None
     has_imported_program: Optional[bool] = None
+    has_completed_tour:   Optional[bool] = None
+    tour_version:         Optional[int]  = None
 
 class WorkoutLogEntry(BaseDocument):
     userId: str = ""          # owner of this log entry
@@ -3475,6 +3479,31 @@ async def get_compliance_breakdown(userId: str = Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Profile Reset (BUG 2C — clears stale data on re-onboarding) ──────────────
+@api_router.post("/profile/complete-tour")
+async def complete_tour(userId: str = Depends(get_current_user)):
+    """Mark the guided tour as completed for this user. Sets tour_version = TOUR_VERSION_CONSTANT."""
+    TOUR_VERSION_CONSTANT = 1
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {"has_completed_tour": True, "tour_version": TOUR_VERSION_CONSTANT, "updatedAt": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    doc = await db.profile.find_one({"userId": userId})
+    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+
+
+@api_router.post("/profile/reset-tour")
+async def reset_tour(userId: str = Depends(get_current_user)):
+    """Reset the tour flag so it runs again on next Home mount. Used by Settings → Replay tour."""
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {"has_completed_tour": False, "updatedAt": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    doc = await db.profile.find_one({"userId": userId})
+    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+
+
 @api_router.post("/profile/reset")
 async def reset_profile_data(userId: str = Depends(get_current_user)):
     """

@@ -115,6 +115,8 @@ export default function SettingsScreen() {
             'is_beta_tester',
             'training_mode',
             'has_imported_program',
+            'has_completed_tour',
+            'tour_version',
             'currentWeek',
             'programStartDate',
             'onboardingComplete',

@@ -119,6 +119,8 @@ export const profileApi = {
   reset: () => api('/profile/reset', { method: 'POST' }),
   switchMode: (mode: 'program' | 'free'): Promise<{ success: boolean; mode: string; needsPathChoice: boolean; profile: any }> =>
     api('/profile/switch-mode', { method: 'POST', body: JSON.stringify({ mode }) }),
+  completeTour: (): Promise<AthleteProfile> => api('/profile/complete-tour', { method: 'POST' }),
+  resetTour:    (): Promise<AthleteProfile> => api('/profile/reset-tour',    { method: 'POST' }),
 };
 
 // Auth — endpoints under /api/auth that aren't login/register (those are
