@@ -748,7 +748,7 @@ export default function Dashboard() {
             <Text style={s.coachCardTag}>{phase} Phase</Text>
           </View>
         </View>
-        )} {/* end program-only coach directive */}
+        )}{/* end program-only coach directive */}
 
         {/* ── THIS WEEK OVERVIEW (program mode only) ── */}
         {profile?.training_mode !== 'free' && weekEvents.length > 0 && (
@@ -901,7 +901,7 @@ export default function Dashboard() {
           </View>
           <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
         </View>
-        )} {/* end program-only current block */}
+        )}{/* end program-only current block */}
 
         {/* ── EST. MAXES ── */}
         {bests && (
