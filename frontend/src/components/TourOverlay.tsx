@@ -49,8 +49,6 @@ export interface TourRefs {
   sessionCard:  React.RefObject<View>;
   coachCard:    React.RefObject<View>;
   settingsGear: React.RefObject<View>;
-  /** Optional: the Home ScrollView — used to scroll target into view before measuring */
-  scrollViewRef?: React.RefObject<ScrollView>;
 }
 
 interface TourStep {
@@ -143,9 +141,10 @@ interface Props {
   trainingMode: 'program' | 'free';
   targetRefs:   TourRefs;
   onComplete:   () => void;
+  scrollRef?:   React.RefObject<ScrollView | null>;
 }
 
-export default function TourOverlay({ isVisible, trainingMode, targetRefs, onComplete }: Props) {
+export default function TourOverlay({ isVisible, trainingMode, targetRefs, onComplete, scrollRef }: Props) {
   const insets  = useSafeAreaInsets();
   const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -231,43 +230,25 @@ export default function TourOverlay({ isVisible, trainingMode, targetRefs, onCom
       return;
     }
 
-    // ── Measure helper — called after any scroll animation ────────────────
-    const doMeasure = () => {
+    // ── Step 1: first measureInWindow to get current pageY ────────────────
+    ref.current.measureInWindow((x, y, w, h) => {
+      if (w === 0 && h === 0) return; // ref not laid out yet
+
+      // ── Step 2: scroll target into view (100px breathing room at top) ──
+      const scrollTargetY = Math.max(0, y - 100);
+      scrollRef?.current?.scrollTo({ y: scrollTargetY, animated: true });
+
+      // ── Step 3: wait for scroll to settle, then re-measure for cutout ──
       setTimeout(() => {
-        ref.current!.measureInWindow((x, y, width, height) => {
-          if (width === 0 && height === 0) return;
-          const hl: Highlight = { x, y, width, height };
+        ref.current?.measureInWindow((x2, y2, w2, h2) => {
+          if (w2 === 0 && h2 === 0) return;
+          const hl: Highlight = { x: x2, y: y2, width: w2, height: h2 };
           setHighlight(hl);
           computeTooltipPos(hl);
         });
-      }, 120);
-    };
-
-    // ── Scroll element into view before measuring (Issue 2 fix) ──────────
-    // Use measureLayout (relative to ScrollView) to get content-y, then
-    // scrollTo so the element is visible, then re-measure with measureInWindow.
-    // Falls back to doMeasure() directly on Expo Web or if measureLayout errors.
-    const sv = targetRefs.scrollViewRef?.current;
-    if (sv) {
-      ref.current.measureLayout(
-        sv as any,
-        (_lx, ly, _lw, lh) => {
-          // ly = element's top y within the ScrollView content area.
-          // Aim to centre the element vertically, clamped to ≥ 0.
-          const idealScrollY = Math.max(0, ly - SH / 2 + lh / 2);
-          sv.scrollTo({ y: idealScrollY, animated: true });
-          // Re-measure after scroll animation (~300 ms) + settle buffer (100 ms)
-          setTimeout(doMeasure, 420);
-        },
-        () => {
-          // measureLayout not available (Expo Web) — measure directly
-          doMeasure();
-        },
-      );
-    } else {
-      doMeasure();
-    }
-  }, [STEPS, SW, SH, insets.bottom, targetRefs]);
+      }, 350);
+    });
+  }, [STEPS, SW, SH, insets.bottom, targetRefs, scrollRef]);
 
   useEffect(() => {
     if (isVisible) { setStepIdx(0); }

@@ -140,7 +140,6 @@ export default function Dashboard() {
     sessionCard:  sessionCardRef,
     coachCard:    coachCardRef,
     settingsGear: settingsGearRef,
-    scrollViewRef: homeScrollRef,
   };
 
   // ── Priority card state ──────────────────────────────────────────────────────
@@ -988,6 +987,7 @@ export default function Dashboard() {
         trainingMode={profile?.training_mode === 'free' ? 'free' : 'program'}
         targetRefs={tourRefs}
         onComplete={handleTourComplete}
+        scrollRef={homeScrollRef}
       />
     </SafeAreaView>
   );
