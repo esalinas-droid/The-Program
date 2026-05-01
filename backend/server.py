@@ -2351,6 +2351,51 @@ async def _migrate_plans_status():
         logger.warning(f"[MIGRATION] programs migration failed: {e}")
 
 
+async def _migrate_last_active_week():
+    """
+    Backfill lastActiveWeek on active plans that were created before the
+    multi-program schema added that field.
+
+    Rule: for every plan with status='active' where lastActiveWeek is
+    null / missing / 0, look up profile.currentWeek and stamp it.
+    Idempotent — runs zero changes on subsequent restarts.
+    """
+    try:
+        # Only touch active plans that are missing or have a zero/null lastActiveWeek
+        plans = await db.saved_plans.find(
+            {
+                "status": "active",
+                "$or": [
+                    {"lastActiveWeek": {"$exists": False}},
+                    {"lastActiveWeek": None},
+                    {"lastActiveWeek": 0},
+                ],
+            }
+        ).to_list(5000)
+
+        modified = 0
+        for p in plans:
+            uid = p.get("userId", "")
+            profile_doc = (await db.profile.find_one({"userId": uid})) or {}
+            current_week = int(profile_doc.get("currentWeek") or 1)
+            await db.saved_plans.update_one(
+                {"_id": p["_id"]},
+                {"$set": {"lastActiveWeek": current_week}},
+            )
+            modified += 1
+            logger.info(
+                f"[MIGRATION] lastActiveWeek={current_week} set for plan "
+                f"{p.get('planId', '?')[:20]} (user {uid[:30]})"
+            )
+
+        if modified:
+            logger.info(f"[MIGRATION] lastActiveWeek backfill: {modified} plan(s) updated")
+        else:
+            logger.info("[MIGRATION] lastActiveWeek backfill: all plans already set — no changes needed")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] lastActiveWeek backfill failed: {e}")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -2372,6 +2417,8 @@ async def load_models():
     await _migrate_preferred_days()
     # Backfill plan name/status/createdAt and log planId attribution
     await _migrate_plans_status()
+    # Backfill lastActiveWeek on active plans that pre-date the multi-program schema
+    await _migrate_last_active_week()
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
