@@ -131,6 +131,7 @@ export default function Dashboard() {
   const sessionCardRef  = useRef<View>(null);
   const coachCardRef    = useRef<View>(null);
   const settingsGearRef = useRef<View>(null);
+  const homeScrollRef   = useRef<ScrollView>(null);   // for scroll-into-view
   const [showTour, setShowTour] = useState(false);
   // Use ref (not state) for the tour-triggered guard — avoids useCallback dep loop
   const tourTriggeredRef = useRef(false);
@@ -139,6 +140,7 @@ export default function Dashboard() {
     sessionCard:  sessionCardRef,
     coachCard:    coachCardRef,
     settingsGear: settingsGearRef,
+    scrollViewRef: homeScrollRef,
   };
 
   // ── Priority card state ──────────────────────────────────────────────────────
@@ -430,6 +432,7 @@ export default function Dashboard() {
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView
+        ref={homeScrollRef}
         testID="dashboard-scroll"
         style={s.scroll}
         contentContainerStyle={s.scrollContent}

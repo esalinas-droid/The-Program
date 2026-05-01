@@ -15,6 +15,7 @@ import {
   Easing,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -48,6 +49,8 @@ export interface TourRefs {
   sessionCard:  React.RefObject<View>;
   coachCard:    React.RefObject<View>;
   settingsGear: React.RefObject<View>;
+  /** Optional: the Home ScrollView — used to scroll target into view before measuring */
+  scrollViewRef?: React.RefObject<ScrollView>;
 }
 
 interface TourStep {
@@ -148,6 +151,13 @@ export default function TourOverlay({ isVisible, trainingMode, targetRefs, onCom
 
   const STEPS   = trainingMode === 'free' ? FREE_STEPS : PROGRAM_STEPS;
   const TOTAL   = STEPS.length;
+  // ── Issue 1 fix: dynamic welcome body so "X things" tracks TOTAL-1 ────────
+  // The step array body for step 0 hardcodes a number; override it here where
+  // the actual count is known.
+  const highlightCount  = TOTAL - 1;
+  const welcomeBodyText = trainingMode === 'free'
+    ? FREE_STEPS[0].body
+    : `30 seconds. I'll show you the ${highlightCount} things that matter most. Skip anytime.`;
 
   const [stepIdx,    setStepIdx]    = useState(0);
   const [highlight,  setHighlight]  = useState<Highlight | null>(null);
@@ -221,16 +231,42 @@ export default function TourOverlay({ isVisible, trainingMode, targetRefs, onCom
       return;
     }
 
-    // Small delay to ensure layout has settled
-    setTimeout(() => {
-      ref.current!.measureInWindow((x, y, width, height) => {
-        // Guard: ignore invalid / zero measurements
-        if (width === 0 && height === 0) return;
-        const hl: Highlight = { x, y, width, height };
-        setHighlight(hl);
-        computeTooltipPos(hl);
-      });
-    }, 120);
+    // ── Measure helper — called after any scroll animation ────────────────
+    const doMeasure = () => {
+      setTimeout(() => {
+        ref.current!.measureInWindow((x, y, width, height) => {
+          if (width === 0 && height === 0) return;
+          const hl: Highlight = { x, y, width, height };
+          setHighlight(hl);
+          computeTooltipPos(hl);
+        });
+      }, 120);
+    };
+
+    // ── Scroll element into view before measuring (Issue 2 fix) ──────────
+    // Use measureLayout (relative to ScrollView) to get content-y, then
+    // scrollTo so the element is visible, then re-measure with measureInWindow.
+    // Falls back to doMeasure() directly on Expo Web or if measureLayout errors.
+    const sv = targetRefs.scrollViewRef?.current;
+    if (sv) {
+      ref.current.measureLayout(
+        sv as any,
+        (_lx, ly, _lw, lh) => {
+          // ly = element's top y within the ScrollView content area.
+          // Aim to centre the element vertically, clamped to ≥ 0.
+          const idealScrollY = Math.max(0, ly - SH / 2 + lh / 2);
+          sv.scrollTo({ y: idealScrollY, animated: true });
+          // Re-measure after scroll animation (~300 ms) + settle buffer (100 ms)
+          setTimeout(doMeasure, 420);
+        },
+        () => {
+          // measureLayout not available (Expo Web) — measure directly
+          doMeasure();
+        },
+      );
+    } else {
+      doMeasure();
+    }
   }, [STEPS, SW, SH, insets.bottom, targetRefs]);
 
   useEffect(() => {
@@ -367,9 +403,9 @@ export default function TourOverlay({ isVisible, trainingMode, targetRefs, onCom
             <View style={s.welcomeIconWrap}>
               <MaterialCommunityIcons name="compass-rose" size={36} color={COLORS.accent} />
             </View>
-            <Text style={s.stepIndicator}>GUIDED TOUR · {TOTAL - 1} STOPS</Text>
+            <Text style={s.stepIndicator}>GUIDED TOUR · {highlightCount} STOPS</Text>
             <Text style={s.tooltipTitle}>{step.title}</Text>
-            <Text style={s.tooltipBody}>{step.body}</Text>
+            <Text style={s.tooltipBody}>{welcomeBodyText}</Text>
             <View style={s.welcomeActions}>
               <TouchableOpacity style={s.ctaBtn} onPress={handleNext} activeOpacity={0.85}>
                 <Text style={s.ctaBtnText}>{ctaLabel}</Text>
