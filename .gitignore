@@ -926,3 +926,4 @@ credentials.json
 *.pem
 *.key
 .credentials
+/app/storage/

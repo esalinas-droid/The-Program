@@ -1,4 +1,5 @@
 from routers.program import program_router, _store as _prog_store, _id as _prog_id
+from routers.documents import documents_router
 from routers.auth import auth_router, admin_router
 from middleware import DEFAULT_USER as _PROG_USER, get_current_user
 from coach_triggers import get_active_trigger
@@ -2419,6 +2420,18 @@ async def load_models():
     await _migrate_plans_status()
     # Backfill lastActiveWeek on active plans that pre-date the multi-program schema
     await _migrate_last_active_week()
+    # Document parser capability check (Prompt 7A)
+    try:
+        from document_parser import check_parse_capabilities
+        caps = check_parse_capabilities()
+        if caps["ok"]:
+            details = ", ".join(f"{k}={v}" for k, v in caps["details"].items() if k in ("tesseract", "pdftoppm"))
+            logger.info(f"[DOC PARSER] All dependencies available. {details}")
+        else:
+            bad = [k for k, v in caps["details"].items() if v not in ("ok",) and "tesseract" not in v.lower()]
+            logger.error(f"[DOC PARSER] Missing dependencies — document upload will fail: {caps['details']}")
+    except Exception as _e:
+        logger.warning(f"[DOC PARSER] Could not verify parse dependencies: {_e}")
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
 
@@ -5966,6 +5979,7 @@ app.include_router(api_router)
 app.include_router(program_router)
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(documents_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
