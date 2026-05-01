@@ -11,6 +11,7 @@ import { coachApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
 import { getBlock, getPhase } from '../../src/utils/calculations';
 import { consumeCoachSeed } from '../../src/store/coachSeedStore';
+import VoiceInputButton from '../../src/components/VoiceInputButton';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExerciseSwap {
@@ -348,6 +349,13 @@ export default function CoachScreen() {
             textAlignVertical="top"
             scrollEnabled
           />
+          {/* ── Mic button — Prompt 9A voice input ── */}
+          <View style={s.micWrap}>
+            <VoiceInputButton
+              onTranscribed={(text) => setInput(text)}
+              disabled={loading}
+            />
+          </View>
           <TouchableOpacity
             testID="coach-send-btn"
             style={[
@@ -1115,6 +1123,7 @@ const s = StyleSheet.create({
     elevation: 4,
   },
   sendBtnMuted:  { backgroundColor: '#2A2A30', opacity: 0.55 },
+  micWrap:       { justifyContent: 'center', alignItems: 'center', paddingBottom: 2 },
   successToast: {
     position: 'absolute',
     bottom: 80,

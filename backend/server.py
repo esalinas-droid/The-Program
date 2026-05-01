@@ -11,7 +11,7 @@ from models.schemas import (
     ProgramChange as _ProgramChange,
 )
 from services.plan_generator import generate_plan as _generate_plan
-from fastapi import FastAPI, APIRouter, HTTPException, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile as FAUploadFile
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -2830,6 +2830,122 @@ async def delete_conversation(conversation_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"deleted": True}
+
+
+# ── POST /api/coach/transcribe ────────────────────────────────────────────────
+@api_router.post("/coach/transcribe")
+async def coach_transcribe(
+    audio: FAUploadFile = File(...),
+    userId: str = Depends(get_current_user),
+):
+    """
+    Accept an audio upload and return Whisper transcription text.
+    Audio is written to a temp file, sent to Whisper, then deleted.
+    Logs observability metrics to db.coach_voice_transcriptions.
+    """
+    import tempfile, time as _time
+
+    ALLOWED_TYPES = {"audio/m4a", "audio/mpeg", "audio/wav", "audio/webm",
+                     "audio/ogg", "audio/mp4", "audio/x-m4a"}
+    MAX_BYTES = 25 * 1024 * 1024  # 25 MB — Whisper hard limit
+
+    # ── Read & validate ───────────────────────────────────────────────────────
+    content_type = (audio.content_type or "").split(";")[0].strip().lower()
+    audio_bytes  = await audio.read()
+    audio_size   = len(audio_bytes)
+
+    if audio_size > MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Audio too long. Please record under 25 MB (~25 minutes).",
+        )
+    if audio_size == 0:
+        raise HTTPException(status_code=400, detail="Empty audio file received.")
+
+    if not _openai_client:
+        raise HTTPException(status_code=503, detail="Transcription service unavailable.")
+
+    # ── Write to temp file ────────────────────────────────────────────────────
+    # Use a file extension that Whisper accepts. Fall back to .m4a if unknown.
+    ext_map = {
+        "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
+        "audio/wav":  ".wav",
+        "audio/webm": ".webm",
+        "audio/ogg":  ".ogg",
+        "audio/m4a":  ".m4a", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+    }
+    suffix   = ext_map.get(content_type, ".m4a")
+    tmp_path = None
+    t_start  = _time.time()
+
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        with open(tmp_path, "wb") as f:
+            f.write(audio_bytes)
+
+        # ── Call Whisper ──────────────────────────────────────────────────────
+        with open(tmp_path, "rb") as audio_file:
+            response = await _openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="en",
+            )
+
+        latency      = round(_time.time() - t_start, 2)
+        transcript   = response.text.strip() if hasattr(response, "text") else ""
+
+        # Approximate duration: Whisper doesn't return it; estimate from filesize.
+        # Speech at ~16 kbps ≈ 2000 bytes/second — rough but useful for logging.
+        est_duration = round(audio_size / 2000, 1)
+        approx_cost  = round(est_duration / 60 * 0.006, 5)  # $0.006/minute
+
+        # ── Observability log ─────────────────────────────────────────────────
+        try:
+            await db.coach_voice_transcriptions.insert_one({
+                "userId":               userId,
+                "audioSizeBytes":       audio_size,
+                "audioDurationSeconds": est_duration,
+                "transcriptionLength":  len(transcript),
+                "latencySeconds":       latency,
+                "approximateCost":      approx_cost,
+                "success":              True,
+                "timestamp":            datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass  # non-fatal
+
+        return {
+            "transcript":            transcript,
+            "latencySeconds":        latency,
+            "audioDurationSeconds":  est_duration,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[Whisper] transcription failed: {exc}")
+        # Log failure
+        try:
+            await db.coach_voice_transcriptions.insert_one({
+                "userId":    userId,
+                "success":   False,
+                "error":     str(exc),
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail="Transcription failed. Please try again or type your message.",
+        )
+    finally:
+        # Always delete the temp file — don't leak voice data
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 async def _save_plan_to_db(plan, uid: str = None) -> None:

@@ -15,6 +15,7 @@
       "icon": "./assets/logo-icon.png",
       "infoPlist": {
         "NSUserNotificationUsageDescription": "Get training reminders and PR alerts",
+        "NSMicrophoneUsageDescription": "Speak questions to your Pocket Coach",
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
           "remote-notification"
@@ -38,7 +39,8 @@
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
-        "SCHEDULE_EXACT_ALARM"
+        "SCHEDULE_EXACT_ALARM",
+        "RECORD_AUDIO"
       ]
     },
     "web": {
