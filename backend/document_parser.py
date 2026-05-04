@@ -7,6 +7,8 @@ Supports:
   Image    : OCR via pytesseract (JPG, PNG, HEIC)
   DOCX     : python-docx
   TXT      : plain read
+  CSV      : pandas — each row → labeled field line
+  XLSX/XLS : pandas — all sheets extracted and labeled by sheet name
 
 System requirements (must be installed at container level):
   apt-get install -y tesseract-ocr poppler-utils
@@ -28,10 +30,15 @@ SUPPORTED_MIME_TYPES: dict[str, str] = {
     "image/heic": "heic",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "text/plain": "txt",
+    # ── Spreadsheets (Prompt: spreadsheet support) ──────────────────────────
+    "text/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xls",
 }
 
-MAX_FILE_BYTES   = 10 * 1024 * 1024   # 10 MB
-MIN_PDF_TEXT_LEN = 100                 # below this we assume scanned PDF
+MAX_FILE_BYTES        = 10 * 1024 * 1024   # 10 MB
+MIN_PDF_TEXT_LEN      = 100                # below this we assume scanned PDF
+_MAX_ROWS_PER_SHEET   = 5_000              # row cap for spreadsheet parsing
 
 
 # ── Startup capability check ────────────────────────────────────────────────────
@@ -76,6 +83,9 @@ def check_parse_capabilities() -> dict:
         "pytesseract": "pytesseract",
         "python-docx": "docx",
         "Pillow":      "PIL",
+        # Spreadsheet parsing — pandas + openpyxl (for .xlsx)
+        "pandas":      "pandas",
+        "openpyxl":    "openpyxl",
     }
     for display_name, import_name in lib_map.items():
         try:
@@ -83,7 +93,9 @@ def check_parse_capabilities() -> dict:
             result["details"][display_name] = "ok"
         except ImportError:
             result["details"][display_name] = "NOT INSTALLED"
-            result["ok"] = False
+            # pandas/openpyxl missing is non-fatal for existing formats
+            if import_name not in ("pandas", "openpyxl"):
+                result["ok"] = False
 
     return result
 
@@ -168,6 +180,65 @@ def _extract_txt(file_path: str) -> tuple[str, int]:
     return text, 1
 
 
+# ── Spreadsheet parsers ──────────────────────────────────────────────────────
+
+def _row_to_line(row: "pd.Series", cols: list) -> str:  # type: ignore[name-defined]
+    """Convert a DataFrame row to a labeled-field string, skipping empty cells."""
+    parts = [f"{col}: {row[col]}" for col in cols if str(row[col]).strip()]
+    return " | ".join(parts)
+
+
+def _extract_csv_text(file_path: str) -> tuple[str, int]:
+    """
+    Parse a CSV file and convert each row to a labeled field line.
+    e.g.  Day: Monday | Exercise: Squat | Sets: 5 | Reps: 3 | Weight: 405
+    Caps at _MAX_ROWS_PER_SHEET rows; logs and truncates if exceeded.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(file_path, dtype=str, keep_default_na=False)
+    if len(df) > _MAX_ROWS_PER_SHEET:
+        logger.warning("CSV has %d rows — truncating to %d", len(df), _MAX_ROWS_PER_SHEET)
+        df = df.head(_MAX_ROWS_PER_SHEET)
+
+    cols  = list(df.columns)
+    lines = [_row_to_line(row, cols) for _, row in df.iterrows()]
+    text  = "\n".join(line for line in lines if line)
+    return text, 1
+
+
+def _extract_xlsx_text(file_path: str) -> tuple[str, int]:
+    """
+    Parse an XLSX or XLS file. All sheets are extracted and labeled with
+    their sheet name as a section header.
+    Caps each sheet at _MAX_ROWS_PER_SHEET rows.
+    """
+    import pandas as pd
+
+    xl       = pd.ExcelFile(file_path)
+    sections = []
+
+    for sheet_name in xl.sheet_names:
+        df = pd.read_excel(xl, sheet_name=sheet_name, dtype=str, keep_default_na=False)
+        if df.empty:
+            continue
+        if len(df) > _MAX_ROWS_PER_SHEET:
+            logger.warning(
+                "Sheet '%s' has %d rows — truncating to %d",
+                sheet_name, len(df), _MAX_ROWS_PER_SHEET,
+            )
+            df = df.head(_MAX_ROWS_PER_SHEET)
+
+        cols  = list(df.columns)
+        lines = [_row_to_line(row, cols) for _, row in df.iterrows()]
+        body  = "\n".join(line for line in lines if line)
+        if body:
+            sections.append(f"--- Sheet: {sheet_name} ---\n{body}")
+
+    text = "\n\n".join(sections)
+    return text, len(xl.sheet_names)
+
+
 # ── Public entry point ──────────────────────────────────────────────────────────────────
 
 def parse_document(file_path: str, content_type: str) -> tuple[str, int]:
@@ -189,5 +260,14 @@ def parse_document(file_path: str, content_type: str) -> tuple[str, int]:
 
     if ct == "text/plain":
         return _extract_txt(file_path)
+
+    if ct == "text/csv":
+        return _extract_csv_text(file_path)
+
+    if ct in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ):
+        return _extract_xlsx_text(file_path)
 
     raise ValueError(f"Unsupported content type: {content_type!r}")

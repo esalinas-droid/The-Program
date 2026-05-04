@@ -54,6 +54,8 @@ function mimeToLabel(mime: string): string {
   if (mime === 'application/pdf')                                          return 'PDF';
   if (mime.includes('wordprocessingml'))                                   return 'DOCX';
   if (mime === 'text/plain')                                               return 'TXT';
+  if (mime === 'text/csv')                                                 return 'CSV';
+  if (mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel') return 'XLSX';
   if (mime === 'image/jpeg' || mime === 'image/jpg')                       return 'JPG';
   if (mime === 'image/png')                                                return 'PNG';
   if (mime === 'image/heic')                                               return 'HEIC';
@@ -64,6 +66,8 @@ function mimeToIcon(mime: string): string {
   if (mime === 'application/pdf')           return 'file-pdf-box';
   if (mime.includes('wordprocessingml'))    return 'file-word-box';
   if (mime === 'text/plain')                return 'file-document-outline';
+  if (mime === 'text/csv' || mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel')
+                                            return 'file-excel-box';
   if (mime.startsWith('image/'))            return 'file-image-outline';
   return 'file-outline';
 }
@@ -72,6 +76,8 @@ function mimeToAccent(mime: string): string {
   if (mime === 'application/pdf')           return '#E53935';     // red
   if (mime.includes('wordprocessingml'))    return '#1565C0';     // blue
   if (mime === 'text/plain')                return COLORS.accent; // gold
+  if (mime === 'text/csv' || mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel')
+                                            return '#217346';     // Excel green
   if (mime.startsWith('image/'))            return '#2A9D8F';     // teal
   return COLORS.accent;
 }
@@ -101,7 +107,7 @@ export default function ImportDocumentScreen() {
     }).start();
   };
 
-  // ── Pick document (PDF / DOCX / TXT) ────────────────────────────────────
+  // ── Pick document (PDF / DOCX / TXT / CSV / XLSX / XLS / Image) ────────────
   const pickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -109,6 +115,10 @@ export default function ImportDocumentScreen() {
           'application/pdf',
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           'text/plain',
+          'text/csv',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'image/*',
         ],
         copyToCacheDirectory: true,
       });
@@ -318,7 +328,7 @@ export default function ImportDocumentScreen() {
               <Text style={s.heroTitle}>Upload Your Program</Text>
               <Text style={s.heroSub}>
                 Upload a coach-built plan and the app will extract the text for you.
-                Supported: PDF, Word (DOCX), text files, and photos of written plans.
+                Supported: PDF, Word, Excel, CSV, text files, and photos of written plans.
               </Text>
             </View>
 
@@ -329,7 +339,7 @@ export default function ImportDocumentScreen() {
                   <MaterialCommunityIcons name="file-document-outline" size={30} color={COLORS.accent} />
                 </View>
                 <Text style={s.pickLabel}>Documents</Text>
-                <Text style={s.pickSub}>PDF · DOCX · TXT</Text>
+                <Text style={s.pickSub}>PDF · DOCX · XLSX · CSV · TXT · Image</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={s.pickCard} onPress={pickPhoto} activeOpacity={0.8}>
@@ -337,7 +347,7 @@ export default function ImportDocumentScreen() {
                   <MaterialCommunityIcons name="image-outline" size={30} color="#2A9D8F" />
                 </View>
                 <Text style={s.pickLabel}>Photos</Text>
-                <Text style={s.pickSub}>JPG · PNG</Text>
+                <Text style={s.pickSub}>Camera Roll</Text>
               </TouchableOpacity>
             </View>
 
@@ -347,6 +357,7 @@ export default function ImportDocumentScreen() {
               {[
                 { icon: 'check-circle-outline', color: COLORS.status.success, text: 'PDF with selectable text (best accuracy)' },
                 { icon: 'check-circle-outline', color: COLORS.status.success, text: 'Word/DOCX documents with clear structure' },
+                { icon: 'check-circle-outline', color: COLORS.status.success, text: 'Excel (XLSX) or CSV — coach-built spreadsheets' },
                 { icon: 'information-outline',  color: COLORS.status.warning, text: 'Scanned PDFs and photos — good but not perfect' },
                 { icon: 'close-circle-outline', color: COLORS.status.error,   text: 'Files larger than 10 MB are not supported' },
               ].map((item, i) => (

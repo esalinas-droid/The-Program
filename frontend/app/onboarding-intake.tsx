@@ -1268,8 +1268,15 @@ export default function OnboardingIntake() {
   const pickDocument = async (target: 'program' | 'medical') => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*', 'application/vnd.ms-excel',
-               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        type: [
+          'application/pdf',
+          'image/*',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain',
+          'text/csv',
+        ],
         copyToCacheDirectory: true,
       });
       if (!result.canceled && result.assets?.[0]) {
