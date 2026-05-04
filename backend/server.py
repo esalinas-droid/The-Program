@@ -38,6 +38,26 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ── Health check — permanent deployment verification endpoint ─────────────────
+# Hit GET /api/health to confirm: backend alive, running commit, parse deps.
+@api_router.get("/health")
+async def health_check():
+    import subprocess
+    from document_parser import check_parse_capabilities
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd="/app/backend",
+        ).decode().strip()
+    except Exception:
+        commit = "unknown"
+    return {
+        "status":             "ok",
+        "commit":             commit,
+        "parse_capabilities": check_parse_capabilities(),
+    }
+
 # ── Preferred-day presets (mirrors frontend DAY_MAP) ─────────────────────────
 # Keyed by training frequency. Used to auto-populate preferredDays when the
 # user's intake doesn't specify explicit day picks, and during DB migration.
