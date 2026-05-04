@@ -27,7 +27,7 @@
           "Default"
         ]
       },
-      "buildNumber": "27"
+      "buildNumber": "28"
     },
     "android": {
       "adaptiveIcon": {
@@ -42,7 +42,7 @@
         "SCHEDULE_EXACT_ALARM",
         "RECORD_AUDIO"
       ],
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "bundler": "metro",
