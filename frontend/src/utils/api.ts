@@ -51,20 +51,29 @@ async function api(path: string, options?: ApiOptions) {
   const attempts     = options?.retry?.attempts     ?? 1;   // 1 = no retry by default
   const baseDelayMs  = options?.retry?.baseDelayMs  ?? 1500;
 
-  // Strip our custom field so it isn't passed to fetch()
-  const { retry: _retry, ...fetchOptions } = options || {};
+  // Strip our custom fields so they aren't passed verbatim to fetch().
+  // Extract `headers` separately so we can MERGE them with auth headers
+  // rather than letting them override the Authorization header.
+  const { retry: _retry, headers: customHeaders, ...fetchOptions } = options || {};
 
   const token = await getAuthToken();
   const authHeader = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+  // Merge order: default Content-Type → auth → caller overrides.
+  // Caller overrides intentionally come last so they can customise anything
+  // EXCEPT auth (the auth header is never in customHeaders in practice, but
+  // this ensures that even if it were, the token from getAuthToken() wins).
+  const mergedHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...authHeader,
+    ...(customHeaders as Record<string, string> | undefined),
+  };
 
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(`${BASE}/api${path}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeader,
-        },
+        headers: mergedHeaders,
         ...fetchOptions,
       });
 
@@ -643,9 +652,8 @@ export const documentsApi = {
     api(`/documents/${docId}/build-plan`, { method: 'POST' }),
   activatePlan: (docId: string, body: ActivatePlanBody): Promise<{ success: boolean; planId: string }> =>
     api(`/documents/${docId}/activate-extracted-plan`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
+      method: 'POST',
+      body:   JSON.stringify(body),
     }),
 };
 

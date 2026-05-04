@@ -1652,3 +1652,29 @@ agent_communication:
       (preview screen with loading/preview/skeleton/activate/cancel states), api.ts types updated.
       All 5 extraction formats tested: PASS.
 
+  - agent: "main"
+    message: >
+      BUG FIX — "Activate this plan" redirects to /auth on web.
+
+      ROOT CAUSE IDENTIFIED:
+      In api.ts, the `documentsApi.activatePlan` call passed a custom
+      `headers: { 'Content-Type': 'application/json' }` object. Inside `api()`,
+      the spread `...fetchOptions` at the end of the `fetch()` call OVERWROTE the
+      entire `headers` property (which included `Authorization: Bearer token`).
+      The request reached the backend WITHOUT the auth header → backend returned 401 →
+      `handleUnauthorized()` called `clearAuth()` + `router.replace('/auth')` →
+      user was redirected to /auth.
+
+      FIXES APPLIED:
+      1. api.ts `api()` function: Extracted `headers` separately from `fetchOptions` and
+         properly merged them (Content-Type → auth → custom) so Authorization is never lost.
+      2. api.ts `documentsApi.activatePlan`: Removed the now-redundant
+         `headers: { 'Content-Type': 'application/json' }` (already set by `api()`).
+      3. build-plan.tsx: Changed `router.replace('/(tabs)')` to
+         `router.replace('/(tabs)/index')` to navigate explicitly to the first tab
+         on web, avoiding any ambiguity with the root index.tsx re-mount.
+
+      FILES MODIFIED:
+      - /app/frontend/src/utils/api.ts
+      - /app/frontend/app/documents/[id]/build-plan.tsx
+

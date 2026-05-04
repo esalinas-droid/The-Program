@@ -148,8 +148,10 @@ export default function BuildPlanScreen() {
         proposedPlan: response.proposedPlan,
       });
       if (result.success) {
-        // Navigate to home — Alert.alert toast is also broken on web, skip it.
-        router.replace('/(tabs)' as any);
+        // Use the explicit first-tab route so Expo Router on web navigates
+        // straight to the home tab without passing through app/index.tsx
+        // (which would re-run the async auth check and could race-condition).
+        router.replace('/(tabs)/index' as any);
       }
     } catch (e: any) {
       const msg: string = e?.message ?? 'Could not activate the plan.';
