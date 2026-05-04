@@ -13,7 +13,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   TextInput,
   StyleSheet,
   Animated,
@@ -127,19 +126,21 @@ export default function BuildPlanScreen() {
   useEffect(() => { runExtraction(); }, [runExtraction]);
 
   // ── Activate ──────────────────────────────────────────────────────────────
+  // NOTE: Alert.alert with multi-button arrays is silently swallowed on
+  // react-native-web — the onPress callback never fires.  The "Cancel — keep
+  // my current plan" button below already lets the user back out, so the
+  // confirmation dialog is redundant UX. Call confirmActivate directly.
   const handleActivate = () => {
-    Alert.alert(
-      'Activate this plan?',
-      'Your current active plan will be archived. You can switch back anytime via Programs.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Activate', style: 'default', onPress: confirmActivate },
-      ],
-    );
+    if (!response?.proposedPlan) {
+      setErrorMsg('No plan data available. Please re-run extraction.');
+      setPhase('error');
+      return;
+    }
+    confirmActivate();
   };
 
   const confirmActivate = async () => {
-    if (!response) return;
+    if (!response?.proposedPlan) return;
     setPhase('activating');
     try {
       const result = await documentsApi.activatePlan(id, {
@@ -147,15 +148,13 @@ export default function BuildPlanScreen() {
         proposedPlan: response.proposedPlan,
       });
       if (result.success) {
+        // Navigate to home — Alert.alert toast is also broken on web, skip it.
         router.replace('/(tabs)' as any);
-        // Small delay then show toast
-        setTimeout(() => {
-          Alert.alert('Plan imported', 'Ready to train!');
-        }, 500);
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not activate the plan.');
-      setPhase('preview');
+      const msg: string = e?.message ?? 'Could not activate the plan.';
+      setErrorMsg(msg);
+      setPhase('error');
     }
   };
 
