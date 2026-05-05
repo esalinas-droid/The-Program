@@ -148,10 +148,8 @@ export default function BuildPlanScreen() {
         proposedPlan: response.proposedPlan,
       });
       if (result.success) {
-        // Use the explicit first-tab route so Expo Router on web navigates
-        // straight to the home tab without passing through app/index.tsx
-        // (which would re-run the async auth check and could race-condition).
-        router.replace('/(tabs)/index' as any);
+        // '/' resolves to (tabs)/index.tsx via Expo Router's group resolution.
+        router.replace('/');
       } else {
         // Backend returned { success: false } without throwing — show error
         // so the user isn't stuck on the 'activating' spinner indefinitely.
