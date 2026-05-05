@@ -45,12 +45,21 @@ logger = logging.getLogger(__name__)
 async def health_check():
     import subprocess
     from document_parser import check_parse_capabilities
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd="/app/backend",
-        ).decode().strip()
-    except Exception:
+    # Priority: GIT_SHA env var (injected at deploy time) → git command → "unknown"
+    commit = os.environ.get("GIT_SHA", "").strip()
+    if not commit:
+        for _cwd in ("/app", "/app/backend"):
+            try:
+                commit = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=_cwd,
+                    stderr=subprocess.DEVNULL,
+                ).decode().strip()
+                if commit:
+                    break
+            except Exception:
+                pass
+    if not commit:
         commit = "unknown"
     return {
         "status":             "ok",
@@ -710,35 +719,79 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
         # Today's session was moved away and nothing moved here → rest day
         raise HTTPException(status_code=404, detail="Session moved to another day. Today is a rest day.")
 
+    # ── Primary: week-number–driven lookup (status-independent) ─────────────
+    # This path correctly handles extracted plans (whose phases/blocks default
+    # to PhaseStatus.UPCOMING) by finding the exact current week directly.
+    # It also prevents the "all-weeks" iteration bug where weeks[0] was
+    # returned for every day because no week-number filter existed.
+    _found = False
     for phase in plan.phases:
-        if phase.status == _PhaseStatus.CURRENT:
-            for block in phase.blocks:
-                if block.status == _PhaseStatus.CURRENT:
-                    for week in block.weeks:
+        if _found: break
+        for block in (phase.blocks or []):
+            if _found: break
+            for week in (block.weeks or []):
+                if week.weekNumber != current_week_num:
+                    continue
+                _found = True
+                # 1st: exact dayNumber match
+                for session in week.sessions:
+                    if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                        return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                "session": session.model_dump()})
+                # 2nd: session-type calendar match
+                for cal in (TRAINING_CALENDAR, TRAINING_CALENDAR_LEGACY):
+                    expected_type = cal.get(today_day)
+                    if expected_type:
                         for session in week.sessions:
-                            if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                            if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
                                 return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
                                         "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
                                         "session": session.model_dump()})
-                        # Try new terminology first, then legacy
-                        for cal in (TRAINING_CALENDAR, TRAINING_CALENDAR_LEGACY):
-                            expected_type = cal.get(today_day)
-                            if expected_type:
-                                for session in week.sessions:
-                                    if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                        return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
-                                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                                "session": session.model_dump()})
-                        for session in week.sessions:
-                            if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                        "session": session.model_dump()})
-                        for session in week.sessions:
-                            if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
-                                return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
-                                        "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                        "session": session.model_dump()})
+                # 3rd: next upcoming session in week
+                for session in week.sessions:
+                    if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                        return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                "session": session.model_dump()})
+                # 4th: any planned session in week
+                for session in week.sessions:
+                    if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                        return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                "session": session.model_dump()})
+
+    # ── Secondary: legacy status-based lookup (retained for plans that have
+    # correct PhaseStatus.CURRENT flags set, e.g. generator-built plans) ─────
+    if not _found:
+        for phase in plan.phases:
+            if phase.status == _PhaseStatus.CURRENT:
+                for block in phase.blocks:
+                    if block.status == _PhaseStatus.CURRENT:
+                        for week in block.weeks:
+                            for session in week.sessions:
+                                if session.dayNumber == today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                    return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                            "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                            "session": session.model_dump()})
+                            for cal in (TRAINING_CALENDAR, TRAINING_CALENDAR_LEGACY):
+                                expected_type = cal.get(today_day)
+                                if expected_type:
+                                    for session in week.sessions:
+                                        if session.sessionType == expected_type and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                            return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                                    "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                                    "session": session.model_dump()})
+                            for session in week.sessions:
+                                if session.dayNumber >= today_day and session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                    return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                            "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                            "session": session.model_dump()})
+                            for session in week.sessions:
+                                if session.status in [_SessionStatus.PLANNED, _SessionStatus.IN_PROGRESS]:
+                                    return _apply_boxing_filter({"phase": phase.phaseName, "block": block.blockName,
+                                            "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                                            "session": session.model_dump()})
     if plan.phases and plan.phases[0].blocks and plan.phases[0].blocks[0].weeks:
         phase = plan.phases[0]
         block = phase.blocks[0]
@@ -2621,35 +2674,62 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
                     today_session_context = "Today: session was moved to another day — rest day."
 
                 if not _fs and not today_session_context:
+                    # ── Primary: week-number-driven (same logic as get_today_session) ──
+                    _plan_start_str = getattr(_cp, "startDate", "") or ""
+                    _cur_wk = _calculate_current_week(_plan_start_str) if _plan_start_str else 1
+                    _coach_found = False
                     for _ph in _cp.phases:
-                        if _ph.status == _PS.CURRENT:
-                            for _bl in _ph.blocks:
-                                if _bl.status == _PS.CURRENT:
-                                    for _wk in _bl.weeks:
-                                        # 1st: exact day match
+                        if _coach_found: break
+                        for _bl in (_ph.blocks or []):
+                            if _coach_found: break
+                            for _wk in (_bl.weeks or []):
+                                if _wk.weekNumber != _cur_wk:
+                                    continue
+                                _coach_found = True
+                                for _se in _wk.sessions:
+                                    if _se.dayNumber == _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                        _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                if not _fs:
+                                    _exp = _TC2.get(_t_num)
+                                    if _exp:
                                         for _se in _wk.sessions:
-                                            if _se.dayNumber == _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                            if _se.sessionType == _exp and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
                                                 _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
-                                        # 2nd: calendar-type match
-                                        if not _fs:
-                                            _exp = _TC2.get(_t_num)
-                                            if _exp:
+                                if not _fs:
+                                    for _se in _wk.sessions:
+                                        if _se.dayNumber >= _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                            _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                if not _fs:
+                                    for _se in _wk.sessions:
+                                        if _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                            _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                    # ── Secondary: legacy status-based fallback ───────────────────
+                    if not _coach_found:
+                        for _ph in _cp.phases:
+                            if _ph.status == _PS.CURRENT:
+                                for _bl in _ph.blocks:
+                                    if _bl.status == _PS.CURRENT:
+                                        for _wk in _bl.weeks:
+                                            for _se in _wk.sessions:
+                                                if _se.dayNumber == _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                    _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                            if not _fs:
+                                                _exp = _TC2.get(_t_num)
+                                                if _exp:
+                                                    for _se in _wk.sessions:
+                                                        if _se.sessionType == _exp and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                            _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                            if not _fs:
                                                 for _se in _wk.sessions:
-                                                    if _se.sessionType == _exp and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                    if _se.dayNumber >= _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
                                                         _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
-                                        # 3rd: next upcoming session in week
-                                        if not _fs:
-                                            for _se in _wk.sessions:
-                                                if _se.dayNumber >= _t_num and _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
-                                                    _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
-                                        # 4th: any planned session this week
-                                        if not _fs:
-                                            for _se in _wk.sessions:
-                                                if _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
-                                                    _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                            if not _fs:
+                                                for _se in _wk.sessions:
+                                                    if _se.status in [_SS.PLANNED, _SS.IN_PROGRESS]:
+                                                        _fs = _se; _fm = {"phase": _ph.phaseName, "block": _bl.blockName, "week": _wk.weekNumber}; break
+                                            if _fs: break
                                         if _fs: break
                                     if _fs: break
-                                if _fs: break
                             if _fs: break
 
                 if _fs:

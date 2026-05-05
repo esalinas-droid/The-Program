@@ -436,12 +436,26 @@ async def activate_extracted_plan(
     now = datetime.now(timezone.utc)
 
     # ── Compute startDate from startWeek ──────────────────────────────────────
-    # Set startDate so that week `start_week` begins on today's date.
-    # Weeks before start_week end up in the past (status: planned, not missed)
-    # so the today/calendar views naturally show week `start_week` as current.
+    # Anchor to the Monday of the current week so week boundaries always fall
+    # on Monday, matching the plan's authoring assumption (Day 1 = Monday).
+    # startDate = Monday_of_current_week - (startWeek - 1) * 7 days.
+    # This ensures week N of the plan always runs Mon–Sun in the calendar view.
     from datetime import timedelta as _td
-    start_week = max(1, min(body.startWeek or 1, plan.totalWeeks))
-    plan_dict_start = (now - _td(weeks=start_week - 1)).strftime("%Y-%m-%d")
+    start_week   = max(1, min(body.startWeek or 1, plan.totalWeeks))
+    today_dow    = now.weekday()                            # 0=Mon … 6=Sun
+    this_monday  = now - _td(days=today_dow)               # Monday of current week
+    plan_start   = this_monday - _td(weeks=start_week - 1) # Monday of start_week
+    plan_dict_start = plan_start.strftime("%Y-%m-%d")
+
+    # ── Set CURRENT status on the phase/block that contains start_week ────────
+    # The plan extractor leaves all phases/blocks as UPCOMING by default.
+    # Without this, get_today_session and coach_chat find no CURRENT block and
+    # fall through to a hardcoded fallback (always Week 1 / Monday).
+    for _ph in plan_dict.get("phases", []):
+        _p_active = _ph.get("startWeek", 1) <= start_week <= _ph.get("endWeek", 1)
+        _ph["status"] = "current" if _p_active else "upcoming"
+        for _bl in _ph.get("blocks", []):
+            _bl["status"] = "current" if _p_active else "upcoming"
 
     # ── Archive current active plan (if any) ──────────────────────────────────
     active_doc = await db.saved_plans.find_one({"userId": userId, "status": "active"})
