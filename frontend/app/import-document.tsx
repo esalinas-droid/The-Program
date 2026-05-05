@@ -228,6 +228,9 @@ export default function ImportDocumentScreen() {
       throw new Error(result?.body ?? `Upload failed (${result?.status})`);
     }
     const data = JSON.parse(result.body);
+    if (!data?.documentId) {
+      throw new Error('Upload succeeded but no document ID was returned. Please try again.');
+    }
     router.replace(`/documents/${data.documentId}` as any);
   };
 
@@ -260,6 +263,10 @@ export default function ImportDocumentScreen() {
             }
             try {
               const data = JSON.parse(xhr.responseText);
+              if (!data?.documentId) {
+                reject(new Error('Upload succeeded but no document ID was returned. Please try again.'));
+                return;
+              }
               router.replace(`/documents/${data.documentId}` as any);
               resolve();
             } catch {

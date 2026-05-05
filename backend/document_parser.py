@@ -17,9 +17,21 @@ System requirements (must be installed at container level):
 
 import logging
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Magic bytes: XLSX / ZIP files always start with PK\x03\x04
+_XLSX_MAGIC = b'PK\x03\x04'
+
+# MIME types so generic that we can't trust them — fall through to ext-sniff
+_GENERIC_MIMES = frozenset({
+    'application/octet-stream',
+    'binary/octet-stream',
+    'application/x-binary',
+    '',
+})
 
 # ── Supported MIME types ─────────────────────────────────────────────────────
 SUPPORTED_MIME_TYPES: dict[str, str] = {
@@ -241,33 +253,101 @@ def _extract_xlsx_text(file_path: str) -> tuple[str, int]:
 
 # ── Public entry point ──────────────────────────────────────────────────────────────────
 
+
+def _is_xlsx_magic(file_path: str) -> bool:
+    """Return True if the file starts with the XLSX/ZIP magic bytes PK\\x03\\x04."""
+    try:
+        with open(file_path, 'rb') as fh:
+            return fh.read(4) == _XLSX_MAGIC
+    except Exception:
+        return False
+
+
+# File-extension → parser key for the fallback lookup
+_EXT_DISPATCH: dict[str, str] = {
+    '.pdf':  'pdf',
+    '.docx': 'docx',
+    '.doc':  'docx',
+    '.txt':  'txt',
+    '.csv':  'csv',
+    '.xlsx': 'xlsx',
+    '.xls':  'xlsx',   # sniff on dispatch below
+    '.png':  'img',
+    '.jpg':  'img',
+    '.jpeg': 'img',
+    '.heic': 'img',
+}
+
+
+def _dispatch(key: str, file_path: str) -> tuple[str, int]:
+    """Route a resolved parser key to the correct extraction function."""
+    if key == 'pdf':   return _extract_pdf_text(file_path)
+    if key == 'img':   return _extract_image_text(file_path)
+    if key == 'docx':  return _extract_docx_text(file_path)
+    if key == 'txt':   return _extract_txt(file_path)
+    if key == 'csv':   return _extract_csv_text(file_path)
+    if key == 'xlsx':  return _extract_xlsx_text(file_path)
+    raise ValueError(f"Unknown parser key: {key!r}")
+
+
 def parse_document(file_path: str, content_type: str) -> tuple[str, int]:
     """
     Extract text from the given file.  Returns (text, page_count).
-    Raises RuntimeError on unrecoverable parse failure.
-    Raises ValueError for unsupported content types.
+
+    Dispatch strategy
+    -----------------
+    1. MIME-type dispatch for well-known content types.
+    2. Special case: application/vnd.ms-excel  →  sniff magic bytes.
+       - ZIP/XLSX header (PK\\x03\\x04)  →  xlsx parser
+       - anything else                 →  csv parser
+       (Windows often labels CSVs with this MIME type.)
+    3. If content_type is generic/missing/octet-stream, or if MIME lookup
+       produced no match, fall back to the file's lowercased extension.
+    4. Raises ValueError only if BOTH MIME and extension lookups fail.
     """
-    ct = content_type.lower().strip()
+    ct = (content_type or '').lower().strip()
 
-    if ct == "application/pdf":
-        return _extract_pdf_text(file_path)
-
-    if ct in ("image/jpeg", "image/jpg", "image/png", "image/heic"):
-        return _extract_image_text(file_path)
-
-    if ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        return _extract_docx_text(file_path)
-
-    if ct == "text/plain":
-        return _extract_txt(file_path)
-
-    if ct == "text/csv":
+    # ── Special case: sniff the ambiguous vnd.ms-excel MIME ──────────────────
+    if ct == 'application/vnd.ms-excel':
+        if _is_xlsx_magic(file_path):
+            logger.info("parse_document: vnd.ms-excel + XLSX magic → xlsx parser")
+            return _extract_xlsx_text(file_path)
+        logger.info("parse_document: vnd.ms-excel without XLSX magic → csv parser")
         return _extract_csv_text(file_path)
 
-    if ct in (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-    ):
-        return _extract_xlsx_text(file_path)
+    # ── MIME-type dispatch (non-generic types only) ───────────────────────────
+    if ct and ct not in _GENERIC_MIMES:
+        mime_map: dict[str, str] = {
+            'application/pdf':                                                      'pdf',
+            'image/jpeg':                                                           'img',
+            'image/jpg':                                                            'img',
+            'image/png':                                                            'img',
+            'image/heic':                                                           'img',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/plain':                                                           'txt',
+            'text/csv':                                                             'csv',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':   'xlsx',
+        }
+        key = mime_map.get(ct)
+        if key:
+            return _dispatch(key, file_path)
+        # Unrecognised but non-generic MIME — fall through to extension lookup
+        logger.info(
+            "parse_document: unrecognised MIME %r → trying extension fallback",
+            content_type,
+        )
 
-    raise ValueError(f"Unsupported content type: {content_type!r}")
+    # ── Extension fallback ────────────────────────────────────────────────────
+    ext = Path(file_path).suffix.lower()
+    logger.info(
+        "parse_document: content_type=%r (generic or unmatched) → ext fallback, ext=%r",
+        content_type, ext,
+    )
+    key = _EXT_DISPATCH.get(ext)
+    if key:
+        return _dispatch(key, file_path)
+
+    raise ValueError(
+        f"Unsupported content type {content_type!r} (extension: {ext!r}). "
+        f"Supported types: pdf, docx, txt, csv, xlsx/xls, png, jpg/jpeg, heic."
+    )

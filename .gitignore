@@ -77,7 +77,17 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ -e 
+android-sdk/
+
+# ── User-generated content (NEVER commit to git) ─────────────────────────────
+# User-uploaded documents / health data live here at runtime.  They are
+# stored on disk for parse jobs but must not be committed — they may contain
+# personal / health / training data.
+storage/
+backend/storage/
+
+# Metro bundler cache — large binary files, no value in source control
+frontend/.metro-cache/-e 
 # Environment files
 *.env
 *.env.*

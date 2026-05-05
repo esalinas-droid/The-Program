@@ -152,6 +152,11 @@ export default function BuildPlanScreen() {
         // straight to the home tab without passing through app/index.tsx
         // (which would re-run the async auth check and could race-condition).
         router.replace('/(tabs)/index' as any);
+      } else {
+        // Backend returned { success: false } without throwing — show error
+        // so the user isn't stuck on the 'activating' spinner indefinitely.
+        setErrorMsg('Could not activate the plan. Please try again.');
+        setPhase('error');
       }
     } catch (e: any) {
       const msg: string = e?.message ?? 'Could not activate the plan.';

@@ -59,14 +59,14 @@ async function api(path: string, options?: ApiOptions) {
   const token = await getAuthToken();
   const authHeader = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-  // Merge order: default Content-Type → auth → caller overrides.
-  // Caller overrides intentionally come last so they can customise anything
-  // EXCEPT auth (the auth header is never in customHeaders in practice, but
-  // this ensures that even if it were, the token from getAuthToken() wins).
+  // Merge order: default Content-Type → caller overrides → auth LAST.
+  // Auth comes last so the Authorization header can never be clobbered by a
+  // caller that passes a custom `headers` object (e.g. a stale redundant
+  // Content-Type — exactly the class of bug that broke activatePlan in prod).
   const mergedHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...authHeader,
     ...(customHeaders as Record<string, string> | undefined),
+    ...authHeader,  // auth LAST → Authorization is always the live token
   };
 
   let lastErr: Error | null = null;
