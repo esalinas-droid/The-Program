@@ -677,6 +677,7 @@ export interface ExtractionConfidence {
 export interface ActivatePlanBody {
   planName?:    string;
   proposedPlan: Record<string, any>;
+  startWeek?:   number;   // 1-based; omit to start from Week 1
 }
 
 // ── Programs Library API ──────────────────────────────────────────────────────

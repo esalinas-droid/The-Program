@@ -384,6 +384,7 @@ async def build_plan_from_document(
 class ActivatePlanBody(BaseModel):
     planName:     Optional[str] = None   # user-edited name (may differ from LLM name)
     proposedPlan: dict = Field(default_factory=dict)
+    startWeek:    Optional[int] = None   # 1-based; server defaults to 1 if omitted/invalid
 
 
 @documents_router.post("/documents/{doc_id}/activate-extracted-plan")
@@ -434,6 +435,14 @@ async def activate_extracted_plan(
 
     now = datetime.now(timezone.utc)
 
+    # ── Compute startDate from startWeek ──────────────────────────────────────
+    # Set startDate so that week `start_week` begins on today's date.
+    # Weeks before start_week end up in the past (status: planned, not missed)
+    # so the today/calendar views naturally show week `start_week` as current.
+    from datetime import timedelta as _td
+    start_week = max(1, min(body.startWeek or 1, plan.totalWeeks))
+    plan_dict_start = (now - _td(weeks=start_week - 1)).strftime("%Y-%m-%d")
+
     # ── Archive current active plan (if any) ──────────────────────────────────
     active_doc = await db.saved_plans.find_one({"userId": userId, "status": "active"})
     if active_doc:
@@ -462,7 +471,8 @@ async def activate_extracted_plan(
 
     # ── Save new plan ─────────────────────────────────────────────────────────
     plan_dict = plan.model_dump(mode="json")
-    plan_dict["_saved_at"] = now.isoformat()
+    plan_dict["_saved_at"]  = now.isoformat()
+    plan_dict["startDate"]  = plan_dict_start        # honour startWeek selection
     if not plan_dict.get("createdAt"):
         plan_dict["createdAt"] = now.isoformat()
 
