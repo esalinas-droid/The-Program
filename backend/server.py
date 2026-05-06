@@ -2618,6 +2618,41 @@ async def _migrate_last_active_week():
         logger.warning(f"[MIGRATION] lastActiveWeek backfill failed: {e}")
 
 
+async def _migrate_session_exercise_ids():
+    """
+    Backfill sessionExerciseId for exercises in saved_plans that have an empty string ID.
+    Applies to all exercises across all phases/blocks/weeks/sessions where sessionExerciseId == ''.
+    This is needed for imported plans that were activated before sessionExerciseId was
+    populated during extraction. Idempotent — skips exercises that already have a non-empty ID.
+    """
+    import uuid as _uuid
+    try:
+        plans = await db.saved_plans.find({}).to_list(5000)
+        total_filled = 0
+        plans_updated = 0
+        for plan_doc in plans:
+            modified = False
+            for phase in (plan_doc.get("phases") or []):
+                for block in (phase.get("blocks") or []):
+                    for week in (block.get("weeks") or []):
+                        for session in (week.get("sessions") or []):
+                            for ex in (session.get("exercises") or []):
+                                if not ex.get("sessionExerciseId"):
+                                    ex["sessionExerciseId"] = str(_uuid.uuid4())
+                                    total_filled += 1
+                                    modified = True
+            if modified:
+                await db.saved_plans.replace_one({"_id": plan_doc["_id"]}, plan_doc)
+                plans_updated += 1
+
+        if total_filled:
+            logger.info(f"[MIGRATION] sessionExerciseId backfill: {total_filled} exercise(s) in {plans_updated} plan(s) updated")
+        else:
+            logger.info("[MIGRATION] sessionExerciseId backfill: all exercises already have IDs — no changes needed")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] sessionExerciseId backfill failed: {e}")
+
+
 @app.on_event("startup")
 async def load_models():
     global _openai_client, _supabase_client
@@ -2641,6 +2676,8 @@ async def load_models():
     await _migrate_plans_status()
     # Backfill lastActiveWeek on active plans that pre-date the multi-program schema
     await _migrate_last_active_week()
+    # Backfill sessionExerciseId for exercises in saved plans that have empty IDs
+    await _migrate_session_exercise_ids()
     # Document parser capability check (Prompt 7A)
     try:
         from document_parser import check_parse_capabilities

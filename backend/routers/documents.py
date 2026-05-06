@@ -493,6 +493,17 @@ async def activate_extracted_plan(
     if not plan_dict.get("createdAt"):
         plan_dict["createdAt"] = now.isoformat()
 
+    # ── Backfill sessionExerciseId for exercises extracted from documents ─────
+    # The document parser does not assign UUIDs — we do it here at activation time.
+    import uuid as _uuid
+    for _ph in plan_dict.get("phases", []):
+        for _bl in _ph.get("blocks", []):
+            for _wk in _bl.get("weeks", []):
+                for _sess in _wk.get("sessions", []):
+                    for _ex in _sess.get("exercises", []):
+                        if not _ex.get("sessionExerciseId"):
+                            _ex["sessionExerciseId"] = str(_uuid.uuid4())
+
     await db.saved_plans.replace_one(
         {"planId": plan.planId},
         plan_dict,
