@@ -447,6 +447,10 @@ async def activate_extracted_plan(
     plan_start   = this_monday - _td(weeks=start_week - 1) # Monday of start_week
     plan_dict_start = plan_start.strftime("%Y-%m-%d")
 
+    # ── Build plan dict early so the status-marking loop has something to mutate
+    plan_dict = plan.model_dump(mode="json")
+    plan_dict["startDate"] = plan_dict_start   # honour startWeek selection
+
     # ── Set CURRENT status on the phase/block that contains start_week ────────
     # The plan extractor leaves all phases/blocks as UPCOMING by default.
     # Without this, get_today_session and coach_chat find no CURRENT block and
@@ -484,9 +488,8 @@ async def activate_extracted_plan(
         )
 
     # ── Save new plan ─────────────────────────────────────────────────────────
-    plan_dict = plan.model_dump(mode="json")
-    plan_dict["_saved_at"]  = now.isoformat()
-    plan_dict["startDate"]  = plan_dict_start        # honour startWeek selection
+    # plan_dict was already built and mutated above (startDate + statuses).
+    plan_dict["_saved_at"] = now.isoformat()
     if not plan_dict.get("createdAt"):
         plan_dict["createdAt"] = now.isoformat()
 
