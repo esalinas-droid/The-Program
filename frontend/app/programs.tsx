@@ -101,9 +101,9 @@ export default function ProgramsScreen() {
       return (
         <View style={s.emptyCard}>
           <MaterialCommunityIcons name="dumbbell" size={28} color={COLORS.text.muted} />
-          <Text style={s.emptyTitle}>Free Training Mode</Text>
+          <Text style={s.emptyTitle}>Tracker Mode</Text>
           <Text style={s.emptyBody}>
-            You're in free training mode. No programs to manage.{' '}
+            You're in Tracker Mode. No programs to manage.{' '}
             Switch to a program from Settings to get started.
           </Text>
         </View>

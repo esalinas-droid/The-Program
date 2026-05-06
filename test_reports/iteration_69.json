@@ -1,0 +1,49 @@
+{
+  "summary": "Backend testing for Phase 1 features: PATCH exercise category/order endpoints, GET today planId field, POST switch-mode endpoints. All 12 tests pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PATCH /programs/{id}/sessions/{id}/exercises/{id}/category|order",
+        "issue": "Imported plans (user_a) have empty sessionExerciseId ('') on exercises — these endpoints will always return 404 for imported plans that haven't been through plan_extractor.py. Only AI-generated plans (user_b) work correctly.",
+        "priority": "MEDIUM"
+      },
+      {
+        "endpoint": "PATCH /programs/{id}/sessions/{id}/exercises/{id}/order",
+        "issue": "move_exercise_up returns updatedSessions=0 when exercise is already first (expected, but worth noting — no feedback to caller about 'already at top')",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter69_phase1_endpoints.py",
+    "/app/test_reports/pytest/iter69_phase1_results.xml"
+  ],
+  "action_items": [
+    "Add a backfill migration to assign sessionExerciseId (via uuid) to exercises in imported plans that currently have empty sessionExerciseId — without this, the kebab menu category/order endpoints will 404 for user_a's imported plan",
+    "Consider returning updatedSessions=0 with a user-friendly message when exercise is already at top/bottom for order endpoint"
+  ],
+  "critical_code_review_comments": [
+    "server.py line 107 (old bug now fixed in test): the session_context fixture was using token_a instead of token_b — test issue, not production code",
+    "The two new PATCH endpoints (category + order) correctly apply changes to current+future sessions and invalidate the in-memory plan cache — implementation looks correct",
+    "switch-mode free: correctly archives plans (not deletes) and sets training_mode; switch-mode program: correctly sets training_mode and returns needsPathChoice=True — both work as expected"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter69_phase1_endpoints.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 passed)",
+    "frontend": "N/A (not tested)"
+  },
+  "seed_data_creation": "Restored user_b's archived plan to active status in MongoDB (plan was accidentally archived by earlier test run)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 1 backend endpoints all working. Key finding: imported plans (user_a) have empty sessionExerciseId on exercises making category/order PATCH endpoints unusable for them. AI-generated plans (user_b) work correctly. A backfill migration is needed.",
+  "rca_of_issue": "imported plan exercises have sessionExerciseId='' because plan_extractor.py assigns IDs during extraction but user_a's plan (Westside Strongman Modified) appears to have been imported/seeded before this field was reliably populated. The PATCH endpoints search by ex.sessionExerciseId == exercise_id so empty string never matches."
+}

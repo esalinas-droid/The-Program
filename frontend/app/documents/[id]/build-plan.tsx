@@ -29,6 +29,7 @@ import {
   BuildPlanResponse,
   ExtractionConfidence,
 } from '../../../src/utils/api';
+import { getProfile } from '../../../src/utils/storage';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Phase = 'loading' | 'preview' | 'activating' | 'error';
@@ -185,11 +186,15 @@ export default function BuildPlanScreen() {
       setPlanName(res.proposedPlan?.name ?? 'Imported Program');
       setPhase('preview');
 
-      // ── Reactivation detection: check for an existing active plan ────────
+      // ── Reactivation detection: check for an existing active imported plan ────
       // Non-blocking: failures here don't prevent activation.
+      // Only set isReactivation=true if user has previously imported a program
+      // (prevents false positives from AI-generated plans from onboarding).
       try {
+        const prof = await getProfile();
+        const hasImportedBefore = (prof as any)?.has_imported_program === true;
         const { active } = await programsApi.list();
-        if (active?.startDate) {
+        if (active?.startDate && hasImportedBefore) {
           const startMs = new Date(active.startDate).getTime();
           const days    = Math.max(0, Math.floor((Date.now() - startMs) / 86_400_000));
           const curWk   = Math.floor(days / 7) + 1;

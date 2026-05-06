@@ -696,3 +696,18 @@ export const programsApi = {
   delete: (planId: string): Promise<{ deleted: boolean }> =>
     api(`/programs/${planId}`, { method: 'DELETE' }),
 };
+
+export const exerciseApi = {
+  updateCategory: (
+    programId: string, sessionId: string, exerciseId: string, category: string
+  ): Promise<{ success: boolean; updatedSessions: number; category: string }> =>
+    api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}/category`, {
+      method: 'PATCH', body: JSON.stringify({ category }),
+    }),
+  reorderExercise: (
+    programId: string, sessionId: string, exerciseId: string, direction: 'up' | 'down'
+  ): Promise<{ success: boolean; updatedSessions: number; direction: string }> =>
+    api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}/order`, {
+      method: 'PATCH', body: JSON.stringify({ direction }),
+    }),
+};

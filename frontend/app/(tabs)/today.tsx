@@ -12,7 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi, prApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi, prApi, exerciseApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -1190,7 +1190,7 @@ function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
-  restConfig, adjustActive, previousData, prExercises,
+  restConfig, adjustActive, previousData, prExercises, onKebab,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1220,6 +1220,7 @@ function ExerciseCard({
   adjustActive?: boolean;
   previousData?: Record<string, {weight: number; reps: number; date: string}[]>;
   prExercises?: Set<string>;
+  onKebab?: () => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1267,6 +1268,16 @@ function ExerciseCard({
           <View style={[ec.progressPill, { backgroundColor: progColor + '20' }]}>
             <Text style={[ec.progressText, { color: progColor }]}>{loggedCount}/{total}</Text>
           </View>
+          {onKebab && (
+            <TouchableOpacity
+              onPress={onKebab}
+              style={{ padding: 6, marginLeft: 2 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.6}
+            >
+              <MaterialCommunityIcons name="dots-vertical" size={18} color={COLORS.text.muted} />
+            </TouchableOpacity>
+          )}
           <MaterialCommunityIcons
             name={expanded ? 'chevron-up' : 'chevron-down'}
             size={20}
@@ -1542,6 +1553,10 @@ export default function TodayScreen() {
   const [removeModeExId, setRemoveModeExId] = useState<string | null>(null);
   const [editModeExId, setEditModeExId]     = useState<string | null>(null);
   const [logEntryIds, setLogEntryIds]       = useState<Record<string, string>>({});
+
+  // ── Kebab menu state (Phase 1C) ───────────────────────────────────────────────
+  const [kebabMenuExId, setKebabMenuExId] = useState<string | null>(null);
+  const [kebabSaving, setKebabSaving]     = useState(false);
   const [warmupExpanded, setWarmupExpanded] = useState(false);
   const [warmupLogged, setWarmupLogged] = useState<Set<number>>(new Set());
   const [warmupData, setWarmupData] = useState<{
@@ -2581,6 +2596,48 @@ export default function TodayScreen() {
     setAdjustKey(id); setAdjustName(name); setModal(true);
   };
 
+  // ── Kebab menu handlers (Phase 1C) ──────────────────────────────────────────
+  const planId    = apiSession?.planId ?? '';
+  const sessionId = (apiSession?.session as any)?.sessionId ?? '';
+  const isDynamicSession = ((apiSession?.session?.sessionType as string) || '')
+    .toLowerCase().includes('speed');
+
+  const handleKebabCategory = async (backendCategory: string) => {
+    if (!kebabMenuExId || !planId || !sessionId) return;
+    setKebabSaving(true);
+    try {
+      await exerciseApi.updateCategory(planId, sessionId, kebabMenuExId, backendCategory);
+      const frontendCat =
+        backendCategory === 'main'         ? (isDynamicSession ? 'speed' : 'primary') :
+        backendCategory === 'supplemental' ? 'supplemental' :
+        backendCategory === 'prehab'       ? 'prehab' : 'accessory';
+      setExercises(prev => prev.map(ex =>
+        ex.id === kebabMenuExId ? { ...ex, category: frontendCat as any } : ex
+      ));
+    } catch (e) { console.warn('[Kebab] Category update failed:', e); }
+    setKebabSaving(false);
+    setKebabMenuExId(null);
+  };
+
+  const handleKebabOrder = async (direction: 'up' | 'down') => {
+    if (!kebabMenuExId || !planId || !sessionId) return;
+    setKebabSaving(true);
+    try {
+      await exerciseApi.reorderExercise(planId, sessionId, kebabMenuExId, direction);
+      setExercises(prev => {
+        const idx = prev.findIndex(e => e.id === kebabMenuExId);
+        if (direction === 'up' && idx > 0) {
+          const next = [...prev]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]; return next;
+        } else if (direction === 'down' && idx >= 0 && idx < prev.length - 1) {
+          const next = [...prev]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]; return next;
+        }
+        return prev;
+      });
+    } catch (e) { console.warn('[Kebab] Reorder failed:', e); }
+    setKebabSaving(false);
+    setKebabMenuExId(null);
+  };
+
   const handleConfirmSwap = async (picked: PickedExercise) => {
     setModal(false);
     const key = adjustKey;
@@ -2677,14 +2734,14 @@ export default function TodayScreen() {
     );
   }
 
-  // ── Free training mode: show empty state ────────────────────────────────────
+  // ── Tracker Mode: show empty state ───────────────────────────────────────────
   if (trainingMode === 'free') {
     return (
       <SafeAreaView style={s.safe}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
           <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
           <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
-            Free training mode
+            Tracker Mode
           </Text>
           <Text style={{ fontSize: 15, color: COLORS.text.muted, textAlign: 'center', lineHeight: 22 }}>
             No session prescribed today. Use Log Session to record a workout.
@@ -2959,6 +3016,7 @@ export default function TodayScreen() {
                 setCustomRestVisible(true);
               },
             }}
+            onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
           />
         ))}
 
@@ -3090,6 +3148,97 @@ export default function TodayScreen() {
         onClose={() => setShowPainModal(false)}
         onSubmit={handlePainSubmit}
       />
+
+      {/* ── KEBAB MENU MODAL (Phase 1C) ── */}
+      {(() => {
+        const kebabEx   = kebabMenuExId ? exercises.find(e => e.id === kebabMenuExId) : null;
+        const kebabIdx  = kebabMenuExId ? exercises.findIndex(e => e.id === kebabMenuExId) : -1;
+        const canMoveUp   = kebabIdx > 0;
+        const canMoveDown = kebabIdx >= 0 && kebabIdx < exercises.length - 1;
+        const CATS = [
+          { key: 'main',         label: 'Main Lift',          icon: 'weight-lifter' },
+          { key: 'supplemental', label: 'Supplemental',       icon: 'dumbbell' },
+          { key: 'accessory',    label: 'Accessory',          icon: 'arm-flex-outline' },
+          { key: 'prehab',       label: 'Injury Prevention',  icon: 'shield-check-outline' },
+        ] as const;
+        return (
+          <Modal
+            visible={kebabMenuExId !== null}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setKebabMenuExId(null)}
+          >
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)' }}
+              onPress={() => !kebabSaving && setKebabMenuExId(null)}
+            >
+              <View style={{ flex: 1 }} />
+              <Pressable onPress={() => {}} style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34 }}>
+                {/* Handle */}
+                <View style={{ alignItems: 'center', paddingTop: 14, paddingBottom: 10 }}>
+                  <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border }} />
+                </View>
+                {/* Exercise title */}
+                {kebabEx && (
+                  <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                    <Text style={{ fontSize: 10, color: COLORS.text.muted, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 }}>EDITING</Text>
+                    <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text.primary }} numberOfLines={1}>{kebabEx.name}</Text>
+                  </View>
+                )}
+                {/* REORDER */}
+                <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 10 }}>REORDER</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    {(['up', 'down'] as const).map(dir => {
+                      const enabled = dir === 'up' ? canMoveUp : canMoveDown;
+                      return (
+                        <TouchableOpacity
+                          key={dir}
+                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, backgroundColor: enabled ? '#1E1E22' : '#141416', borderRadius: 12, borderWidth: 1, borderColor: enabled ? COLORS.border : COLORS.border + '40', opacity: enabled ? 1 : 0.4 }}
+                          onPress={() => enabled && handleKebabOrder(dir)}
+                          disabled={!enabled || kebabSaving}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialCommunityIcons name={dir === 'up' ? 'arrow-up' : 'arrow-down'} size={16} color={enabled ? COLORS.text.primary : COLORS.text.muted} />
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: enabled ? COLORS.text.primary : COLORS.text.muted }}>
+                            {dir === 'up' ? 'Move Up' : 'Move Down'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+                {/* CHANGE CATEGORY */}
+                <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>CHANGE CATEGORY</Text>
+                  {CATS.map((cat, catIdx) => (
+                    <TouchableOpacity
+                      key={cat.key}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: catIdx < CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
+                      onPress={() => handleKebabCategory(cat.key)}
+                      disabled={kebabSaving}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name={cat.icon as any} size={18} color={COLORS.text.secondary} />
+                      <Text style={{ fontSize: 15, color: COLORS.text.primary, flex: 1 }}>{cat.label}</Text>
+                      {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {/* Cancel */}
+                <TouchableOpacity
+                  style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
+                  onPress={() => setKebabMenuExId(null)}
+                  disabled={kebabSaving}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
 
       {/* ── CUSTOM REST MODAL ── */}
       <CustomRestModal

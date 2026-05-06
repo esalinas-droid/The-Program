@@ -468,9 +468,9 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* ── TODAY'S SESSION CARD — program mode or free training ── */}
+        {/* ── TODAY'S SESSION CARD — program mode or tracker mode ── */}
         {profile?.training_mode === 'free' ? (
-          /* ── FREE TRAINING CARD ── */
+          /* ── TRACKER MODE CARD ── */
           <View
             ref={sessionCardRef}
             collapsable={false}
@@ -480,7 +480,7 @@ export default function Dashboard() {
               <MaterialCommunityIcons name="notebook-outline" size={26} color="#2A9D8F" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[s.restDayTitle, { color: '#2A9D8F' }]}>Free Training Mode</Text>
+              <Text style={[s.restDayTitle, { color: '#2A9D8F' }]}>Tracker Mode</Text>
               <Text style={s.restDayText}>
                 You're doing your own programming. Log when you train — the coach has full context of your training history.
               </Text>

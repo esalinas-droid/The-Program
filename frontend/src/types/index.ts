@@ -177,6 +177,8 @@ export interface TodaySessionResponse {
   block: string;
   week: string;
   session: ProgramSessionDetail;
+  planId?: string;
+  currentWeek?: number;
 }
 
 export interface ProgramBlock {

@@ -312,6 +312,16 @@ export default function SettingsScreen() {
     router.replace('/(tabs)');
   };
 
+  const executeSwitchToProgram = async () => {
+    setModeSwitching(true);
+    try {
+      await profileApi.switchMode('program');
+      await saveProfile({ ...profile, training_mode: 'program' } as any);
+    } catch (e) { console.warn('[ModeSwitchProgram] error', e); }
+    setModeSwitching(false);
+    router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } });
+  };
+
   // ── Beta reset modal state ─────────────────────────────────────────────────
   const [showBetaResetModal, setShowBetaResetModal] = useState(false);
   const [betaResetText,      setBetaResetText]      = useState('');
@@ -421,7 +431,7 @@ export default function SettingsScreen() {
                 <MaterialCommunityIcons name="notebook-outline" size={16} color="#2A9D8F" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.accountRowLabel}>Mode: Free training</Text>
+                <Text style={s.accountRowLabel}>Mode: Tracker Mode</Text>
                 <Text style={s.accountRowDesc}>No plan. Log sessions, track PRs, use the coach.</Text>
               </View>
             </View>
@@ -617,9 +627,12 @@ export default function SettingsScreen() {
         <View style={s.card}>
           {/* Mode switcher row */}
           {profile?.training_mode === 'free' ? (
-            <TouchableOpacity style={s.accountRow} onPress={() => router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } })} activeOpacity={0.7}>
+            <TouchableOpacity style={s.accountRow} onPress={executeSwitchToProgram} activeOpacity={0.7} disabled={modeSwitching}>
               <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
-                <MaterialCommunityIcons name="brain" size={16} color={COLORS.accent} />
+                {modeSwitching
+                  ? <ActivityIndicator size="small" color={COLORS.accent} />
+                  : <MaterialCommunityIcons name="brain" size={16} color={COLORS.accent} />
+                }
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.accountRowLabel}>Switch to a program</Text>
@@ -636,7 +649,7 @@ export default function SettingsScreen() {
                 }
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.accountRowLabel}>Switch to free training</Text>
+                <Text style={s.accountRowLabel}>Switch to Tracker Mode</Text>
                 <Text style={s.accountRowDesc}>Drop the plan, keep your logs and coach</Text>
               </View>
               <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />

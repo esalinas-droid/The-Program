@@ -589,6 +589,145 @@ async def delete_program(plan_id: str, userId: str = Depends(get_current_user)):
     return {"deleted": True, "planId": plan_id}
 
 
+@api_router.patch("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}/category")
+async def update_exercise_category_in_plan(
+    program_id: str, session_id: str, exercise_id: str,
+    body: dict, userId: str = Depends(get_current_user)
+):
+    """Update exercise category in current + all future occurrences of same session type.
+    proposedPlan in documents collection is NOT modified — only saved_plans is updated.
+    """
+    new_category = (body.get("category") or "").lower()
+    valid_cats = {"main", "supplemental", "accessory", "prehab"}
+    if new_category not in valid_cats:
+        raise HTTPException(status_code=400, detail=f"category must be one of {sorted(valid_cats)}")
+
+    plan_doc = await db.saved_plans.find_one({"planId": program_id, "userId": userId, "status": "active"})
+    if not plan_doc:
+        raise HTTPException(status_code=404, detail="Active plan not found.")
+
+    from models.schemas import AnnualPlan as _AP
+    plan_obj = _AP(**plan_doc)
+    plan_start = str(getattr(plan_obj, "planStartDate", None) or getattr(plan_obj, "startDate", None) or "")
+    current_week_num = _calculate_current_week(plan_start) if plan_start else 1
+
+    # Locate target session → exercise to get session type + exercise name
+    target_session_type, target_exercise_name = None, None
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                for session in (week.sessions or []):
+                    if session.sessionId == session_id:
+                        for ex in session.exercises:
+                            if ex.sessionExerciseId == exercise_id:
+                                target_session_type = session.sessionType
+                                target_exercise_name = ex.name
+                                break
+                        if target_exercise_name:
+                            break
+                if target_exercise_name:
+                    break
+            if target_exercise_name:
+                break
+        if target_exercise_name:
+            break
+
+    if not target_session_type or not target_exercise_name:
+        raise HTTPException(status_code=404, detail="Exercise not found in plan.")
+
+    # Apply category change to matching exercise in current week + all future weeks
+    updated = 0
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                if week.weekNumber < current_week_num:
+                    continue
+                for session in (week.sessions or []):
+                    if str(session.sessionType) != str(target_session_type):
+                        continue
+                    for ex in session.exercises:
+                        if ex.name == target_exercise_name:
+                            ex.category = new_category
+                            updated += 1
+
+    await _save_plan_to_db(plan_obj, userId)
+    _prog_store["plans"].pop(userId, None)  # invalidate in-memory cache
+    logger.info(f"[ExCategory] user={userId} exercise='{target_exercise_name}' → '{new_category}' in {updated} sessions")
+    return {"success": True, "updatedSessions": updated, "category": new_category}
+
+
+@api_router.patch("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}/order")
+async def reorder_exercise_in_plan(
+    program_id: str, session_id: str, exercise_id: str,
+    body: dict, userId: str = Depends(get_current_user)
+):
+    """Move an exercise up or down. Applies to current + all future sessions of same type.
+    proposedPlan in documents collection is NOT modified — only saved_plans is updated.
+    """
+    direction = (body.get("direction") or "").lower()
+    if direction not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="direction must be 'up' or 'down'")
+
+    plan_doc = await db.saved_plans.find_one({"planId": program_id, "userId": userId, "status": "active"})
+    if not plan_doc:
+        raise HTTPException(status_code=404, detail="Active plan not found.")
+
+    from models.schemas import AnnualPlan as _AP
+    plan_obj = _AP(**plan_doc)
+    plan_start = str(getattr(plan_obj, "planStartDate", None) or getattr(plan_obj, "startDate", None) or "")
+    current_week_num = _calculate_current_week(plan_start) if plan_start else 1
+
+    # Locate target session → exercise
+    target_session_type, target_exercise_name = None, None
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                for session in (week.sessions or []):
+                    if session.sessionId == session_id:
+                        for ex in session.exercises:
+                            if ex.sessionExerciseId == exercise_id:
+                                target_session_type = session.sessionType
+                                target_exercise_name = ex.name
+                                break
+                        if target_exercise_name:
+                            break
+                if target_exercise_name:
+                    break
+            if target_exercise_name:
+                break
+        if target_exercise_name:
+            break
+
+    if not target_session_type or not target_exercise_name:
+        raise HTTPException(status_code=404, detail="Exercise not found in plan.")
+
+    # Apply order swap in current week + all future weeks
+    updated = 0
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                if week.weekNumber < current_week_num:
+                    continue
+                for session in (week.sessions or []):
+                    if str(session.sessionType) != str(target_session_type):
+                        continue
+                    exs = sorted(session.exercises, key=lambda e: e.order)
+                    idx = next((i for i, e in enumerate(exs) if e.name == target_exercise_name), -1)
+                    if idx == -1:
+                        continue
+                    if direction == "up" and idx > 0:
+                        exs[idx].order, exs[idx - 1].order = exs[idx - 1].order, exs[idx].order
+                        updated += 1
+                    elif direction == "down" and idx < len(exs) - 1:
+                        exs[idx].order, exs[idx + 1].order = exs[idx + 1].order, exs[idx].order
+                        updated += 1
+
+    await _save_plan_to_db(plan_obj, userId)
+    _prog_store["plans"].pop(userId, None)  # invalidate in-memory cache
+    logger.info(f"[ExOrder] user={userId} exercise='{target_exercise_name}' direction='{direction}' in {updated} sessions")
+    return {"success": True, "updatedSessions": updated, "direction": direction}
+
+
 @api_router.get("/plan/block/current")
 async def get_current_block_mongo(userId: str = Depends(get_current_user)):
     """Get current active block — auto-loads from MongoDB if not in memory."""
@@ -682,7 +821,9 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     is_boxing_user = any(kw in user_goal.lower() for kw in ("boxing", "mma", "martial"))
 
     def _apply_boxing_filter(result: dict) -> dict:
-        """Remove boxing exercises for non-boxing users (BUG 5)."""
+        """Remove boxing exercises for non-boxing users (BUG 5). Also injects planId."""
+        if result and plan:
+            result["planId"] = getattr(plan, "planId", "")
         if is_boxing_user or not result:
             return result
         session = result.get("session", {})

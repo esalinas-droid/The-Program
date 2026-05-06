@@ -1654,27 +1654,43 @@ agent_communication:
 
   - agent: "main"
     message: >
-      BUG FIX — "Activate this plan" redirects to /auth on web.
+      PHASE 1 COMPLETE — Tracker Mode Fixes + Kebab Menu + Rename.
 
-      ROOT CAUSE IDENTIFIED:
-      In api.ts, the `documentsApi.activatePlan` call passed a custom
-      `headers: { 'Content-Type': 'application/json' }` object. Inside `api()`,
-      the spread `...fetchOptions` at the end of the `fetch()` call OVERWROTE the
-      entire `headers` property (which included `Authorization: Bearer token`).
-      The request reached the backend WITHOUT the auth header → backend returned 401 →
-      `handleUnauthorized()` called `clearAuth()` + `router.replace('/auth')` →
-      user was redirected to /auth.
+      1A — BUG FIX "Switch to a program" silently fails:
+        settings.tsx: Added executeSwitchToProgram() that calls profileApi.switchMode('program'),
+        updates local profile cache, then navigates to /onboarding-path-picker.
+        The button now shows ActivityIndicator during transition.
 
-      FIXES APPLIED:
-      1. api.ts `api()` function: Extracted `headers` separately from `fetchOptions` and
-         properly merged them (Content-Type → auth → custom) so Authorization is never lost.
-      2. api.ts `documentsApi.activatePlan`: Removed the now-redundant
-         `headers: { 'Content-Type': 'application/json' }` (already set by `api()`).
-      3. build-plan.tsx: Changed `router.replace('/(tabs)')` to
-         `router.replace('/(tabs)/index')` to navigate explicitly to the first tab
-         on web, avoiding any ambiguity with the root index.tsx re-mount.
+      1B — BUG FIX "Re-activate plan" label on first-time uploads:
+        build-plan.tsx: Added getProfile() import from storage. Reactivation detection
+        now checks profile.has_imported_program === true BEFORE setting isReactivation=true.
+        First-time uploads no longer show "Re-activate plan" or "Resume from Week N" callout.
+
+      1C — FEATURE Kebab menu on exercise cards:
+        server.py: Added planId injection to _apply_boxing_filter closure.
+        server.py: Added PATCH /api/programs/{programId}/sessions/{sessionId}/exercises/{exerciseId}/category
+        server.py: Added PATCH /api/programs/{programId}/sessions/{sessionId}/exercises/{exerciseId}/order
+        Both endpoints apply to current week + all future sessions of same sessionType.
+        Past weeks are untouched. proposedPlan is untouched. _prog_store cache invalidated.
+        api.ts: Added exerciseApi with updateCategory() and reorderExercise().
+        types/index.ts: Added planId?: string and currentWeek?: number to TodaySessionResponse.
+        today.tsx: Added onKebab prop to ExerciseCard + 3-dot button in header.
+        today.tsx: Added kebabMenuExId/kebabSaving state, handleKebabCategory/handleKebabOrder.
+        today.tsx: Added full bottom-sheet Kebab Modal with Move Up/Down + 4 category options.
+        Kebab only appears in Program Mode (planId truthy).
+
+      1D — RENAME "Free Training Mode" → "Tracker Mode" (frontend only, backend enum unchanged):
+        today.tsx, index.tsx, programs.tsx, settings.tsx all updated.
+        "Switch to free training" → "Switch to Tracker Mode"
+        "Mode: Free training" → "Mode: Tracker Mode"
 
       FILES MODIFIED:
+      - /app/backend/server.py (planId injection + 2 new PATCH endpoints)
+      - /app/frontend/src/types/index.ts
       - /app/frontend/src/utils/api.ts
+      - /app/frontend/app/settings.tsx
       - /app/frontend/app/documents/[id]/build-plan.tsx
+      - /app/frontend/app/(tabs)/today.tsx
+      - /app/frontend/app/(tabs)/index.tsx
+      - /app/frontend/app/programs.tsx
 
