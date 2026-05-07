@@ -10,6 +10,7 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { programsApi, profileApi } from '../../src/utils/api';
 import { getProfile, saveProfile } from '../../src/utils/storage';
 import type { AnnualPlan } from '../../src/types';
+import { StartFromPicker } from '../../src/components/StartFromPicker';
 
 function fmtDate(iso?: string | null) {
   if (!iso) return '';
@@ -42,6 +43,7 @@ export default function ProgramDetailScreen() {
     last_active_week: number;
     total_weeks: number;
   } | null>(null);
+  const [selectedReactivateWeek, setSelectedReactivateWeek] = useState(1);
 
   // Delete confirmation modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -74,7 +76,9 @@ export default function ProgramDetailScreen() {
     setActivating(true);
     try {
       const res = await programsApi.activate(plan.planId);
-      setReactivatePayload({ last_active_week: res.last_active_week, total_weeks: res.total_weeks });
+      const smartDefault = res.last_active_week ?? 1;
+      setReactivatePayload({ last_active_week: smartDefault, total_weeks: res.total_weeks });
+      setSelectedReactivateWeek(smartDefault); // pre-select the smart default
       setShowReactivateModal(true);
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Could not activate program.');
@@ -83,36 +87,25 @@ export default function ProgramDetailScreen() {
     }
   };
 
-  const applyResumption = async (resume: boolean) => {
+  const handleConfirmReactivate = async (week: number) => {
     if (!plan || !reactivatePayload) return;
     setShowReactivateModal(false);
     try {
-      // Update profile's currentWeek + programStartDate
       const profile = await profileApi.get();
-      let newWeek: number;
-      let newStartDate: string;
-      const today = new Date().toISOString().slice(0, 10);
+      // Backdate start so weekday math still works: startDate = today − (week − 1) weeks
+      const backdate = new Date();
+      backdate.setDate(backdate.getDate() - (week - 1) * 7);
+      const newStartDate = backdate.toISOString().slice(0, 10);
 
-      if (resume) {
-        newWeek = reactivatePayload.last_active_week;
-        // Backdate start so weekday math still works: startDate = today - (week - 1) weeks
-        const backdate = new Date();
-        backdate.setDate(backdate.getDate() - (newWeek - 1) * 7);
-        newStartDate = backdate.toISOString().slice(0, 10);
-      } else {
-        newWeek = 1;
-        newStartDate = today;
-      }
-
-      await profileApi.update({ currentWeek: newWeek, programStartDate: newStartDate } as any);
-      const updatedProfile = { ...(profile as any), currentWeek: newWeek, programStartDate: newStartDate };
+      await profileApi.update({ currentWeek: week, programStartDate: newStartDate } as any);
+      const updatedProfile = { ...(profile as any), currentWeek: week, programStartDate: newStartDate };
       await saveProfile(updatedProfile);
 
       Alert.alert(
         'Program Activated!',
-        resume
-          ? `Resuming at Week ${newWeek} of ${reactivatePayload.total_weeks}.`
-          : 'Starting fresh from Week 1.',
+        week === 1
+          ? 'Starting fresh from Week 1.'
+          : `Resuming at Week ${week} of ${reactivatePayload.total_weeks}.`,
         [{ text: 'Got it', onPress: () => router.push('/programs') }],
       );
     } catch (e) {
@@ -251,29 +244,38 @@ export default function ProgramDetailScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Re-activate choice modal */}
+      {/* Re-activate week picker modal */}
       <Modal visible={showReactivateModal} transparent animationType="slide">
         <View style={s.modalOverlay}>
-          <View style={s.modalSheet}>
-            <Text style={s.modalTitle}>How do you want to start?</Text>
-            <Text style={s.modalBody}>
-              Resume where you left off (Week {reactivatePayload?.last_active_week} of {reactivatePayload?.total_weeks}),
-              or start fresh from Week 1?
-            </Text>
+          <View style={[s.modalSheet, { maxHeight: '88%' }]}>
+            {/* Drag handle */}
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>Re-activate Program</Text>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: SPACING.md }}
+            >
+              <StartFromPicker
+                plan={plan as any}
+                selectedWeek={selectedReactivateWeek}
+                onSelect={setSelectedReactivateWeek}
+                isReactivation
+                smartDefault={reactivatePayload?.last_active_week ?? 1}
+              />
+            </ScrollView>
+
+            {/* Confirm CTA */}
             <TouchableOpacity
               style={s.modalPrimaryBtn}
-              onPress={() => applyResumption(true)}
+              onPress={() => handleConfirmReactivate(selectedReactivateWeek)}
+              activeOpacity={0.85}
             >
               <Text style={s.modalPrimaryText}>
-                Resume Week {reactivatePayload?.last_active_week}
+                Start from Week {selectedReactivateWeek}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={s.modalSecondaryBtn}
-              onPress={() => applyResumption(false)}
-            >
-              <Text style={s.modalSecondaryText}>Start over from Week 1</Text>
-            </TouchableOpacity>
+
             <TouchableOpacity onPress={() => setShowReactivateModal(false)} style={s.modalCancelBtn}>
               <Text style={s.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
@@ -387,6 +389,7 @@ const s = StyleSheet.create({
     gap: SPACING.md,
   },
   modalTitle: { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold, color: COLORS.text.primary, textAlign: 'center' },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.border, alignSelf: 'center', marginBottom: SPACING.sm },
   modalBody: { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, textAlign: 'center', lineHeight: 20 },
   modalPrimaryBtn: {
     backgroundColor: COLORS.accent, borderRadius: RADIUS.full,
