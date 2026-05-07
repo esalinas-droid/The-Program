@@ -880,13 +880,13 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* ── SWITCH TO FREE TRAINING CONFIRM MODAL ────────────────────────── */}
+      {/* ── SWITCH TO TRACKER MODE CONFIRM MODAL ─────────────────────────── */}
       <Modal visible={showModeSwitchModal} transparent animationType="slide" onRequestClose={() => setShowModeSwitchModal(false)}>
         <View style={s.previewOverlay}>
           <View style={s.previewSheet}>
             <View style={s.previewHeader}>
               <MaterialCommunityIcons name="notebook-outline" size={22} color="#2A9D8F" />
-              <Text style={s.previewTitle}>Switch to free training?</Text>
+              <Text style={s.previewTitle}>Switch to Tracker Mode?</Text>
             </View>
             <Text style={s.previewSummary}>
               Your plan will be archived — not deleted. You'll keep all logs, PRs, and coach memory. You can switch back anytime via "Switch to a program."
@@ -918,7 +918,7 @@ export default function SettingsScreen() {
             <View style={s.previewActions}>
               <TouchableOpacity style={[s.acceptBtn, { backgroundColor: '#2A9D8F' }]} onPress={executeSwitchToFree} activeOpacity={0.85}>
                 <MaterialCommunityIcons name="notebook-outline" size={18} color="#fff" />
-                <Text style={[s.acceptBtnText, { color: '#fff' }]}>Switch to free training</Text>
+                <Text style={[s.acceptBtnText, { color: '#fff' }]}>Switch to Tracker Mode</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.cancelPreviewBtn} onPress={() => setShowModeSwitchModal(false)} activeOpacity={0.8}>
                 <Text style={s.cancelPreviewText}>Cancel — keep my program</Text>

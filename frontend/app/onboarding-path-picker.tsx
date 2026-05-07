@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  StatusBar, Platform, ToastAndroid, Alert,
+  StatusBar, Platform, ToastAndroid, Alert, ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { profileApi } from '../src/utils/api';
 
 // ── Design tokens (inline to keep the file self-contained) ────────────────────
 const BG      = '#0A0A0C';
@@ -39,6 +40,7 @@ export default function OnboardingPathPicker() {
   // mode === 'switch' → shown from Settings "Switch to a program";
   // hides "Just track my training" since the user is already tracking.
   const isSwitchMode = mode === 'switch';
+  const [choosingPrograms, setChoosingPrograms] = useState(false);
 
   const handleBuild = () => {
     router.push('/onboarding-intake');
@@ -52,6 +54,19 @@ export default function OnboardingPathPicker() {
     router.push({ pathname: '/onboarding-intake', params: { path: 'free' } });
   };
 
+  /** A3: user picks an existing program — flip mode then send to program library */
+  const handleChooseExisting = async () => {
+    if (choosingPrograms) return;
+    setChoosingPrograms(true);
+    try {
+      await profileApi.switchMode('program');
+    } catch (e) {
+      console.warn('[PathPicker] switchMode error', e);
+    }
+    setChoosingPrograms(false);
+    router.replace('/programs' as any);
+  };
+
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="light-content" backgroundColor={BG} />
@@ -59,6 +74,17 @@ export default function OnboardingPathPicker() {
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <View style={s.header}>
+          {/* A2: Close button — switch mode only */}
+          {isSwitchMode && (
+            <TouchableOpacity
+              style={s.closeBtn}
+              onPress={() => router.back()}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="close" size={22} color={MUTED} />
+            </TouchableOpacity>
+          )}
           <Text style={s.eyebrow}>THE PROGRAM</Text>
           <Text style={s.headline}>How do you want{'\n'}to train?</Text>
           <Text style={s.sub}>
@@ -90,12 +116,8 @@ export default function OnboardingPathPicker() {
             </View>
           </TouchableOpacity>
 
-          {/* CARD 2 — Import my program (now active) */}
-          <TouchableOpacity
-            style={s.card}
-            onPress={handleImport}
-            activeOpacity={0.82}
-          >
+          {/* CARD 2 — Import my program */}
+          <TouchableOpacity style={s.card} onPress={handleImport} activeOpacity={0.82}>
             <View style={s.cardLeft}>
               <View style={[s.iconWrap, { backgroundColor: 'rgba(42,157,143,0.12)' }]}>
                 <MaterialCommunityIcons name="upload-outline" size={26} color={TEAL} />
@@ -114,6 +136,37 @@ export default function OnboardingPathPicker() {
               <MaterialCommunityIcons name="chevron-right" size={20} color={MUTED} />
             </View>
           </TouchableOpacity>
+
+          {/* A3: CARD — Choose from existing programs (switch mode only) */}
+          {isSwitchMode && (
+            <TouchableOpacity
+              style={[s.card, choosingPrograms && { opacity: 0.6 }]}
+              onPress={handleChooseExisting}
+              activeOpacity={0.82}
+              disabled={choosingPrograms}
+            >
+              <View style={s.cardLeft}>
+                <View style={[s.iconWrap, { backgroundColor: 'rgba(201,168,76,0.12)' }]}>
+                  {choosingPrograms
+                    ? <ActivityIndicator size="small" color={ACCENT} />
+                    : <MaterialCommunityIcons name="bookmark-multiple-outline" size={26} color={ACCENT} />
+                  }
+                </View>
+                <View style={s.cardText}>
+                  <Text style={s.cardTitle}>Choose from my programs</Text>
+                  <Text style={s.cardDesc}>
+                    Pick a program you've imported or built before.
+                  </Text>
+                </View>
+              </View>
+              <View style={s.cardFooter}>
+                <View style={[s.pill, s.pillGold]}>
+                  <Text style={[s.pillText, { color: ACCENT }]}>My library</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={MUTED} />
+              </View>
+            </TouchableOpacity>
+          )}
 
           {/* CARD 3 — Just track (hidden in switch mode) */}
           {!isSwitchMode && (
@@ -156,7 +209,13 @@ const s = StyleSheet.create({
   container:   { flex: 1, paddingHorizontal: 24, justifyContent: 'center', paddingBottom: 32 },
 
   header:      { marginBottom: 32 },
-  eyebrow:     { fontSize: 11, fontWeight: FONTS.bold, color: ACCENT, letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 10 },
+  closeBtn: {
+    position: 'absolute', top: 0, left: -6, zIndex: 10,
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  eyebrow:     { fontSize: 11, fontWeight: FONTS.bold, color: ACCENT, letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 32 },
   headline:    { fontSize: 34, fontWeight: FONTS.heavy, color: TEXT, lineHeight: 40, marginBottom: 12 },
   sub:         { fontSize: 15, color: TEXT2, lineHeight: 22 },
 

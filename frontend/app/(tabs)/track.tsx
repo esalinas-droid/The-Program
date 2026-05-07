@@ -328,7 +328,10 @@ export default function TrackScreen() {
         analyticsApi.compliance().catch(() => []),
       ]);
       setOverview(ov); setVolumeData(vol); setPainData(pain); setCompliance(comp);
-      programApi.getYearPlan().then(p => setYearPlan(p)).catch(() => {});
+      // B2 fix: skip program-specific API calls for tracker mode users
+      if (profileData?.training_mode !== 'free') {
+        programApi.getYearPlan().then(p => setYearPlan(p)).catch(() => {});
+      }
       // Load gamification data (non-blocking)
       Promise.all([
         streakApi.get().catch(() => null),

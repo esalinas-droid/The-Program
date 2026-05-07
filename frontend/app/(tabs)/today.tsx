@@ -1530,7 +1530,9 @@ export default function TodayScreen() {
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
   const [sessionFinished, setSessionFinished] = useState(false);
-  const [trainingMode, setTrainingMode] = useState<'program' | 'free'>('program');
+  // B1 fix: initialize as null; never default to 'program' to prevent UI flash
+  const [trainingMode, setTrainingMode] = useState<'program' | 'free' | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -2047,10 +2049,24 @@ export default function TodayScreen() {
       const w    = prof?.currentWeek || 1;
       setWeek(w);
       setInjuryFlags(prof?.injuryFlags || []);
-      setTrainingMode((prof?.training_mode as 'program' | 'free') || 'program');
+
+      // B1 fix: never fall back to 'program' while profile is loading.
+      // Set the ACTUAL mode from profile, then mark profileLoaded.
+      const mode = (prof?.training_mode as 'program' | 'free') ?? 'program';
+      setTrainingMode(mode);
+      setProfileLoaded(true);
+
       const day  = todayName === 'Sunday' ? 'Monday' : todayName;
       const sess = getProgramSession(w, day);
       setTodaySession(sess);
+
+      // B2 fix: tracker mode users skip all program-specific API calls.
+      // The if (trainingMode === 'free') empty-state renders once loading=false.
+      if (mode === 'free') {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
       // Load exercises from API — override hardcoded EXERCISES with plan-generated ones
       try {
@@ -2725,8 +2741,10 @@ export default function TodayScreen() {
   // ── Injury warnings ──────────────────────────────────────────────────────────
   const warnings = todaySession ? getInjuryWarnings(todaySession, injuryFlags) : [];
 
-  // ── Loading guard ────────────────────────────────────────────────────────────
-  if (loading) {
+  // ── Loading guard (B1/B2 fix) ────────────────────────────────────────────────
+  // Block render until profile is loaded: prevents mode flicker and keeps
+  // the loading state while tracker-mode users skip program API calls.
+  if (loading || !profileLoaded) {
     return (
       <View style={s.loading}>
         <ActivityIndicator color={COLORS.accent} size="large" />
