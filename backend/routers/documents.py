@@ -504,6 +504,36 @@ async def activate_extracted_plan(
                         if not _ex.get("sessionExerciseId"):
                             _ex["sessionExerciseId"] = str(_uuid.uuid4())
 
+    # ── Seed standard warmup and cooldown exercises per session (C2) ──────────
+    _WARMUP_EXERCISES = [
+        {"exerciseId": "wu-general",  "name": "General Warm-Up",    "prescription": "5–10 min",    "order": 1, "notes": "Light cardio or jump rope to raise heart rate"},
+        {"exerciseId": "wu-mobility", "name": "Dynamic Mobility",   "prescription": "2 × 10 each", "order": 2, "notes": "Hip circles, leg swings, arm circles"},
+        {"exerciseId": "wu-activate", "name": "Activation Circuit", "prescription": "2 × 15",      "order": 3, "notes": "Band pull-aparts, glute bridges"},
+    ]
+    _COOLDOWN_EXERCISES = [
+        {"exerciseId": "cd-stretch",   "name": "Static Stretching",  "prescription": "5 min", "order": 1, "notes": "Hold major muscle groups 30s each side"},
+        {"exerciseId": "cd-breathing", "name": "Recovery Breathing", "prescription": "3 min", "order": 2, "notes": "Box breathing: 4 count in, hold, out"},
+    ]
+    for _ph in plan_dict.get("phases", []):
+        for _bl in _ph.get("blocks", []):
+            for _wk in _bl.get("weeks", []):
+                for _sess in _wk.get("sessions", []):
+                    _existing_cats = {e.get("category") for e in _sess.get("exercises", [])}
+                    if "warmup" not in _existing_cats:
+                        _wu_items = [
+                            {**wu, "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
+                             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+                            for wu in _WARMUP_EXERCISES
+                        ]
+                        _sess["exercises"] = _wu_items + _sess.get("exercises", [])
+                    if "cooldown" not in _existing_cats:
+                        _cd_items = [
+                            {**cd, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
+                             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+                            for cd in _COOLDOWN_EXERCISES
+                        ]
+                        _sess["exercises"] = _sess.get("exercises", []) + _cd_items
+
     await db.saved_plans.replace_one(
         {"planId": plan.planId},
         plan_dict,

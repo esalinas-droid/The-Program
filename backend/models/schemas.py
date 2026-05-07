@@ -51,6 +51,8 @@ class ExerciseCategory(str, Enum):
     SUPPLEMENTAL = "supplemental"
     ACCESSORY = "accessory"
     PREHAB = "prehab"
+    WARMUP = "warmup"
+    COOLDOWN = "cooldown"
 
 class MovementPattern(str, Enum):
     PUSH = "Push"

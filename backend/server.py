@@ -2378,6 +2378,61 @@ async def _migrate_training_mode():
         logger.warning(f"[MIGRATION] training_mode backfill failed: {e}")
 
 
+async def _migrate_warmup_cooldown():
+    """
+    C3: Backfill standard warmup/cooldown exercises for all saved plans
+    that have sessions without warmup or cooldown category exercises.
+    """
+    import uuid as _uuid
+
+    _WARMUP_EXERCISES = [
+        {"exerciseId": "wu-general",  "name": "General Warm-Up",    "prescription": "5–10 min",    "order": 1, "notes": "Light cardio or jump rope to raise heart rate"},
+        {"exerciseId": "wu-mobility", "name": "Dynamic Mobility",   "prescription": "2 × 10 each", "order": 2, "notes": "Hip circles, leg swings, arm circles"},
+        {"exerciseId": "wu-activate", "name": "Activation Circuit", "prescription": "2 × 15",      "order": 3, "notes": "Band pull-aparts, glute bridges"},
+    ]
+    _COOLDOWN_EXERCISES = [
+        {"exerciseId": "cd-stretch",   "name": "Static Stretching",  "prescription": "5 min", "order": 1, "notes": "Hold major muscle groups 30s each side"},
+        {"exerciseId": "cd-breathing", "name": "Recovery Breathing", "prescription": "3 min", "order": 2, "notes": "Box breathing: 4 count in, hold, out"},
+    ]
+
+    try:
+        all_plans = await db.saved_plans.find({}).to_list(5000)
+        updated_count = 0
+        for plan in all_plans:
+            modified = False
+            for _ph in plan.get("phases", []):
+                for _bl in _ph.get("blocks", []):
+                    for _wk in _bl.get("weeks", []):
+                        for _sess in _wk.get("sessions", []):
+                            _existing_cats = {e.get("category") for e in _sess.get("exercises", [])}
+                            if "warmup" not in _existing_cats:
+                                _wu = [
+                                    {**wu, "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
+                                     "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+                                    for wu in _WARMUP_EXERCISES
+                                ]
+                                _sess["exercises"] = _wu + _sess.get("exercises", [])
+                                modified = True
+                            if "cooldown" not in _existing_cats:
+                                _cd = [
+                                    {**cd, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
+                                     "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+                                    for cd in _COOLDOWN_EXERCISES
+                                ]
+                                _sess["exercises"] = _sess.get("exercises", []) + _cd
+                                modified = True
+            if modified:
+                await db.saved_plans.replace_one({"_id": plan["_id"]}, plan)
+                updated_count += 1
+
+        if updated_count > 0:
+            logger.info(f"[MIGRATION] warmup/cooldown backfill: updated {updated_count} plan(s)")
+        else:
+            logger.info("[MIGRATION] warmup/cooldown: all plans already have warmup/cooldown — no backfill needed")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] warmup/cooldown backfill failed: {e}")
+
+
 async def _migrate_preferred_days():
     """
     Fix D — One-time migration: sync preferredDays with trainingDaysCount.
@@ -2678,6 +2733,8 @@ async def load_models():
     await _migrate_last_active_week()
     # Backfill sessionExerciseId for exercises in saved plans that have empty IDs
     await _migrate_session_exercise_ids()
+    # C3: Backfill standard warmup/cooldown exercises for all existing plans
+    await _migrate_warmup_cooldown()
     # Document parser capability check (Prompt 7A)
     try:
         from document_parser import check_parse_capabilities

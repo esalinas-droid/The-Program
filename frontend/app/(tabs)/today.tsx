@@ -12,7 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, warmupApi, logApi, streakApi, badgesApi, prApi, exerciseApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -31,7 +31,7 @@ const RED  = '#EF5350';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
-type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab';
+type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown';
 
 interface ExSet {
   id: string;
@@ -191,6 +191,8 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
         ? (isDynamic ? 'speed' : 'primary')
         : ex.category === 'supplemental' ? 'supplemental'
         : ex.category === 'prehab' ? 'prehab'
+        : ex.category === 'warmup' ? 'warmup'
+        : ex.category === 'cooldown' ? 'cooldown'
         : 'accessory') as ExCategory,
       prescription: ex.prescription || '',
       lastSession: ex.lastPerformance || ex.recentBest || '—',
@@ -274,6 +276,8 @@ function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: s
     supplemental: { bg: COLORS.text.muted + '25',  text: COLORS.text.secondary, label: 'Support' },
     accessory:    { bg: COLORS.surfaceHighlight,   text: COLORS.text.secondary, label: 'Accessory' },
     prehab:       { bg: TEAL + '25',              text: TEAL,                  label: 'Injury Prevention' },
+    warmup:       { bg: '#4DCEA620',              text: '#4DCEA6',             label: 'Warm Up' },
+    cooldown:     { bg: '#5B9CF520',              text: '#5B9CF5',             label: 'Cooldown' },
   } as Record<ExCategory, { bg: string; text: string; label: string }>)[cat] || { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: cat };
 }
 
@@ -284,6 +288,8 @@ const REST_CONFIG: Record<ExCategory, { options: number[]; default: number; colo
   supplemental: { options: [60, 120, 180, 300],  default: 120, color: '#888888' },
   accessory:    { options: [45, 60, 75, 90],     default: 60,  color: '#888888' },
   prehab:       { options: [30, 45, 60],         default: 45,  color: '#4DCEA6' },
+  warmup:       { options: [30, 45, 60],         default: 30,  color: '#4DCEA6' },
+  cooldown:     { options: [30, 45, 60],         default: 45,  color: '#5B9CF5' },
 };
 
 function formatTime(seconds: number): string {
@@ -1559,21 +1565,6 @@ export default function TodayScreen() {
   // ── Kebab menu state (Phase 1C) ───────────────────────────────────────────────
   const [kebabMenuExId, setKebabMenuExId] = useState<string | null>(null);
   const [kebabSaving, setKebabSaving]     = useState(false);
-  const [warmupExpanded, setWarmupExpanded] = useState(false);
-  const [warmupLogged, setWarmupLogged] = useState<Set<number>>(new Set());
-  const [warmupData, setWarmupData] = useState<{
-    title: string;
-    sessionFocus: string;
-    duration: string;
-    steps: string[];
-    readinessNote: string;
-    hasInjuryModifications: boolean;
-    extended: boolean;
-  } | null>(null);
-
-  // Cooldown
-  const [cooldownExpanded, setCooldownExpanded] = useState(false);
-  const [cooldownLogged, setCooldownLogged] = useState<Set<number>>(new Set());
 
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
@@ -2206,12 +2197,6 @@ export default function TodayScreen() {
           }
         }
       } catch { /* Readiness check not critical */ }
-
-      // ── Fetch personalized warm-up (Task 11) ─────────────────────────────
-      try {
-        const wu = await warmupApi.getToday();
-        setWarmupData(wu);
-      } catch { /* Warm-up not critical */ }
 
       initialLoadDone.current = true;
       lastLoadDate.current = todayStr;
@@ -2911,94 +2896,52 @@ export default function TodayScreen() {
           </View>
         ) : null}
 
-        {/* ── WARM-UP SECTION (Task 11 — Personalized) ── */}
-        <TouchableOpacity
-          style={s.warmupBar}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setWarmupExpanded(e => !e);
-          }}
-          activeOpacity={0.8}
-        >
-          <View style={s.warmupBarLeft}>
-            <MaterialCommunityIcons name="run-fast" size={17} color={COLORS.text.secondary} />
-            <Text style={s.warmupBarTitle}>
-              {warmupData?.title ?? 'Warm-Up Protocol'}
-            </Text>
-            {warmupData?.hasInjuryModifications && (
-              <View style={s.warmupInjuryBadge}>
-                <MaterialCommunityIcons name="shield-check-outline" size={10} color='#4DCEA6' />
-              </View>
-            )}
-          </View>
-          <View style={s.warmupBarRight}>
-            <View style={s.warmupDurationBadge}>
-              <Text style={s.warmupDurationText}>{warmupData?.duration ?? '8–10 min'}</Text>
-            </View>
-            <MaterialCommunityIcons
-              name={warmupExpanded ? 'chevron-up' : 'chevron-down'}
-              size={20}
-              color={COLORS.text.muted}
-            />
-          </View>
-        </TouchableOpacity>
-
-        {warmupExpanded && (
-          <View style={s.warmupContent}>
-            {warmupData?.readinessNote ? (
-              <View style={s.warmupReadinessNote}>
-                <MaterialCommunityIcons name="information-outline" size={13} color='#FF9800' />
-                <Text style={s.warmupReadinessNoteText}>{warmupData.readinessNote}</Text>
-              </View>
-            ) : null}
-            {(warmupData?.steps ?? WARMUP_STEPS.map(st => `${st.name} — ${st.sets}`)).map((step, i) => {
-              const done = warmupLogged.has(i);
-              const exerciseName = step.split('—')[0].split('–')[0].trim();
-              return (
-                <View key={i} style={[s.warmupStep, { alignItems: 'center' }]}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setWarmupLogged(prev => {
-                        const next = new Set(prev);
-                        if (next.has(i)) next.delete(i); else next.add(i);
-                        return next;
-                      });
-                    }}
-                    style={[s.warmupStepNum, done && { backgroundColor: '#4DCEA620', borderColor: '#4DCEA6' }]}
-                  >
-                    {done
-                      ? <MaterialCommunityIcons name="check" size={12} color="#4DCEA6" />
-                      : <Text style={s.warmupStepNumText}>{i + 1}</Text>
-                    }
-                  </TouchableOpacity>
-                  <View style={[s.warmupStepInfo, { flex: 1 }]}>
-                    <Text style={[s.warmupStepName, done && { color: '#4DCEA6' }]}>{step}</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(exerciseName + ' exercise form')}`)}
-                    style={{ backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 3 }}
-                  >
-                    <MaterialCommunityIcons name="play-circle-outline" size={14} color={COLORS.accent} />
-                    <Text style={{ fontSize: 9, color: COLORS.accent, fontWeight: '700' as any }}>FORM</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-            {/* Warm-up progress */}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, gap: 6 }}>
-              <Text style={{ fontSize: 11, color: warmupLogged.size === (warmupData?.steps?.length ?? WARMUP_STEPS.length) ? '#4DCEA6' : COLORS.text.muted, fontWeight: '700' as any }}>
-                {warmupLogged.size}/{warmupData?.steps?.length ?? WARMUP_STEPS.length} complete
-              </Text>
-            </View>
-          </View>
+        {/* ── WARM UP SECTION (C4: unified exercises array, category=warmup) ── */}
+        {exercises.filter(ex => ex.category === 'warmup').length > 0 && (
+          <>
+            <Text style={s.sectionLabel}>WARM UP</Text>
+            {exercises.filter(ex => ex.category === 'warmup').map(ex => (
+              <ExerciseCard
+                key={ex.id}
+                exercise={ex}
+                expanded={expanded.has(ex.id)}
+                loggedSets={loggedSets}
+                onToggle={() => handleToggleExpand(ex.id)}
+                onLog={handleLog}
+                onAdjust={openAdjust}
+                onReportPain={openPainModal}
+                onAddSet={handleAddSet}
+                swap={swaps[ex.id]}
+                setValues={setValues}
+                onSetValueChange={handleSetValueChange}
+                effort={efforts[ex.id]}
+                onEffortChange={(v) => handleEffortChange(ex.id, v)}
+                inRemoveMode={removeModeExId === ex.id}
+                inEditMode={editModeExId === ex.id}
+                onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
+                onEditSave={(setId) => handleEditSave(ex.id, setId)}
+                onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                adjustActive={false}
+                previousData={previousData}
+                prExercises={prExercises}
+                restConfig={{
+                  selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['warmup'].default,
+                  onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                  onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                }}
+                onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
+              />
+            ))}
+          </>
         )}
 
         {/* ── EXERCISES LABEL ── */}
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
-        {/* ── EXERCISE CARDS ── */}
-        {exercises.map(ex => (
+        {/* ── MAIN/SUPPLEMENTAL/ACCESSORY/PREHAB EXERCISE CARDS ── */}
+        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown').map(ex => (
           <ExerciseCard
             key={ex.id}
             exercise={ex}
@@ -3038,71 +2981,46 @@ export default function TodayScreen() {
           />
         ))}
 
-        {/* ── COOLDOWN SECTION ── */}
-        <View style={{ marginHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' }}>
-          <TouchableOpacity
-            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCooldownExpanded(e => !e); }}
-            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md }}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ backgroundColor: '#4DCEA620', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
-                <Text style={{ fontSize: 10, fontWeight: '800' as any, color: '#4DCEA6', letterSpacing: 0.5 }}>COOLDOWN</Text>
-              </View>
-              <Text style={{ fontSize: 10, fontWeight: '800' as any, color: COLORS.text.muted }}>~10 MIN</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ backgroundColor: cooldownLogged.size >= 4 ? '#4DCEA620' : COLORS.accent + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
-                <Text style={{ fontSize: 11, fontWeight: '800' as any, color: cooldownLogged.size >= 4 ? '#4DCEA6' : COLORS.accent }}>
-                  {cooldownLogged.size}/4
-                </Text>
-              </View>
-              <MaterialCommunityIcons name={cooldownExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={COLORS.text.muted} />
-            </View>
-          </TouchableOpacity>
-
-          {cooldownExpanded && (
-            <View style={{ paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg }}>
-              {[
-                { name: 'Backward Sled Drag / Walk', rx: '6 trips × 40ft or 5 min walk', type: 'cardio' },
-                { name: 'Hip Flexor Stretch', rx: '2×45s per side', type: 'mobility' },
-                { name: 'Foam Roll Major Muscle Groups', rx: '2 min per area', type: 'recovery' },
-                { name: 'Deep Breathing / Box Breathing', rx: '2 min — 4 count in, 4 hold, 4 out', type: 'recovery' },
-              ].map((item, i) => {
-                const done = cooldownLogged.has(i);
-                return (
-                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: i > 0 ? 1 : 0, borderTopColor: COLORS.border }}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        setCooldownLogged(prev => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; });
-                      }}
-                      style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: done ? '#4DCEA6' : COLORS.border, backgroundColor: done ? '#4DCEA620' : 'transparent', justifyContent: 'center', alignItems: 'center' }}
-                    >
-                      {done && <MaterialCommunityIcons name="check" size={14} color="#4DCEA6" />}
-                    </TouchableOpacity>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '600' as any, color: done ? '#4DCEA6' : COLORS.text.primary }}>{item.name}</Text>
-                        <View style={{ backgroundColor: item.type === 'cardio' ? '#FF6B3520' : item.type === 'mobility' ? '#4DCEA620' : COLORS.accent + '20', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 8, fontWeight: '700' as any, color: item.type === 'cardio' ? '#FF6B35' : item.type === 'mobility' ? '#4DCEA6' : COLORS.accent }}>{item.type.toUpperCase()}</Text>
-                        </View>
-                      </View>
-                      <Text style={{ fontSize: 12, color: COLORS.text.muted }}>{item.rx}</Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(item.name + ' exercise')}`)}
-                      style={{ backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 3 }}
-                    >
-                      <MaterialCommunityIcons name="play-circle-outline" size={14} color={COLORS.accent} />
-                      <Text style={{ fontSize: 9, color: COLORS.accent, fontWeight: '700' as any }}>FORM</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-        </View>
+        {/* ── COOLDOWN SECTION (C4: unified exercises array, category=cooldown) ── */}
+        {exercises.filter(ex => ex.category === 'cooldown').length > 0 && (
+          <>
+            <Text style={s.sectionLabel}>COOLDOWN</Text>
+            {exercises.filter(ex => ex.category === 'cooldown').map(ex => (
+              <ExerciseCard
+                key={ex.id}
+                exercise={ex}
+                expanded={expanded.has(ex.id)}
+                loggedSets={loggedSets}
+                onToggle={() => handleToggleExpand(ex.id)}
+                onLog={handleLog}
+                onAdjust={openAdjust}
+                onReportPain={openPainModal}
+                onAddSet={handleAddSet}
+                swap={swaps[ex.id]}
+                setValues={setValues}
+                onSetValueChange={handleSetValueChange}
+                effort={efforts[ex.id]}
+                onEffortChange={(v) => handleEffortChange(ex.id, v)}
+                inRemoveMode={removeModeExId === ex.id}
+                inEditMode={editModeExId === ex.id}
+                onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
+                onEditSave={(setId) => handleEditSave(ex.id, setId)}
+                onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                adjustActive={false}
+                previousData={previousData}
+                prExercises={prExercises}
+                restConfig={{
+                  selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['cooldown'].default,
+                  onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                  onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                }}
+                onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
+              />
+            ))}
+          </>
+        )}
 
         <View style={{ height: SPACING.xl }} />
       </ScrollView>
