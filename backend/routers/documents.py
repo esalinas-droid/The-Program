@@ -504,35 +504,84 @@ async def activate_extracted_plan(
                         if not _ex.get("sessionExerciseId"):
                             _ex["sessionExerciseId"] = str(_uuid.uuid4())
 
-    # ── Seed standard warmup and cooldown exercises per session (C2) ──────────
-    _WARMUP_EXERCISES = [
-        {"exerciseId": "wu-general",  "name": "General Warm-Up",    "prescription": "5–10 min",    "order": 1, "notes": "Light cardio or jump rope to raise heart rate"},
-        {"exerciseId": "wu-mobility", "name": "Dynamic Mobility",   "prescription": "2 × 10 each", "order": 2, "notes": "Hip circles, leg swings, arm circles"},
-        {"exerciseId": "wu-activate", "name": "Activation Circuit", "prescription": "2 × 15",      "order": 3, "notes": "Band pull-aparts, glute bridges"},
+    # ── Seed per-session-type warmup and correct cooldown exercises (Bug 2 fix) ─
+    # Helpers duplicated from server.py /warmup/today logic.
+    # Source: server.py lines 5311-5349 (base steps, no readiness/injury mods).
+    def _warmup_steps_for_session_type(session_type: str) -> list:
+        stype = (session_type or "").lower()
+        if "lower" in stype or "event" in stype:
+            return [
+                "Hip circles — 10 reps each direction (slow, deliberate)",
+                "Leg swings — 10 forward / 10 lateral per leg",
+                "Goblet squat — 10 reps bodyweight (pause 1s at bottom)",
+                "Hip flexor stretch — 30s per side",
+                "Band walks — 15 steps each direction",
+                "Empty bar squat — 2 × 10 (groove the pattern)",
+            ]
+        else:
+            return [
+                "Band pull-aparts — 3 × 20 (scapular retraction)",
+                "Shoulder dislocates (band) — 15 reps slow",
+                "Face pulls (light) — 20 reps",
+                "Light dumbbell press — 12 reps (not taxing)",
+                "Thoracic extension over foam roller — 30s",
+                "Empty bar press — 2 × 10 slow tempo (groove the press)",
+            ]
+
+    def _step_to_warmup_exercise(step: str, order: int) -> dict:
+        parts = step.split(" — ", 1)
+        name = parts[0].strip()
+        rx   = parts[1].strip() if len(parts) > 1 else ""
+        slug = name.lower().replace(" ", "-").replace("(", "").replace(")", "")[:24]
+        return {
+            "exerciseId":        f"wu-{slug}",
+            "name":              name,
+            "prescription":      rx,
+            "order":             order,
+            "notes":             "",
+            "sessionExerciseId": str(_uuid.uuid4()),
+            "category":          "warmup",
+            "targetSets":        [],
+            "cues":              [],
+            "lastPerformance":   "",
+            "recentBest":        "",
+        }
+
+    _COOLDOWN_ITEMS = [
+        ("cd-sled-drag",   "Backward Sled Drag / Walk",      "6 trips × 40ft or 5 min walk",    "Sled drag backward or brisk 5-min walk"),
+        ("cd-hip-flexor",  "Hip Flexor Stretch",             "2×45s per side",                   "Kneeling hip flexor — hold the stretch"),
+        ("cd-foam-roll",   "Foam Roll Major Muscle Groups",  "2 min per area",                   "Quads, hamstrings, calves, lats, upper back"),
+        ("cd-breathing",   "Deep Breathing / Box Breathing", "2 min",                            "4 count in, 4 count hold, 4 count out"),
     ]
-    _COOLDOWN_EXERCISES = [
-        {"exerciseId": "cd-stretch",   "name": "Static Stretching",  "prescription": "5 min", "order": 1, "notes": "Hold major muscle groups 30s each side"},
-        {"exerciseId": "cd-breathing", "name": "Recovery Breathing", "prescription": "3 min", "order": 2, "notes": "Box breathing: 4 count in, hold, out"},
-    ]
+    def _get_cooldown_exercises() -> list:
+        return [
+            {
+                "exerciseId":        ex_id,
+                "name":              name,
+                "prescription":      rx,
+                "order":             i + 1,
+                "notes":             notes,
+                "sessionExerciseId": str(_uuid.uuid4()),
+                "category":          "cooldown",
+                "targetSets":        [],
+                "cues":              [],
+                "lastPerformance":   "",
+                "recentBest":        "",
+            }
+            for i, (ex_id, name, rx, notes) in enumerate(_COOLDOWN_ITEMS)
+        ]
+
     for _ph in plan_dict.get("phases", []):
         for _bl in _ph.get("blocks", []):
             for _wk in _bl.get("weeks", []):
                 for _sess in _wk.get("sessions", []):
                     _existing_cats = {e.get("category") for e in _sess.get("exercises", [])}
                     if "warmup" not in _existing_cats:
-                        _wu_items = [
-                            {**wu, "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
-                             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
-                            for wu in _WARMUP_EXERCISES
-                        ]
+                        _steps = _warmup_steps_for_session_type(_sess.get("sessionType", ""))
+                        _wu_items = [_step_to_warmup_exercise(s, i + 1) for i, s in enumerate(_steps)]
                         _sess["exercises"] = _wu_items + _sess.get("exercises", [])
                     if "cooldown" not in _existing_cats:
-                        _cd_items = [
-                            {**cd, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
-                             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
-                            for cd in _COOLDOWN_EXERCISES
-                        ]
-                        _sess["exercises"] = _sess.get("exercises", []) + _cd_items
+                        _sess["exercises"] = _sess.get("exercises", []) + _get_cooldown_exercises()
 
     await db.saved_plans.replace_one(
         {"planId": plan.planId},

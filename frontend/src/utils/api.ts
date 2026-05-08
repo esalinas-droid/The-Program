@@ -691,6 +691,9 @@ export const programsApi = {
     total_weeks: number;
   }> =>
     api(`/programs/${planId}/activate`, { method: 'POST' }),
+  /** Bug 1 fix: re-anchor saved_plans.startDate to a chosen week + sync profile.currentWeek */
+  reactivate: (planId: string, startWeek: number): Promise<{ success: boolean; startDate: string; startWeek: number }> =>
+    api(`/programs/${planId}/reactivate`, { method: 'POST', body: JSON.stringify({ startWeek }) }),
   rename: (planId: string, name: string): Promise<any> =>
     api(`/programs/${planId}`, { method: 'PUT', body: JSON.stringify({ name }) }),
   delete: (planId: string): Promise<{ deleted: boolean }> =>

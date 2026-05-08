@@ -1565,6 +1565,12 @@ export default function TodayScreen() {
   // ── Kebab menu state (Phase 1C) ───────────────────────────────────────────────
   const [kebabMenuExId, setKebabMenuExId] = useState<string | null>(null);
   const [kebabSaving, setKebabSaving]     = useState(false);
+  // Bug 3: two-level category picker
+  const [showSubCatSheet, setShowSubCatSheet] = useState(false);
+  // Reset sub-cat sheet whenever the kebab closes
+  React.useEffect(() => {
+    if (!kebabMenuExId) setShowSubCatSheet(false);
+  }, [kebabMenuExId]);
 
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
@@ -2608,7 +2614,10 @@ export default function TodayScreen() {
     setKebabSaving(true);
     try {
       await exerciseApi.updateCategory(planId, sessionId, kebabMenuExId, backendCategory);
+      // Map backend category → frontend display category
       const frontendCat =
+        backendCategory === 'warmup'       ? 'warmup' :
+        backendCategory === 'cooldown'     ? 'cooldown' :
         backendCategory === 'main'         ? (isDynamicSession ? 'speed' : 'primary') :
         backendCategory === 'supplemental' ? 'supplemental' :
         backendCategory === 'prehab'       ? 'prehab' : 'accessory';
@@ -3085,28 +3094,47 @@ export default function TodayScreen() {
         onSubmit={handlePainSubmit}
       />
 
-      {/* ── KEBAB MENU MODAL (Phase 1C) ── */}
+      {/* ── KEBAB MENU MODAL — Bug 3: two-level category picker ── */}
       {(() => {
-        const kebabEx   = kebabMenuExId ? exercises.find(e => e.id === kebabMenuExId) : null;
-        const kebabIdx  = kebabMenuExId ? exercises.findIndex(e => e.id === kebabMenuExId) : -1;
+        const kebabEx  = kebabMenuExId ? exercises.find(e => e.id === kebabMenuExId) : null;
+        const kebabIdx = kebabMenuExId ? exercises.findIndex(e => e.id === kebabMenuExId) : -1;
         const canMoveUp   = kebabIdx > 0;
         const canMoveDown = kebabIdx >= 0 && kebabIdx < exercises.length - 1;
-        const CATS = [
-          { key: 'main',         label: 'Main Lift',          icon: 'weight-lifter' },
-          { key: 'supplemental', label: 'Supplemental',       icon: 'dumbbell' },
-          { key: 'accessory',    label: 'Accessory',          icon: 'arm-flex-outline' },
-          { key: 'prehab',       label: 'Injury Prevention',  icon: 'shield-check-outline' },
+
+        // First-sheet: 3 top-level sections
+        const TOP_CATS = [
+          { key: 'warmup',   label: 'Warm-up',   icon: 'run' },
+          { key: 'main',     label: 'Exercises', icon: 'weight-lifter' },
+          { key: 'cooldown', label: 'Cooldown',  icon: 'meditation' },
         ] as const;
+
+        // Second-sheet: sub-categories within Exercises
+        const SUB_CATS = [
+          { key: 'main',         label: 'Main Lift',         icon: 'weight-lifter' },
+          { key: 'supplemental', label: 'Supplemental',      icon: 'dumbbell' },
+          { key: 'accessory',    label: 'Accessory',         icon: 'arm-flex-outline' },
+          { key: 'prehab',       label: 'Injury Prevention', icon: 'shield-check-outline' },
+        ] as const;
+
+        const MAIN_CATS = new Set(['primary', 'speed', 'supplemental', 'accessory', 'prehab']);
+        const getTopLevel = (cat: string) =>
+          cat === 'warmup' ? 'warmup' : cat === 'cooldown' ? 'cooldown' : 'main';
+        const getSubCat = (cat: string) =>
+          (cat === 'primary' || cat === 'speed') ? 'main' : cat;
+
+        const currentTop = kebabEx ? getTopLevel(kebabEx.category) : 'main';
+        const currentSub = kebabEx ? getSubCat(kebabEx.category) : 'main';
+
         return (
           <Modal
             visible={kebabMenuExId !== null}
             transparent
             animationType="slide"
-            onRequestClose={() => setKebabMenuExId(null)}
+            onRequestClose={() => { setKebabMenuExId(null); }}
           >
             <Pressable
               style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)' }}
-              onPress={() => !kebabSaving && setKebabMenuExId(null)}
+              onPress={() => !kebabSaving && (showSubCatSheet ? setShowSubCatSheet(false) : setKebabMenuExId(null))}
             >
               <View style={{ flex: 1 }} />
               <Pressable onPress={() => {}} style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34 }}>
@@ -3114,62 +3142,122 @@ export default function TodayScreen() {
                 <View style={{ alignItems: 'center', paddingTop: 14, paddingBottom: 10 }}>
                   <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border }} />
                 </View>
-                {/* Exercise title */}
-                {kebabEx && (
-                  <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
-                    <Text style={{ fontSize: 10, color: COLORS.text.muted, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 }}>EDITING</Text>
-                    <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text.primary }} numberOfLines={1}>{kebabEx.name}</Text>
-                  </View>
-                )}
-                {/* REORDER */}
-                <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 10 }}>REORDER</Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    {(['up', 'down'] as const).map(dir => {
-                      const enabled = dir === 'up' ? canMoveUp : canMoveDown;
-                      return (
-                        <TouchableOpacity
-                          key={dir}
-                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, backgroundColor: enabled ? '#1E1E22' : '#141416', borderRadius: 12, borderWidth: 1, borderColor: enabled ? COLORS.border : COLORS.border + '40', opacity: enabled ? 1 : 0.4 }}
-                          onPress={() => enabled && handleKebabOrder(dir)}
-                          disabled={!enabled || kebabSaving}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialCommunityIcons name={dir === 'up' ? 'arrow-up' : 'arrow-down'} size={16} color={enabled ? COLORS.text.primary : COLORS.text.muted} />
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: enabled ? COLORS.text.primary : COLORS.text.muted }}>
-                            {dir === 'up' ? 'Move Up' : 'Move Down'}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-                {/* CHANGE CATEGORY */}
-                <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>CHANGE CATEGORY</Text>
-                  {CATS.map((cat, catIdx) => (
+
+                {showSubCatSheet ? (
+                  /* ── Second sheet: Exercise sub-categories ── */
+                  <>
+                    <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <TouchableOpacity onPress={() => setShowSubCatSheet(false)} disabled={kebabSaving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.secondary} />
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary, flex: 1 }}>Exercise Category</Text>
+                    </View>
+                    <View style={{ paddingHorizontal: 22, paddingTop: 12 }}>
+                      {SUB_CATS.map((cat, idx) => {
+                        const isCurr = cat.key === currentSub;
+                        return (
+                          <TouchableOpacity
+                            key={cat.key}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: idx < SUB_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
+                            onPress={() => { handleKebabCategory(cat.key); setShowSubCatSheet(false); }}
+                            disabled={kebabSaving}
+                            activeOpacity={0.7}
+                          >
+                            <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
+                            <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>{cat.label}</Text>
+                            {isCurr && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
+                            {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                     <TouchableOpacity
-                      key={cat.key}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: catIdx < CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
-                      onPress={() => handleKebabCategory(cat.key)}
+                      style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
+                      onPress={() => { setShowSubCatSheet(false); setKebabMenuExId(null); }}
                       disabled={kebabSaving}
                       activeOpacity={0.7}
                     >
-                      <MaterialCommunityIcons name={cat.icon as any} size={18} color={COLORS.text.secondary} />
-                      <Text style={{ fontSize: 15, color: COLORS.text.primary, flex: 1 }}>{cat.label}</Text>
-                      {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
                     </TouchableOpacity>
-                  ))}
-                </View>
-                {/* Cancel */}
-                <TouchableOpacity
-                  style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
-                  onPress={() => setKebabMenuExId(null)}
-                  disabled={kebabSaving}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
-                </TouchableOpacity>
+                  </>
+                ) : (
+                  /* ── First sheet: top-level sections + reorder ── */
+                  <>
+                    {/* Exercise title */}
+                    {kebabEx && (
+                      <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                        <Text style={{ fontSize: 10, color: COLORS.text.muted, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 }}>EDITING</Text>
+                        <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text.primary }} numberOfLines={1}>{kebabEx.name}</Text>
+                      </View>
+                    )}
+                    {/* REORDER */}
+                    <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 10 }}>REORDER</Text>
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        {(['up', 'down'] as const).map(dir => {
+                          const enabled = dir === 'up' ? canMoveUp : canMoveDown;
+                          return (
+                            <TouchableOpacity
+                              key={dir}
+                              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, backgroundColor: enabled ? '#1E1E22' : '#141416', borderRadius: 12, borderWidth: 1, borderColor: enabled ? COLORS.border : COLORS.border + '40', opacity: enabled ? 1 : 0.4 }}
+                              onPress={() => enabled && handleKebabOrder(dir)}
+                              disabled={!enabled || kebabSaving}
+                              activeOpacity={0.7}
+                            >
+                              <MaterialCommunityIcons name={dir === 'up' ? 'arrow-up' : 'arrow-down'} size={16} color={enabled ? COLORS.text.primary : COLORS.text.muted} />
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: enabled ? COLORS.text.primary : COLORS.text.muted }}>
+                                {dir === 'up' ? 'Move Up' : 'Move Down'}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                    {/* CHANGE CATEGORY */}
+                    <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>CHANGE CATEGORY</Text>
+                      {TOP_CATS.map((cat, catIdx) => {
+                        const isCurr = cat.key === currentTop;
+                        const showChevron = cat.key === 'main';
+                        const subLabel = isCurr && cat.key === 'main'
+                          ? ` — ${SUB_CATS.find(s => s.key === currentSub)?.label ?? ''}` : '';
+                        return (
+                          <TouchableOpacity
+                            key={cat.key}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: catIdx < TOP_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
+                            onPress={() => {
+                              if (cat.key === 'main') {
+                                // Always show sub-category sheet for Exercises
+                                setShowSubCatSheet(true);
+                              } else {
+                                handleKebabCategory(cat.key);
+                              }
+                            }}
+                            disabled={kebabSaving}
+                            activeOpacity={0.7}
+                          >
+                            <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
+                            <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>
+                              {cat.label}{subLabel}
+                            </Text>
+                            {isCurr && !showChevron && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
+                            {showChevron && <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />}
+                            {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {/* Cancel */}
+                    <TouchableOpacity
+                      style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
+                      onPress={() => setKebabMenuExId(null)}
+                      disabled={kebabSaving}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
               </Pressable>
             </Pressable>
           </Modal>

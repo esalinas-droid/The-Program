@@ -91,15 +91,12 @@ export default function ProgramDetailScreen() {
     if (!plan || !reactivatePayload) return;
     setShowReactivateModal(false);
     try {
-      const profile = await profileApi.get();
-      // Backdate start so weekday math still works: startDate = today − (week − 1) weeks
-      const backdate = new Date();
-      backdate.setDate(backdate.getDate() - (week - 1) * 7);
-      const newStartDate = backdate.toISOString().slice(0, 10);
-
-      await profileApi.update({ currentWeek: week, programStartDate: newStartDate } as any);
-      const updatedProfile = { ...(profile as any), currentWeek: week, programStartDate: newStartDate };
-      await saveProfile(updatedProfile);
+      // Bug 1 fix: call /reactivate which re-anchors saved_plans.startDate
+      // (today-session endpoint derives current week from startDate, not profile.currentWeek)
+      await programsApi.reactivate(plan.planId, week);
+      // Sync local profile cache from backend so UI reflects new currentWeek
+      const freshProfile = await profileApi.get();
+      await saveProfile(freshProfile as any);
 
       Alert.alert(
         'Program Activated!',

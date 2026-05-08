@@ -540,6 +540,68 @@ async def activate_program(plan_id: str, userId: str = Depends(get_current_user)
     }
 
 
+@api_router.post("/programs/{plan_id}/reactivate")
+async def reactivate_program_at_week(
+    plan_id: str,
+    body: dict,
+    userId: str = Depends(get_current_user),
+):
+    """
+    Bug 1 fix: re-anchor an existing plan to a specific startWeek.
+
+    • Updates saved_plans.startDate using the same Monday-anchored math as
+      activate_extracted_plan (documents.py line 446).
+    • Re-marks phase/block statuses based on the chosen start_week.
+    • Updates profile.currentWeek + programStartDate to keep the 15+ legacy
+      currentWeek readers in sync (full 'derive-everywhere' refactor is post-beta debt).
+    • Evicts in-memory plan cache so the next today-session call picks up the new startDate.
+    """
+    from datetime import timedelta as _td
+
+    target = await db.saved_plans.find_one({"planId": plan_id, "userId": userId})
+    if not target:
+        raise HTTPException(status_code=404, detail="Program not found.")
+
+    total_weeks = target.get("totalWeeks", 52)
+    start_week  = max(1, min(int(body.get("startWeek", 1)), total_weeks))
+
+    # Monday-anchored startDate: same math as documents.py
+    now         = datetime.now(timezone.utc)
+    today_dow   = now.weekday()                         # 0=Mon … 6=Sun
+    this_monday = now - _td(days=today_dow)
+    plan_start  = this_monday - _td(weeks=start_week - 1)
+    new_start   = plan_start.strftime("%Y-%m-%d")
+
+    # Re-mark phase/block statuses
+    phases = target.get("phases", [])
+    for _ph in phases:
+        _active = _ph.get("startWeek", 1) <= start_week <= _ph.get("endWeek", 1)
+        _ph["status"] = "current" if _active else "upcoming"
+        for _bl in _ph.get("blocks", []):
+            _bl["status"] = "current" if _active else "upcoming"
+
+    await db.saved_plans.update_one(
+        {"_id": target["_id"]},
+        {"$set": {"startDate": new_start, "phases": phases, "status": "active"}},
+    )
+
+    # Keep profile.currentWeek in sync for legacy readers (coach, analytics, etc.)
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {"currentWeek": start_week, "programStartDate": new_start}},
+        upsert=True,
+    )
+
+    # Evict in-memory cache
+    _prog_store["plans"].pop(userId, None)
+
+    logger.info(
+        "[REACTIVATE] user=%s plan=%s → startWeek=%d startDate=%s",
+        userId, plan_id, start_week, new_start,
+    )
+    return {"success": True, "startDate": new_start, "startWeek": start_week}
+
+
 @api_router.put("/programs/{plan_id}")
 async def update_program(
     plan_id: str,
@@ -598,7 +660,7 @@ async def update_exercise_category_in_plan(
     proposedPlan in documents collection is NOT modified — only saved_plans is updated.
     """
     new_category = (body.get("category") or "").lower()
-    valid_cats = {"main", "supplemental", "accessory", "prehab"}
+    valid_cats = {"main", "supplemental", "accessory", "prehab", "warmup", "cooldown"}
     if new_category not in valid_cats:
         raise HTTPException(status_code=400, detail=f"category must be one of {sorted(valid_cats)}")
 
@@ -2380,20 +2442,62 @@ async def _migrate_training_mode():
 
 async def _migrate_warmup_cooldown():
     """
-    C3: Backfill standard warmup/cooldown exercises for all saved plans
-    that have sessions without warmup or cooldown category exercises.
+    Bug 2 corrective migration: detect sessions seeded with the old generic placeholder
+    names ("General Warm-Up", "Dynamic Mobility", "Static Stretching", etc.) and replace
+    them with real per-session-type warmup drills + the 4 correct cooldown exercises.
+    Source for warmup lists: server.py /warmup/today endpoint, lines 5311-5349.
+    Source for cooldown list: original today.tsx hardcoded block.
     """
     import uuid as _uuid
 
-    _WARMUP_EXERCISES = [
-        {"exerciseId": "wu-general",  "name": "General Warm-Up",    "prescription": "5–10 min",    "order": 1, "notes": "Light cardio or jump rope to raise heart rate"},
-        {"exerciseId": "wu-mobility", "name": "Dynamic Mobility",   "prescription": "2 × 10 each", "order": 2, "notes": "Hip circles, leg swings, arm circles"},
-        {"exerciseId": "wu-activate", "name": "Activation Circuit", "prescription": "2 × 15",      "order": 3, "notes": "Band pull-aparts, glute bridges"},
+    _OLD_WARMUP_NAMES  = {"General Warm-Up", "Dynamic Mobility", "Activation Circuit"}
+    _OLD_COOLDOWN_NAMES = {"Static Stretching", "Recovery Breathing"}
+
+    _COOLDOWN_ITEMS = [
+        ("cd-sled-drag",   "Backward Sled Drag / Walk",      "6 trips × 40ft or 5 min walk",    "Sled drag backward or brisk 5-min walk"),
+        ("cd-hip-flexor",  "Hip Flexor Stretch",             "2×45s per side",                   "Kneeling hip flexor — hold the stretch"),
+        ("cd-foam-roll",   "Foam Roll Major Muscle Groups",  "2 min per area",                   "Quads, hamstrings, calves, lats, upper back"),
+        ("cd-breathing",   "Deep Breathing / Box Breathing", "2 min",                            "4 count in, 4 count hold, 4 count out"),
     ]
-    _COOLDOWN_EXERCISES = [
-        {"exerciseId": "cd-stretch",   "name": "Static Stretching",  "prescription": "5 min", "order": 1, "notes": "Hold major muscle groups 30s each side"},
-        {"exerciseId": "cd-breathing", "name": "Recovery Breathing", "prescription": "3 min", "order": 2, "notes": "Box breathing: 4 count in, hold, out"},
-    ]
+
+    def _wu_steps(session_type: str) -> list:
+        stype = (session_type or "").lower()
+        if "lower" in stype or "event" in stype:
+            return [
+                "Hip circles — 10 reps each direction (slow, deliberate)",
+                "Leg swings — 10 forward / 10 lateral per leg",
+                "Goblet squat — 10 reps bodyweight (pause 1s at bottom)",
+                "Hip flexor stretch — 30s per side",
+                "Band walks — 15 steps each direction",
+                "Empty bar squat — 2 × 10 (groove the pattern)",
+            ]
+        else:
+            return [
+                "Band pull-aparts — 3 × 20 (scapular retraction)",
+                "Shoulder dislocates (band) — 15 reps slow",
+                "Face pulls (light) — 20 reps",
+                "Light dumbbell press — 12 reps (not taxing)",
+                "Thoracic extension over foam roller — 30s",
+                "Empty bar press — 2 × 10 slow tempo (groove the press)",
+            ]
+
+    def _make_wu_ex(step: str, order: int) -> dict:
+        parts = step.split(" — ", 1)
+        name = parts[0].strip()
+        rx   = parts[1].strip() if len(parts) > 1 else ""
+        slug = name.lower().replace(" ", "-").replace("(", "").replace(")", "")[:24]
+        return {"exerciseId": f"wu-{slug}", "name": name, "prescription": rx,
+                "order": order, "notes": "",
+                "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
+                "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+
+    def _make_cd_exercises() -> list:
+        return [
+            {"exerciseId": ex_id, "name": name, "prescription": rx, "order": i + 1,
+             "notes": notes, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
+             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
+            for i, (ex_id, name, rx, notes) in enumerate(_COOLDOWN_ITEMS)
+        ]
 
     try:
         all_plans = await db.saved_plans.find({}).to_list(5000)
@@ -2404,33 +2508,37 @@ async def _migrate_warmup_cooldown():
                 for _bl in _ph.get("blocks", []):
                     for _wk in _bl.get("weeks", []):
                         for _sess in _wk.get("sessions", []):
-                            _existing_cats = {e.get("category") for e in _sess.get("exercises", [])}
-                            if "warmup" not in _existing_cats:
-                                _wu = [
-                                    {**wu, "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
-                                     "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
-                                    for wu in _WARMUP_EXERCISES
-                                ]
-                                _sess["exercises"] = _wu + _sess.get("exercises", [])
+                            existing = _sess.get("exercises", [])
+                            warmup_names   = {e.get("name") for e in existing if e.get("category") == "warmup"}
+                            cooldown_names = {e.get("name") for e in existing if e.get("category") == "cooldown"}
+
+                            needs_wu_fix = bool(warmup_names & _OLD_WARMUP_NAMES) or not warmup_names
+                            needs_cd_fix = bool(cooldown_names & _OLD_COOLDOWN_NAMES) or not cooldown_names
+
+                            if needs_wu_fix or needs_cd_fix:
+                                main_exs = [e for e in existing if e.get("category") not in ("warmup", "cooldown")]
+
+                                new_wu = ([_make_wu_ex(s, i + 1) for i, s in enumerate(_wu_steps(_sess.get("sessionType", "")))]
+                                          if needs_wu_fix else
+                                          [e for e in existing if e.get("category") == "warmup"])
+
+                                new_cd = (_make_cd_exercises()
+                                          if needs_cd_fix else
+                                          [e for e in existing if e.get("category") == "cooldown"])
+
+                                _sess["exercises"] = new_wu + main_exs + new_cd
                                 modified = True
-                            if "cooldown" not in _existing_cats:
-                                _cd = [
-                                    {**cd, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
-                                     "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
-                                    for cd in _COOLDOWN_EXERCISES
-                                ]
-                                _sess["exercises"] = _sess.get("exercises", []) + _cd
-                                modified = True
+
             if modified:
                 await db.saved_plans.replace_one({"_id": plan["_id"]}, plan)
                 updated_count += 1
 
         if updated_count > 0:
-            logger.info(f"[MIGRATION] warmup/cooldown backfill: updated {updated_count} plan(s)")
+            logger.info(f"[MIGRATION] warmup/cooldown corrective re-seed: updated {updated_count} plan(s)")
         else:
-            logger.info("[MIGRATION] warmup/cooldown: all plans already have warmup/cooldown — no backfill needed")
+            logger.info("[MIGRATION] warmup/cooldown corrective re-seed: no plans needed updating")
     except Exception as e:
-        logger.warning(f"[MIGRATION] warmup/cooldown backfill failed: {e}")
+        logger.warning(f"[MIGRATION] warmup/cooldown corrective re-seed failed: {e}")
 
 
 async def _migrate_preferred_days():
