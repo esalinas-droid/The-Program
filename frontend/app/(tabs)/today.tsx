@@ -269,6 +269,56 @@ function getSetCircleColor(type: SetType, logged: boolean): string {
   return COLORS.accent;
 }
 
+// ── Tracker mode helpers ────────────────────────────────────────────────────
+const TRACKER_TYPE_ICONS: Record<string, string> = {
+  weighted: 'weight-lifter',   timed: 'timer-outline',
+  distance: 'map-marker-distance', height: 'arrow-up-box',
+  calories: 'fire',            emom: 'clock-outline',
+  amrap: 'repeat-variant',     for_time: 'stopwatch-outline',
+};
+
+function formatTrackerSummary(sets: any[], prescriptionType: string): string {
+  const n  = sets.length;
+  const pt = prescriptionType || 'weighted';
+  if (n === 0) return '0 sets';
+  switch (pt) {
+    case 'weighted': case 'emom': case 'amrap': case 'for_time': {
+      const ws  = sets.map((s: any) => s.weight).filter((w: number) => w > 0);
+      const rs  = sets.map((s: any) => s.rpe).filter((r: number) => r > 0);
+      const wStr = ws.length === 0 ? '' : ws.length === 1 || Math.min(...ws) === Math.max(...ws)
+        ? `${Math.max(...ws)} lbs` : `${Math.min(...ws)}–${Math.max(...ws)} lbs`;
+      const rStr = rs.length > 0 ? ` · top RPE ${Math.max(...rs)}` : '';
+      return `${n} set${n !== 1 ? 's' : ''}${wStr ? ' · ' + wStr : ''}${rStr}`;
+    }
+    case 'timed': {
+      const ds = sets.map((s: any) => s.duration || 0).filter((d: number) => d > 0);
+      const fmt = (d: number) => d >= 60 ? `${Math.round(d / 60)}min` : `${d}sec`;
+      if (ds.length === 0) return `${n} set${n !== 1 ? 's' : ''}`;
+      const lo = Math.min(...ds); const hi = Math.max(...ds);
+      return `${n} set${n !== 1 ? 's' : ''} · ${lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`}`;
+    }
+    case 'distance': {
+      const ds = sets.map((s: any) => s.distance || 0).filter((d: number) => d > 0);
+      if (ds.length === 0) return `${n} set${n !== 1 ? 's' : ''}`;
+      const unit = sets[0]?.unit || 'ft';
+      const lo = Math.min(...ds); const hi = Math.max(...ds);
+      return `${n} set${n !== 1 ? 's' : ''} · ${lo === hi ? `${lo} ${unit}` : `${lo}–${hi} ${unit}`}`;
+    }
+    case 'height': {
+      const hs = sets.map((s: any) => s.weight || 0).filter((h: number) => h > 0);
+      if (hs.length === 0) return `${n} set${n !== 1 ? 's' : ''}`;
+      const unit = sets[0]?.unit || 'in';
+      const lo = Math.min(...hs); const hi = Math.max(...hs);
+      return `${n} set${n !== 1 ? 's' : ''} · ${lo === hi ? `${lo} ${unit}` : `${lo}–${hi} ${unit}`}`;
+    }
+    case 'calories': {
+      const total = sets.reduce((a: number, s: any) => a + (s.reps || 0), 0);
+      return `${n} set${n !== 1 ? 's' : ''}${total > 0 ? ` · ${total} cal` : ''}`;
+    }
+    default: return `${n} set${n !== 1 ? 's' : ''}`;
+  }
+}
+
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
   return ({
     primary:      { bg: COLORS.accent + '25',      text: COLORS.accent,         label: 'Primary' },
@@ -1540,6 +1590,10 @@ export default function TodayScreen() {
   const [trainingMode, setTrainingMode] = useState<'program' | 'free' | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
 
+  // Tracker mode: today's logged exercises
+  const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
+  const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
+
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
   const [exercises, setExercises] = useState<Exercise[]>(() => {
@@ -2060,6 +2114,16 @@ export default function TodayScreen() {
       // B2 fix: tracker mode users skip all program-specific API calls.
       // The if (trainingMode === 'free') empty-state renders once loading=false.
       if (mode === 'free') {
+        // Load today's tracker logs on every focus (covers save → return to Today)
+        setTrackerLogsLoading(true);
+        try {
+          const logs = await logApi.list({ startDate: todayStr, endDate: todayStr });
+          setTrackerLogs(Array.isArray(logs) ? logs.filter((l: any) => l.week === 0) : []);
+        } catch {
+          setTrackerLogs([]);
+        } finally {
+          setTrackerLogsLoading(false);
+        }
         setLoading(false);
         setRefreshing(false);
         return;
@@ -2746,26 +2810,113 @@ export default function TodayScreen() {
     );
   }
 
-  // ── Tracker Mode: show empty state ───────────────────────────────────────────
+  // ── Tracker Mode: smart Today view (shows logged exercises or empty state) ───
   if (trainingMode === 'free') {
+    const GOLD = COLORS.accent;
+    const todayFormatted = (() => {
+      const d = new Date();
+      const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+    })();
+    const todayStr = getLocalDateString();
+
+    // Group tracker logs by exercise
+    type TGroup = { name: string; sessionType: string; prescriptionType: string; sets: any[] };
+    const groupMap: Record<string, TGroup> = {};
+    const groups: TGroup[] = [];
+    for (const log of trackerLogs) {
+      const key = `${log.sessionType}___${log.exercise}`;
+      if (!groupMap[key]) {
+        groupMap[key] = { name: log.exercise, sessionType: log.sessionType, prescriptionType: log.prescriptionType || 'weighted', sets: [] };
+        groups.push(groupMap[key]);
+      }
+      groupMap[key].sets.push(log);
+    }
+
     return (
       <SafeAreaView style={s.safe}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
-          <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
-          <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
-            Tracker Mode
-          </Text>
-          <Text style={{ fontSize: 15, color: COLORS.text.muted, textAlign: 'center', lineHeight: 22 }}>
-            No session prescribed today. Use Log Session to record a workout.
-          </Text>
-          <TouchableOpacity
-            style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
-            onPress={() => router.push('/tracker-session')}
-            activeOpacity={0.85}
-          >
-            <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
-          </TouchableOpacity>
+        {/* Header */}
+        <View style={{ paddingHorizontal: SPACING.lg, paddingTop: SPACING.md, paddingBottom: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+          <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, letterSpacing: 1.2 }}>TRACKER MODE</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 2, gap: SPACING.md }}>
+            <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.xxxl, fontWeight: FONTS.weights.heavy }}>Today</Text>
+            <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.base }}>{todayFormatted}</Text>
+          </View>
         </View>
+
+        {/* Loading */}
+        {trackerLogsLoading && (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator color={GOLD} size="large" />
+          </View>
+        )}
+
+        {/* Logged exercises list */}
+        {!trackerLogsLoading && groups.length > 0 && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, gap: SPACING.sm }} showsVerticalScrollIndicator={false}>
+            {groups.map((group, idx) => {
+              const icon = (TRACKER_TYPE_ICONS[group.prescriptionType] || 'dumbbell') as any;
+              const summary = formatTrackerSummary(group.sets, group.prescriptionType);
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}
+                  onPress={() => router.push(`/session-detail?date=${todayStr}` as any)}
+                  activeOpacity={0.75}
+                >
+                  <View style={{ width: 40, height: 40, borderRadius: RADIUS.md, backgroundColor: GOLD + '1A', alignItems: 'center', justifyContent: 'center' }}>
+                    <MaterialCommunityIcons name={icon} size={20} color={GOLD} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }} numberOfLines={1}>{group.name}</Text>
+                    <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm, marginTop: 2 }}>{summary}</Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Add another exercise */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD, marginTop: SPACING.sm }}
+              onPress={() => router.push('/tracker-session')}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
+              <Text style={{ color: GOLD, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }}>Add another exercise</Text>
+            </TouchableOpacity>
+
+            {/* Log different session */}
+            <TouchableOpacity
+              style={{ alignItems: 'center', paddingVertical: SPACING.md }}
+              onPress={() => router.push('/tracker-session')}
+              activeOpacity={0.75}
+            >
+              <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm }}>Log a different session</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+
+        {/* Empty state */}
+        {!trackerLogsLoading && groups.length === 0 && (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
+            <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
+            <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
+              Tracker Mode
+            </Text>
+            <Text style={{ fontSize: 15, color: COLORS.text.muted, textAlign: 'center', lineHeight: 22 }}>
+              No session logged today.{'\n'}Tap below to record a workout.
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
+              onPress={() => router.push('/tracker-session')}
+              activeOpacity={0.85}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </SafeAreaView>
     );
   }

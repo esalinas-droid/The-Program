@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator,
-  Alert, Modal, TextInput, StyleSheet,
+  Alert, Modal, TextInput, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -283,34 +283,40 @@ export default function ProgramDetailScreen() {
       {/* Delete confirmation modal */}
       <Modal visible={showDeleteModal} transparent animationType="slide">
         <View style={s.modalOverlay}>
-          <View style={s.modalSheet}>
-            <Text style={s.modalTitle}>Delete Program?</Text>
-            <Text style={s.modalBody}>
-              This cannot be undone. Your workout history from this program will be preserved,
-              but the program document will be permanently deleted.
-            </Text>
-            <Text style={s.deletePrompt}>
-              Type <Text style={s.deleteBold}>DELETE</Text> to confirm:
-            </Text>
-            <TextInput
-              style={s.deleteInput}
-              value={deleteText}
-              onChangeText={setDeleteText}
-              autoCapitalize="characters"
-              placeholder="DELETE"
-              placeholderTextColor={COLORS.text.muted}
-            />
-            <TouchableOpacity
-              style={[s.modalDangerBtn, deleteText !== DELETE_CONFIRMATION && { opacity: 0.4 }]}
-              onPress={handleDelete}
-              disabled={deleteText !== DELETE_CONFIRMATION}
-            >
-              <Text style={s.modalDangerText}>Delete permanently</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowDeleteModal(false)} style={s.modalCancelBtn}>
-              <Text style={s.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+            style={{ width: '100%' }}
+          >
+            <View style={s.modalSheet}>
+              <Text style={s.modalTitle}>Delete Program?</Text>
+              <Text style={s.modalBody}>
+                This cannot be undone. Your workout history from this program will be preserved,
+                but the program document will be permanently deleted.
+              </Text>
+              <Text style={s.deletePrompt}>
+                Type <Text style={s.deleteBold}>DELETE</Text> to confirm:
+              </Text>
+              <TextInput
+                style={s.deleteInput}
+                value={deleteText}
+                onChangeText={setDeleteText}
+                autoCapitalize="characters"
+                placeholder="DELETE"
+                placeholderTextColor={COLORS.text.muted}
+              />
+              <TouchableOpacity
+                style={[s.modalDangerBtn, deleteText !== DELETE_CONFIRMATION && { opacity: 0.4 }]}
+                onPress={handleDelete}
+                disabled={deleteText !== DELETE_CONFIRMATION}
+              >
+                <Text style={s.modalDangerText}>Delete permanently</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowDeleteModal(false)} style={s.modalCancelBtn}>
+                <Text style={s.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>

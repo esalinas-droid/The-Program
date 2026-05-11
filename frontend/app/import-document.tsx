@@ -88,10 +88,11 @@ export default function ImportDocumentScreen() {
   const router  = useRouter();
   const insets  = useSafeAreaInsets();
 
-  const [phase, setPhase]       = useState<Phase>('idle');
-  const [file, setFile]         = useState<PickedFile | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [phase, setPhase]         = useState<Phase>('idle');
+  const [file, setFile]           = useState<PickedFile | null>(null);
+  const [progress, setProgress]   = useState(0);
+  const [errorMsg, setErrorMsg]   = useState('');
+  const [showParseTips, setShowParseTips] = useState(false);
 
   // Animated progress bar width
   const animWidth = useRef(new Animated.Value(0)).current;
@@ -339,6 +340,46 @@ export default function ImportDocumentScreen() {
               </Text>
             </View>
 
+            {/* ── Collapsible Tips for best results ───────────────────────── */}
+            <TouchableOpacity
+              style={s.tipsToggle}
+              onPress={() => setShowParseTips(v => !v)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="lightbulb-outline" size={16} color={COLORS.accent} />
+              <Text style={s.tipsToggleText}>Tips for best results</Text>
+              <MaterialCommunityIcons
+                name={showParseTips ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={COLORS.text.muted}
+              />
+            </TouchableOpacity>
+
+            {showParseTips && (
+              <View style={s.tipsCard}>
+                <Text style={s.tipsSectionHeader}>BEST PARSE RESULTS</Text>
+                {[
+                  '✅  Structured table with Week, Day, Exercise, Sets, Reps, Weight / RPE',
+                  '✅  Bullet/numbered lists per day — "Day 1: Squat 5×5 @ 80%..."',
+                  '✅  Multi-week headers — "Week 1", "Week 2"',
+                  '✅  PDF with selectable text, or clean Word / Excel / CSV',
+                  '⚠️  Scanned PDFs and photos — readable but less accurate',
+                  '⚠️  Dense prose paragraphs with no structure',
+                ].map((tip, i) => (
+                  <Text key={i} style={s.tipsBullet}>{tip}</Text>
+                ))}
+
+                <Text style={[s.tipsSectionHeader, { marginTop: SPACING.md }]}>LIKELY RISKY</Text>
+                {[
+                  '❌  Image-only PDFs (no OCR text layer)',
+                  '❌  Programs without Day or Week markers',
+                  '❌  Handwritten notes with inconsistent formatting',
+                ].map((tip, i) => (
+                  <Text key={i} style={s.tipsBullet}>{tip}</Text>
+                ))}
+              </View>
+            )}
+
             {/* Pick buttons */}
             <View style={s.pickRow}>
               <TouchableOpacity style={s.pickCard} onPress={pickDocument} activeOpacity={0.8}>
@@ -578,6 +619,32 @@ const s = StyleSheet.create({
   pickSub: {
     fontSize: FONTS.sizes.xs,
     color:    COLORS.text.muted,
+  },
+
+  // ── Tips for best results ─────────────────────────────────────────────────
+  tipsToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: COLORS.surface, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: COLORS.border,
+    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+    marginBottom: SPACING.sm,
+  },
+  tipsToggleText: {
+    flex: 1, color: COLORS.accent,
+    fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold,
+  },
+  tipsCard: {
+    backgroundColor: COLORS.surface, borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: COLORS.border,
+    padding: SPACING.lg, marginBottom: SPACING.md,
+  },
+  tipsSectionHeader: {
+    fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold,
+    color: COLORS.text.muted, letterSpacing: 1.2, marginBottom: SPACING.sm,
+  },
+  tipsBullet: {
+    fontSize: FONTS.sizes.sm, color: COLORS.text.secondary,
+    lineHeight: 20, marginBottom: 4,
   },
 
   formatBox: {

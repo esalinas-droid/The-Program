@@ -249,7 +249,7 @@ export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps
       <Animated.View
         style={[
           s.sheet,
-          { paddingBottom: insets.bottom, transform: [{ translateY: slideAnim }] },
+          { transform: [{ translateY: slideAnim }] },
         ]}
       >
         {/* Header */}
@@ -514,7 +514,7 @@ export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps
         </KeyboardAvoidingView>
 
         {/* Footer */}
-        <View style={s.footer}>
+        <View style={[s.footer, { paddingBottom: SPACING.md + insets.bottom }]}>
           <TouchableOpacity
             style={s.cancelBtn}
             onPress={view === 'picker' ? onClose : () => setView('picker')}
