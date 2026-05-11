@@ -13,6 +13,7 @@ import { getBlock, getPhase } from '../../src/utils/calculations';
 import { consumeCoachSeed } from '../../src/store/coachSeedStore';
 import VoiceInputButton from '../../src/components/VoiceInputButton';
 import SpeakerButton from '../../src/components/SpeakerButton';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExerciseSwap {
@@ -95,6 +96,8 @@ const STARTERS = [
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function CoachScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const HEADER_HEIGHT = 64; // padding:16 paddingTop:24 + ~24px content row
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -293,7 +296,7 @@ export default function CoachScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
       >
         {/* ── Header ── */}
         <View style={s.header}>
