@@ -983,7 +983,7 @@ export default function ScheduleScreen() {
           </Text>
           <TouchableOpacity
             style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
-            onPress={() => router.push('/session-detail')}
+            onPress={() => router.push('/tracker-session')}
             activeOpacity={0.85}
           >
             <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>

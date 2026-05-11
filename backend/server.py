@@ -217,6 +217,12 @@ class WorkoutLogEntry(BaseDocument):
     flag: Optional[str] = None
     e1rm: float = 0.0
     setIndex: Optional[int] = None  # position of this set within the exercise (0-based)
+    # ── Tracker-mode extended fields ────────────────────────────────────────────
+    prescriptionType: Optional[str] = None  # weighted|timed|distance|height|calories
+    duration: Optional[float] = None        # seconds (timed exercises)
+    distance: Optional[float] = None        # distance value (distance exercises)
+    unit: Optional[str] = None              # unit string (sec/min, ft/m/yd, in/cm)
+    side: Optional[str] = None              # left|right|both (per-side modifier)
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -235,6 +241,12 @@ class WorkoutLogCreate(BaseModel):
     notes: Optional[str] = None
     flag: Optional[str] = None
     setIndex: Optional[int] = None  # position of this set within the exercise (0-based)
+    # ── Tracker-mode extended fields ────────────────────────────────────────────
+    prescriptionType: Optional[str] = None  # weighted|timed|distance|height|calories
+    duration: Optional[float] = None        # seconds (timed exercises)
+    distance: Optional[float] = None        # distance value (distance exercises)
+    unit: Optional[str] = None              # unit string (sec/min, ft/m/yd, in/cm)
+    side: Optional[str] = None              # left|right|both (per-side modifier)
 
 class CheckIn(BaseDocument):
     week: int
@@ -1490,6 +1502,43 @@ async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_cu
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
+# ── Bulk session save (Tracker Mode) ─────────────────────────────────────────
+class SessionBulkCreate(BaseModel):
+    entries: List[WorkoutLogCreate]
+
+@api_router.post("/log/session-bulk")
+async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get_current_user)):
+    """Bulk-insert all sets for a single free-mode session atomically."""
+    if not body.entries:
+        raise HTTPException(status_code=400, detail="No entries provided")
+    # Look up active plan once (may be None in free mode)
+    active_plan_id: Optional[str] = None
+    try:
+        plan_doc = await db.saved_plans.find_one(
+            {"userId": userId, "status": "active"}, projection={"planId": 1}
+        )
+        if plan_doc:
+            active_plan_id = plan_doc.get("planId")
+    except Exception:
+        pass
+    docs_to_insert = []
+    for entry in body.entries:
+        e1rm = epley_e1rm(entry.weight, entry.reps)
+        log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
+        if active_plan_id:
+            log.planId = active_plan_id
+        data = log.to_mongo()
+        docs_to_insert.append(data)
+    if docs_to_insert:
+        await db.log.insert_many(docs_to_insert)
+    # Invalidate weekly review cache for this user
+    from datetime import timedelta as _td
+    _now = datetime.now()
+    _monday = _now - _td(days=_now.weekday())
+    _week_start = _monday.strftime("%Y-%m-%d")
+    await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
+    return {"saved": len(docs_to_insert)}
+
 @api_router.put("/log/{entry_id}")
 async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
@@ -1919,12 +1968,21 @@ class UserExerciseCreate(BaseModel):
     category: str = "custom"   # custom | main | supplemental | accessory | other
     defaultPrescription: str = ""
     notes: str = ""
+    # ── Tracker-mode extra fields ────────────────────────────────────────────
+    prescriptionType: Optional[str] = None   # weighted|timed|distance|height|calories
+    primaryMuscles: Optional[List[str]] = None
+    equipment: Optional[str] = None
+    videoUrl: Optional[str] = None
 
 class UserExerciseUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
     defaultPrescription: Optional[str] = None
     notes: Optional[str] = None
+    prescriptionType: Optional[str] = None
+    primaryMuscles: Optional[List[str]] = None
+    equipment: Optional[str] = None
+    videoUrl: Optional[str] = None
 
 @api_router.get("/user-exercises")
 async def get_user_exercises(userId: str = Depends(get_current_user)):
@@ -1946,6 +2004,10 @@ async def create_user_exercise(body: UserExerciseCreate, userId: str = Depends(g
         "category": body.category,
         "defaultPrescription": body.defaultPrescription,
         "notes": body.notes,
+        "prescriptionType": body.prescriptionType,
+        "primaryMuscles": body.primaryMuscles or [],
+        "equipment": body.equipment,
+        "videoUrl": body.videoUrl,
         "isArchived": False,
         "createdAt": now,
         "updatedAt": now,

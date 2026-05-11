@@ -128,7 +128,10 @@ export default function SessionDetailScreen() {
   const [stats,   setStats]     = useState({ sets: 0, volume: 0, avgRpe: 0 });
 
   const loadLogs = useCallback(async () => {
-    if (!date) return;
+    if (!date) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const result = await logApi.list({ startDate: date, endDate: date });

@@ -161,6 +161,8 @@ export const logApi = {
   create: (entry: any) => api('/log', { method: 'POST', body: JSON.stringify(entry) }),
   update: (id: string, entry: any) => api(`/log/${id}`, { method: 'PUT', body: JSON.stringify(entry) }),
   delete: (id: string) => api(`/log/${id}`, { method: 'DELETE' }),
+  createBulk: (entries: any[]) =>
+    api('/log/session-bulk', { method: 'POST', body: JSON.stringify({ entries }) }),
   weekStats: (week: number, startDate?: string, endDate?: string) => {
     let qs = `/log/stats/week/${week}`;
     if (startDate && endDate) {
@@ -605,14 +607,30 @@ export interface UserExercise {
   notes: string;
   createdAt: string;
   isArchived?: boolean;
+  // Tracker-mode extended fields
+  prescriptionType?: string;
+  primaryMuscles?: string[];
+  equipment?: string;
+  videoUrl?: string;
+}
+
+export interface UserExerciseCreatePayload {
+  name: string;
+  category?: string;
+  defaultPrescription?: string;
+  notes?: string;
+  prescriptionType?: string;
+  primaryMuscles?: string[];
+  equipment?: string;
+  videoUrl?: string;
 }
 
 export const userExercisesApi = {
   list: (): Promise<{ exercises: UserExercise[] }> =>
     api('/user-exercises'),
-  create: (data: { name: string; category?: string; defaultPrescription?: string; notes?: string }): Promise<UserExercise> =>
+  create: (data: UserExerciseCreatePayload): Promise<UserExercise> =>
     api('/user-exercises', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: { name?: string; category?: string; defaultPrescription?: string; notes?: string }) =>
+  update: (id: string, data: Partial<UserExerciseCreatePayload>) =>
     api(`/user-exercises/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     api(`/user-exercises/${id}`, { method: 'DELETE' }),
