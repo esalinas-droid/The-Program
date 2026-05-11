@@ -26,10 +26,11 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../../../src/constants/theme';
 import {
   documentsApi,
   programsApi,
+  profileApi,
   BuildPlanResponse,
   ExtractionConfidence,
 } from '../../../src/utils/api';
-import { getProfile } from '../../../src/utils/storage';
+import { getProfile, saveProfile } from '../../../src/utils/storage';
 import { StartFromPicker } from '../../../src/components/StartFromPicker';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -183,6 +184,15 @@ export default function BuildPlanScreen() {
         startWeek:   selectedWeek,
       });
       if (result.success) {
+        // Refresh AsyncStorage with the server-side profile so Today and Home
+        // tabs read the correct currentWeek immediately (no pull-to-refresh needed).
+        // Same pattern as programs/[id].tsx line 98.
+        try {
+          const freshProfile = await profileApi.get();
+          await saveProfile(freshProfile as any);
+        } catch (_) {
+          // Non-fatal — navigation proceeds even if cache refresh fails
+        }
         // '/' resolves to (tabs)/index.tsx via Expo Router's group resolution.
         router.replace('/');
       } else {
