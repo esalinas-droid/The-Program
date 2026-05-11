@@ -360,13 +360,15 @@ export default function ImportDocumentScreen() {
 
             {/* Format notes */}
             <View style={s.formatBox}>
-              <Text style={s.formatTitle}>WHAT WORKS BEST</Text>
+              <Text style={s.formatTitle}>BEST PARSE RESULTS</Text>
               {[
-                { icon: 'check-circle-outline', color: COLORS.status.success, text: 'PDF with selectable text (best accuracy)' },
-                { icon: 'check-circle-outline', color: COLORS.status.success, text: 'Word/DOCX documents with clear structure' },
-                { icon: 'check-circle-outline', color: COLORS.status.success, text: 'Excel (XLSX) or CSV — coach-built spreadsheets' },
-                { icon: 'information-outline',  color: COLORS.status.warning, text: 'Scanned PDFs and photos — good but not perfect' },
-                { icon: 'close-circle-outline', color: COLORS.status.error,   text: 'Files larger than 10 MB are not supported' },
+                { icon: 'check-circle-outline',  color: COLORS.status.success, text: 'Structured tables — Week, Day, Exercise, Sets, Reps, Weight/RPE' },
+                { icon: 'check-circle-outline',  color: COLORS.status.success, text: 'Bullet/numbered lists per day: "Day 1: Squat 5×5 @ 80%..."' },
+                { icon: 'check-circle-outline',  color: COLORS.status.success, text: 'Multi-week programs with "Week 1", "Week 2" header labels' },
+                { icon: 'check-circle-outline',  color: COLORS.status.success, text: 'PDF with selectable text or clean Word/Excel/CSV docs' },
+                { icon: 'alert-circle-outline',  color: COLORS.status.warning, text: 'Scanned PDFs and photos — readable, but less accurate' },
+                { icon: 'alert-circle-outline',  color: COLORS.status.warning, text: 'Heavy prose paragraphs with no structure — may miss details' },
+                { icon: 'close-circle-outline',  color: COLORS.status.error,   text: 'Image-only PDFs (no OCR) or programs without day/week markers' },
               ].map((item, i) => (
                 <View key={i} style={s.formatRow}>
                   <MaterialCommunityIcons name={item.icon as any} size={16} color={item.color} />

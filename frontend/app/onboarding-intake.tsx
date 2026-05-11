@@ -308,6 +308,7 @@ export default function OnboardingIntake() {
   const [currentProgram,   setCurrentProgram]  = useState('');
   const [programFiles,     setProgramFiles]    = useState<{uri: string; name: string; type: string}[]>([]);
   const [programMode,      setProgramMode]     = useState<'upload'|'type'|'skip'|null>(null);
+  const [showParseTips,    setShowParseTips]   = useState(false);
   const [analyzingProgram, setAnalyzingProgram] = useState(false);
 
   // Step 10 — Medical Documents (optional)
@@ -1415,6 +1416,44 @@ export default function OnboardingIntake() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* ── Parse tips (ⓘ expandable) ─────────────────────────────────── */}
+          <TouchableOpacity
+            onPress={() => setShowParseTips(prev => !prev)}
+            activeOpacity={0.75}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: SPACING.sm, alignSelf: 'flex-start' }}
+          >
+            <MaterialCommunityIcons name="information-outline" size={14} color={COLORS.accent} />
+            <Text style={{ fontSize: 12, color: COLORS.accent, fontWeight: '600' }}>Tips for best results</Text>
+            <MaterialCommunityIcons name={showParseTips ? 'chevron-up' : 'chevron-down'} size={13} color={COLORS.accent} />
+          </TouchableOpacity>
+
+          {showParseTips && (
+            <View style={{ backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.md }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: SPACING.sm }}>BEST PARSE RESULTS</Text>
+              {[
+                'Structured tables with columns for Week, Day, Exercise, Sets, Reps, Weight/RPE',
+                'Bullet/numbered lists per day — e.g. "Day 1: Squat 5×5 @ 80%, Bench 5×5..."',
+                'Multi-week programs with clear week labels ("Week 1", "Week 2" headers)',
+              ].map((tip, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginBottom: 5 }}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={13} color={COLORS.status.success} style={{ marginTop: 2 }} />
+                  <Text style={{ fontSize: 12, color: COLORS.text.secondary, flex: 1, lineHeight: 17 }}>{tip}</Text>
+                </View>
+              ))}
+              <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginTop: SPACING.sm, marginBottom: SPACING.sm }}>RISKY</Text>
+              {[
+                'Heavy prose paragraphs with no structure',
+                'Image-only PDFs (screenshots or scans without OCR)',
+                'Programs without clear day or week markers',
+              ].map((tip, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginBottom: 5 }}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={13} color={COLORS.status.warning} style={{ marginTop: 2 }} />
+                  <Text style={{ fontSize: 12, color: COLORS.text.secondary, flex: 1, lineHeight: 17 }}>{tip}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {programFiles.length > 0 && (
             <View style={{ marginBottom: SPACING.md }}>
