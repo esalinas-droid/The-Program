@@ -37,12 +37,12 @@ export const PRESCRIPTION_TYPES: {
 }[] = [
   { type: 'weighted',  label: 'WEIGHTED',  icon: 'weight-lifter' },
   { type: 'timed',     label: 'TIMED',     icon: 'timer-outline' },
-  { type: 'distance',  label: 'DISTANCE',  icon: 'map-marker-distance' },
-  { type: 'height',    label: 'HEIGHT',    icon: 'arrow-up-box' },
+  { type: 'distance',  label: 'DISTANCE',  icon: 'run-fast' },
+  { type: 'height',    label: 'HEIGHT',    icon: 'arrow-up-bold-circle-outline' },
   { type: 'calories',  label: 'CALORIES',  icon: 'fire' },
   { type: 'emom',      label: 'EMOM',      icon: 'clock-outline' },
   { type: 'amrap',     label: 'AMRAP',     icon: 'repeat-variant' },
-  { type: 'for_time',  label: 'FOR TIME',  icon: 'stopwatch-outline' },
+  { type: 'for_time',  label: 'FOR TIME',  icon: 'timer-sand' },
 ];
 
 const MODIFIERS = [
@@ -558,7 +558,7 @@ const s = StyleSheet.create({
   sheet: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
-    maxHeight: SCREEN_H * 0.88,
+    height: SCREEN_H * 0.88,
     backgroundColor: COLORS.surface,
     borderTopLeftRadius: RADIUS.xl,
     borderTopRightRadius: RADIUS.xl,

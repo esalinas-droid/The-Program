@@ -272,9 +272,9 @@ function getSetCircleColor(type: SetType, logged: boolean): string {
 // ── Tracker mode helpers ────────────────────────────────────────────────────
 const TRACKER_TYPE_ICONS: Record<string, string> = {
   weighted: 'weight-lifter',   timed: 'timer-outline',
-  distance: 'map-marker-distance', height: 'arrow-up-box',
+  distance: 'run-fast',        height: 'arrow-up-bold-circle-outline',
   calories: 'fire',            emom: 'clock-outline',
-  amrap: 'repeat-variant',     for_time: 'stopwatch-outline',
+  amrap: 'repeat-variant',     for_time: 'timer-sand',
 };
 
 function formatTrackerSummary(sets: any[], prescriptionType: string): string {
@@ -2083,7 +2083,22 @@ export default function TodayScreen() {
             setSetValues(prev => ({ ...prev, ...recoveredValues }));
           }
         } catch (err) { console.warn('[Today] Re-sync log fetch failed:', err); }
-        return; // skip full rebuild
+
+        // ── Tracker mode: always refresh today's logs on re-focus ────────────
+        // (This block is reached on every navigation-back within the same day.
+        //  The tracker log fetch below the outer `if` is only reached on the
+        //  very first load. We must also refresh here so cards appear after save.)
+        if (trainingMode === 'free') {
+          setTrackerLogsLoading(true);
+          try {
+            const tLogs = await logApi.list({ startDate: todayStr, endDate: todayStr });
+            setTrackerLogs(Array.isArray(tLogs) ? tLogs.filter((l: any) => Number(l.week) === 0) : []);
+          } catch { setTrackerLogs([]); }
+          finally { setTrackerLogsLoading(false); }
+          return;
+        }
+
+        return; // skip full rebuild — program mode
       }
 
       // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
