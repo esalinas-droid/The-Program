@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -54,6 +55,8 @@ const INITIAL_INSIGHTS: Insight[] = [
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const HEADER_HEIGHT = 48;
   const [fileSelected,      setFileSelected]      = useState(false);
   const [selectedCategory,  setSelectedCategory]  = useState('');
   const [insights,          setInsights]          = useState<Insight[]>(INITIAL_INSIGHTS);
@@ -116,6 +119,7 @@ export default function UploadScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
       >
         {/* ── Top bar ── */}
         <View style={s.topBar}>

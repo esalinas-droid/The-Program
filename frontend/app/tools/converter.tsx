@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { lbsToKg, kgToLbs, calculatePlateMath } from '../../src/utils/calculations';
 
@@ -17,6 +18,8 @@ const PLATE_COLORS: Record<string, string> = {
 
 export default function ConverterScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const HEADER_HEIGHT = 64;
   const [lbs, setLbs] = useState('');
   const [kg, setKg] = useState('');
   const [targetWeight, setTargetWeight] = useState('');
@@ -48,7 +51,7 @@ export default function ConverterScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}>
         <ScrollView testID="converter-scroll" keyboardShouldPersistTaps="handled">
           <View style={s.header}>
             <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={s.backBtn}>

@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { epleyE1RM, brzyckiE1RM, lbsToKg, PERCENT_TABLE } from '../../src/utils/calculations';
 
 export default function CalculatorScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const HEADER_HEIGHT = 64;
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
 
@@ -17,7 +20,7 @@ export default function CalculatorScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}>
         <ScrollView testID="calculator-scroll" keyboardShouldPersistTaps="handled">
           {/* Header */}
           <View style={s.header}>

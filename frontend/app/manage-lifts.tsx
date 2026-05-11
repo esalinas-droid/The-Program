@@ -7,6 +7,7 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { liftsApi } from '../src/utils/api';
@@ -143,6 +144,7 @@ function AddLiftModal({
   const [customName, setCustomName] = useState('');
   const [showCustom, setShowCustom] = useState(false);
   const slideAnim = useRef(new Animated.Value(800)).current;
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (visible) {
@@ -178,7 +180,7 @@ function AddLiftModal({
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={() => hide(onClose)}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom + 56 : 0}>
         <Pressable style={am.overlay} onPress={() => hide(onClose)}>
           <Animated.View style={[am.sheet, { transform: [{ translateY: slideAnim }] }]}>
             <Pressable onPress={e => e.stopPropagation()}>
@@ -317,6 +319,7 @@ function EditPRModal({
   const [isFeatured, setIsFeatured] = useState(false);
   const [saving, setSaving]     = useState(false);
   const slideAnim = useRef(new Animated.Value(800)).current;
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (visible && lift) {
@@ -356,7 +359,7 @@ function EditPRModal({
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={() => hide(onClose)}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom + 60 : 0}>
         <Pressable style={ep.overlay} onPress={() => hide(onClose)}>
           <Animated.View style={[ep.sheet, { transform: [{ translateY: slideAnim }] }]}>
             <Pressable onPress={e => e.stopPropagation()}>
