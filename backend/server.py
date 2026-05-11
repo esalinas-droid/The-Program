@@ -3119,6 +3119,43 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     _session_ctx_str = f"\n\nTODAY'S PRESCRIBED SESSION:\n{today_session_context}" if today_session_context else ""
     _block_ctx_str   = f"\n\nCURRENT BLOCK DIRECTIVE:\n{block_directive_context}"   if block_directive_context else ""
 
+    # ── iii: program overview (lite summary, ≤500 token budget) ───────────
+    program_overview = ""
+    if _cp:
+        try:
+            _cur_ph_label = _fm.get("phase", "") if _fm else ""
+            _cur_bl_label = _fm.get("block", "") if _fm else ""
+            _cur_wk_label = _fm.get("week", "?") if _fm else "?"
+            _ov_lines: list[str] = [
+                f"Program: {_cp.planName} · {_cp.totalWeeks} weeks total",
+                f"Current: {_cur_ph_label or 'Phase ?'}, {_cur_bl_label or 'Block ?'}, Week {_cur_wk_label}",
+                "",
+            ]
+            _block_detail_lines: list[str] = []
+            for _ov_ph in (_cp.phases or []):
+                _ph_range = f"Wk {_ov_ph.startWeek}–{_ov_ph.endWeek}"
+                _ov_lines.append(
+                    f"Phase {_ov_ph.phaseNumber}: {_ov_ph.phaseName} ({_ph_range}) — {_ov_ph.goal or '(no goal)'}"
+                )
+                for _ov_bl in (_ov_ph.blocks or []):
+                    _bullet = (
+                        f"  • Block {_ov_bl.blockNumber}: {_ov_bl.blockName} "
+                        f"({_ov_bl.weekCount} wk) — {_ov_bl.blockGoal or '(no goal)'}"
+                    )
+                    _block_detail_lines.append(_bullet)
+            # Try full overview first
+            _full = "\n".join(_ov_lines + _block_detail_lines)
+            if len(_full) <= 2000:
+                program_overview = _full
+            else:
+                # Too long — drop block bullets, keep phase lines only
+                _short = "\n".join(_ov_lines) + "\n[...block-level detail available on request]"
+                program_overview = _short
+        except Exception as _ov_err:
+            logger.warning(f"[CoachChat] Program overview build failed: {_ov_err}")
+
+    _program_ctx_str = f"\n\nPROGRAM OVERVIEW:\n{program_overview}" if program_overview else ""
+
     # ── 7. RAG: retrieve relevant passages ────────────────────────────────────
     embedding_response = await _openai_client.embeddings.create(
         model='text-embedding-3-small',
@@ -3166,6 +3203,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "WHO YOU'RE TALKING TO\n"
         "The user is an adult athlete who has chosen to train under structure. They have:\n"
         "- A program with a current block, weekly session structure, and today's prescribed exercises — all visible to you below in TODAY'S PRESCRIBED SESSION and CURRENT BLOCK DIRECTIVE. Reference these explicitly when the user asks about their workout.\n"
+        "- A PROGRAM OVERVIEW showing the full program structure (phases, blocks, week ranges, goals). Reference it when the user asks about anything beyond today's session — upcoming blocks, what's in Block 3, how the program is structured, etc.\n"
         "- A history of logged sessions, PRs, and a change log of past edits\n"
         "- Often: injury flags, weakness targets, and sometimes uploaded medical or coaching documents\n"
         "- Sometimes: meet dates, body weight, and experience level\n\n"
@@ -3213,8 +3251,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "You defer to the athlete on: subjective preferences, their stated goals, and equipment they've described.\n\n"
 
         "WHEN TO CITE\n"
-        "You have access to: (1) a general strength training knowledge base, (2) the athlete's uploaded documents when present, "
-        "(3) the athlete's logged sessions and PR history.\n"
+        "You have access to: (1) a general strength training knowledge base via COACHING LIBRARY EXCERPTS, (2) the athlete's uploaded program document via USER'S UPLOADED PROGRAM EXCERPTS — reference these when the user asks about program intent, methodology, or phrasing from the source doc, (3) PROGRAM OVERVIEW with the full structure (phases, blocks, week ranges, goals), and (4) the athlete's logged sessions and PR history.\n"
         "- From uploaded documents: \"From your shoulder MRI report, the labrum tear was on the left.\" Make it clear you're using their info.\n"
         "- From the knowledge base: cite the source name when you have it; don't fabricate citations or invent author names.\n"
         "- From their logged history: \"Your last heavy bench was 14 days ago at 315×3.\" Be exact.\n"
@@ -3262,7 +3299,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
         f"\n\nRECENT SESSIONS:\n{recent_log}"
-        f"{_session_ctx_str}{_block_ctx_str}"
+        f"{_session_ctx_str}{_block_ctx_str}{_program_ctx_str}"
         f"{coaching_intelligence}"
         f"{rag_section}"
     )
