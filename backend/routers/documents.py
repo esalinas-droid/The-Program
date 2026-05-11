@@ -590,16 +590,23 @@ async def activate_extracted_plan(
     )
 
     # ── Update profile ────────────────────────────────────────────────────────
+    # Also write currentWeek + programStartDate so that all legacy readers
+    # (today.tsx, coach_chat, 13+ endpoints) see the correct week immediately.
+    # Matches the pattern in server.py reactivate endpoint (line 583-595).
+    from routers.program import _store as _prog_store  # local import — avoids circular dep
     await db.profile.update_one(
         {"userId": userId},
         {"$set": {
             "has_imported_program": True,
             "onboardingComplete":   True,
             "training_mode":        "program",
+            "currentWeek":          start_week,
+            "programStartDate":     plan_dict_start,
             "updatedAt":            now,
         }},
         upsert=True,
     )
+    _prog_store["plans"].pop(userId, None)   # evict cache — force re-fetch with new startDate
 
     logger.info(
         "[ACTIVATE PLAN] saved new plan=%s for user=%s doc=%s",
