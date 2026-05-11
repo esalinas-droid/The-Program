@@ -3194,6 +3194,38 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
 
     rag_section = f"\n\nCOACHING LIBRARY EXCERPTS:\n{retrieved_passages}" if retrieved_passages else ""
 
+    # ── User-scoped RAG: search user's uploaded program chunks ────────────────
+    user_doc_rag_section = ""
+    try:
+        import numpy as np
+        user_chunks_cursor = db.user_document_chunks.find({"userId": userId})
+        user_chunks = await user_chunks_cursor.to_list(500)
+        if user_chunks:
+            q_emb = np.array(embedding, dtype=np.float32)
+            scored = []
+            for ch in user_chunks:
+                ch_emb = ch.get("embedding")
+                if ch_emb and len(ch_emb) == 512:
+                    c_arr  = np.array(ch_emb, dtype=np.float32)
+                    denom  = np.linalg.norm(q_emb) * np.linalg.norm(c_arr) + 1e-9
+                    sim    = float(np.dot(q_emb, c_arr) / denom)
+                    if sim >= 0.3:
+                        scored.append((sim, ch))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top = scored[:3]
+            if top:
+                udoc_lines = []
+                for idx, (_sim, ch) in enumerate(top):
+                    passage = (ch.get("content") or "")[:300]
+                    udoc_lines.append(f"[{idx + 1}] {passage}")
+                user_doc_rag_section = (
+                    "\n\nUSER'S UPLOADED PROGRAM EXCERPTS:\n"
+                    + "\n\n".join(udoc_lines)
+                )
+                logger.debug("[CoachChat] user_doc_rag: %d chunks matched for user=%s", len(top), userId)
+    except Exception as _udoc_err:
+        logger.warning("[CoachChat] User doc RAG failed: %s", _udoc_err)
+
     system_prompt = (
         # ── POCKET COACH PERSONA & VOICE ─────────────────────────────────────
         "You are Pocket Coach — a strength and conditioning coach inside The Program, a training app used by serious lifters, "
@@ -3204,6 +3236,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "The user is an adult athlete who has chosen to train under structure. They have:\n"
         "- A program with a current block, weekly session structure, and today's prescribed exercises — all visible to you below in TODAY'S PRESCRIBED SESSION and CURRENT BLOCK DIRECTIVE. Reference these explicitly when the user asks about their workout.\n"
         "- A PROGRAM OVERVIEW showing the full program structure (phases, blocks, week ranges, goals). Reference it when the user asks about anything beyond today's session — upcoming blocks, what's in Block 3, how the program is structured, etc.\n"
+        "- USER'S UPLOADED PROGRAM EXCERPTS — passages from the original program document the athlete uploaded. Reference these when the user asks about the program's intent, methodology, or specific phrasing that isn't already in TODAY'S PRESCRIBED SESSION or PROGRAM OVERVIEW.\n"
         "- A history of logged sessions, PRs, and a change log of past edits\n"
         "- Often: injury flags, weakness targets, and sometimes uploaded medical or coaching documents\n"
         "- Sometimes: meet dates, body weight, and experience level\n\n"
@@ -3301,7 +3334,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         f"\n\nRECENT SESSIONS:\n{recent_log}"
         f"{_session_ctx_str}{_block_ctx_str}{_program_ctx_str}"
         f"{coaching_intelligence}"
-        f"{rag_section}"
+        f"{rag_section}{user_doc_rag_section}"
     )
 
     # ── 9. Build chat with last 5 messages only (token budget) ───────────────

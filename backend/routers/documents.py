@@ -80,6 +80,8 @@ async def _run_parse(db, doc_id: str, file_path: str, content_type: str) -> None
             }},
         )
         logger.info("[DOC PARSE] doc=%s complete, %d chars, %d pages", doc_id, len(parsed_text), page_count)
+        # Kick off RAG embedding in the same background task (fire-and-forget errors)
+        await _embed_doc_for_rag(db, doc_id)
     except Exception as exc:
         err_msg = str(exc)[:500]
         logger.error("[DOC PARSE] doc=%s failed: %s", doc_id, err_msg)
@@ -87,6 +89,92 @@ async def _run_parse(db, doc_id: str, file_path: str, content_type: str) -> None
             {"documentId": doc_id},
             {"$set": {"parseStatus": "failed", "parseError": err_msg}},
         )
+
+
+def _chunk_text(text: str, chunk_size: int = 1800, overlap: int = 200) -> list:
+    """
+    Paragraph-aware chunker.
+    chunk_size ≈ 1800 chars ≈ 500 tokens.  overlap ≈ 200 chars ≈ 50 tokens.
+    """
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    chunks: list = []
+    current: list = []
+    current_len = 0
+
+    for para in paragraphs:
+        plen = len(para)
+        if current_len + plen > chunk_size and current:
+            joined = " ".join(current)
+            chunks.append(joined)
+            # carry the last `overlap` chars into the next chunk
+            tail = joined[-overlap:]
+            current = [tail] if tail else []
+            current_len = len(tail)
+        current.append(para)
+        current_len += plen + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return [c for c in chunks if len(c) > 50]
+
+
+async def _embed_doc_for_rag(db, doc_id: str) -> None:
+    """
+    Chunk + embed + store a parsed document in MongoDB user_document_chunks.
+    Called after _run_parse succeeds.  Errors are logged but never re-raised
+    so a RAG failure never blocks the normal upload flow.
+    """
+    try:
+        from server import _openai_client  # local import — avoids circular dep
+        if not _openai_client:
+            logger.warning("[DOC RAG] OpenAI client not available — skipping embedding")
+            return
+
+        doc = await db.user_documents.find_one({"documentId": doc_id})
+        if not doc or not doc.get("parsedText"):
+            logger.warning("[DOC RAG] doc=%s not found or no parsedText", doc_id)
+            return
+
+        parsed_text = doc["parsedText"]
+        user_id     = doc["userId"]
+        filename    = doc.get("filename", "uploaded program")
+        source_lbl  = f"Uploaded program: {filename}"
+
+        # Delete any stale chunks from a previous upload/reparse of this doc
+        await db.user_document_chunks.delete_many({"documentId": doc_id})
+
+        chunks = _chunk_text(parsed_text)
+        if not chunks:
+            logger.warning("[DOC RAG] doc=%s produced 0 chunks", doc_id)
+            return
+
+        # Batch-embed all chunks in one API call
+        resp = await _openai_client.embeddings.create(
+            model="text-embedding-3-small",
+            input=chunks,
+            dimensions=512,
+        )
+        embeddings = [item.embedding for item in resp.data]
+
+        now = datetime.now(timezone.utc)
+        records = [
+            {
+                "userId":       user_id,
+                "documentId":   doc_id,
+                "content":      chunk,
+                "chunkIndex":   i,
+                "source":       source_lbl,
+                "embedding":    emb,
+                "createdAt":    now,
+            }
+            for i, (chunk, emb) in enumerate(zip(chunks, embeddings))
+        ]
+        await db.user_document_chunks.insert_many(records)
+        logger.info("[DOC RAG] Embedded %d chunks for doc=%s user=%s", len(records), doc_id, user_id)
+
+    except Exception as _rag_err:
+        logger.error("[DOC RAG] Embedding failed for doc=%s: %s", doc_id, _rag_err)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
