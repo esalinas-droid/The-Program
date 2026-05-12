@@ -1,18 +1,32 @@
 """
 Vision-based workout-log image parser.
 
-Strategy pattern: dispatches to OpenAI or Anthropic based on the model arg.
+Strategy pattern: dispatches to Claude (default) or OpenAI based on the model arg.
 Returns a structured dict with session metadata + exercises, matching the
 schema the frontend uses for /api/log/session-bulk.
+
+Model routing:
+  "claude-*"  → emergentintegrations LlmChat (EMERGENT_LLM_KEY)
+  "gpt-*"     → AsyncOpenAI (OPENAI_API_KEY)
 """
 
 import base64
 import json
 import os
-from typing import Dict, List, Optional
+import uuid
+from typing import Dict, Optional
 from openai import AsyncOpenAI
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 _openai: Optional[AsyncOpenAI] = None
+
+_TRANSCRIBE_MSG = (
+    "Transcribe this single workout session exactly as shown. "
+    "Return only the JSON object — no commentary, no markdown fences."
+)
+
+_EMERGENT_MODEL_PROVIDER = "anthropic"
+_CLAUDE_MODEL_ID = "claude-sonnet-4-5-20250929"  # full dated ID used by existing coach code
 
 
 def _get_openai() -> AsyncOpenAI:
@@ -23,6 +37,13 @@ def _get_openai() -> AsyncOpenAI:
             raise RuntimeError("OPENAI_API_KEY env var not set")
         _openai = AsyncOpenAI(api_key=api_key)
     return _openai
+
+
+def _get_emergent_key() -> str:
+    key = os.getenv("EMERGENT_LLM_KEY", "")
+    if not key:
+        raise RuntimeError("EMERGENT_LLM_KEY env var not set")
+    return key
 
 
 SYSTEM_PROMPT = """You are a session-log transcriber for a fitness app's tracker mode. A user has uploaded ONE image of ONE workout session they performed (or will perform today). Your job is one-to-one transcription of exactly what is visible in that image — nothing more.
@@ -109,6 +130,40 @@ def _empty_result() -> Dict:
     return {"session_title": None, "session_date": None, "confidence": "low", "exercises": []}
 
 
+async def _claude_parse(image_bytes: bytes, model: str) -> Dict:
+    """Parse via Claude through emergentintegrations (uses EMERGENT_LLM_KEY)."""
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    chat = LlmChat(
+        api_key=_get_emergent_key(),
+        session_id=str(uuid.uuid4()),
+        system_message=SYSTEM_PROMPT,
+    ).with_model(_EMERGENT_MODEL_PROVIDER, _CLAUDE_MODEL_ID)
+
+    response_text: str = await chat.send_message(
+        UserMessage(
+            text=_TRANSCRIBE_MSG,
+            file_contents=[ImageContent(image_base64=b64)],
+        )
+    )
+
+    # Strip markdown fences if Claude wraps the JSON
+    content = response_text.strip()
+    if content.startswith("```"):
+        parts = content.split("```")
+        content = parts[1] if len(parts) > 1 else content
+        if content.startswith("json"):
+            content = content[4:]
+        content = content.strip()
+
+    parsed = json.loads(content)
+    return {
+        "session_title": parsed.get("session_title"),
+        "session_date":  parsed.get("session_date"),
+        "confidence":    parsed.get("confidence", "low"),
+        "exercises":     parsed.get("exercises") or [],
+    }
+
+
 async def _openai_parse(image_bytes: bytes, model: str) -> Dict:
     b64 = base64.b64encode(image_bytes).decode("ascii")
     client = _get_openai()
@@ -117,7 +172,7 @@ async def _openai_parse(image_bytes: bytes, model: str) -> Dict:
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
-                {"type": "text", "text": "Parse this workout log."},
+                {"type": "text", "text": _TRANSCRIBE_MSG},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
             ]},
         ],
@@ -128,18 +183,19 @@ async def _openai_parse(image_bytes: bytes, model: str) -> Dict:
     parsed = json.loads(content)
     return {
         "session_title": parsed.get("session_title"),
-        "session_date": parsed.get("session_date"),
-        "confidence": parsed.get("confidence", "low"),
-        "exercises": parsed.get("exercises") or [],
+        "session_date":  parsed.get("session_date"),
+        "confidence":    parsed.get("confidence", "low"),
+        "exercises":     parsed.get("exercises") or [],
     }
 
 
-async def parse_workout_image(image_bytes: bytes, model: str = "gpt-4o") -> Dict:
+async def parse_workout_image(image_bytes: bytes, model: str = "claude-sonnet-4-5") -> Dict:
     """
     Returns a dict with {session_title, session_date, confidence, exercises}.
     Caller is responsible for credit management and refund-on-empty-result.
     """
+    if model.startswith("claude"):
+        return await _claude_parse(image_bytes, model)
     if model.startswith("gpt"):
         return await _openai_parse(image_bytes, model)
-    # Future: claude support
     raise ValueError(f"Unsupported vision model: {model}")

@@ -1601,7 +1601,7 @@ async def parse_session_image(
     # ── Steps 6 + 7: parse + refund on failure ────────────────────────────────
     credit_used = True
     try:
-        parse_result = await _vision_parser.parse_workout_image(image_bytes, model="gpt-4o")
+        parse_result = await _vision_parser.parse_workout_image(image_bytes, model="claude-sonnet-4-5")
         exercises     = parse_result["exercises"]
         session_title = parse_result.get("session_title")
         session_date  = parse_result.get("session_date")
