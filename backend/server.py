@@ -1601,7 +1601,11 @@ async def parse_session_image(
     # ── Steps 6 + 7: parse + refund on failure ────────────────────────────────
     credit_used = True
     try:
-        exercises = await _vision_parser.parse_workout_image(image_bytes, model="gpt-4o-mini")
+        parse_result = await _vision_parser.parse_workout_image(image_bytes, model="gpt-4o")
+        exercises     = parse_result["exercises"]
+        session_title = parse_result.get("session_title")
+        session_date  = parse_result.get("session_date")
+        confidence    = parse_result.get("confidence", "low")
         if not exercises:
             balance_after_spend = await _image_credits.refund_credit(
                 db, userId, related_id=image_id, reason="zero_exercises"
@@ -1616,6 +1620,9 @@ async def parse_session_image(
             "image_id": image_id,
             "image_url": signed_url,
             "object_path": object_path,
+            "session_title": None,
+            "session_date": None,
+            "confidence": "low",
             "exercises": [],
             "credit_used": False,
             "balance_after": balance_after_spend,
@@ -1627,6 +1634,9 @@ async def parse_session_image(
         "image_id": image_id,
         "image_url": signed_url,
         "object_path": object_path,
+        "session_title": session_title,
+        "session_date": session_date,
+        "confidence": confidence,
         "exercises": exercises,
         "credit_used": credit_used,
         "balance_after": balance_after_spend,
