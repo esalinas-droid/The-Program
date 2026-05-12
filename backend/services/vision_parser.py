@@ -79,6 +79,18 @@ Return STRICT JSON in this shape — no commentary, no markdown fences:
   irrelevant image), return an empty exercises array AND confidence="low".
 - If the image is completely unrelated to fitness (a landscape, receipt, etc.),
   return {"session_title": null, "session_date": null, "confidence": "low", "exercises": []}.
+- DO NOT add warmup, cooldown, mobility, or stretch sections unless they are
+  EXPLICITLY listed in the image with named exercises and reps/duration. If the
+  image shows main lifts only, return main lifts only. It is correct and expected
+  for a parsed workout to have no warmup or cooldown — most written programs only
+  list the working sets.
+- DO NOT add "common" finisher exercises (e.g. abs, cardio, foam rolling) unless
+  they are visibly written in the image.
+- If you find yourself about to add an exercise because it "usually goes" with
+  the others, STOP. Return only what is verifiably visible.
+- Preserve the visual top-to-bottom order of exercises from the image. The order
+  in your "exercises" array MUST match the reading order of the image (top first,
+  bottom last). Do not group, reorganize, or sort exercises.
 """
 
 
