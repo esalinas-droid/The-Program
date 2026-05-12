@@ -11,6 +11,9 @@ from models.schemas import (
     ProgramChange as _ProgramChange,
 )
 from services.plan_generator import generate_plan as _generate_plan
+from services import image_credits as _image_credits
+from services import supabase_storage as _supabase_storage
+from services import vision_parser as _vision_parser
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile as FAUploadFile
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -1539,6 +1542,135 @@ async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
     return {"saved": len(docs_to_insert)}
 
+
+# ── Tracker Mode: parse workout image with OpenAI vision ─────────────────────
+@api_router.post("/tracker/parse-session-image")
+async def parse_session_image(
+    image: FAUploadFile = File(...),
+    userId: str = Depends(get_current_user),
+):
+    """
+    1. Validate image (type + size)
+    2. Grant first-use freebie if eligible
+    3. Check balance, return 402 if zero
+    4. Upload to Supabase Storage
+    5. Spend credit (stores object_path in transaction metadata)
+    6. Call vision parser
+    7. Refund credit if parse returns no exercises or errors
+    8. Return structured entries + image URL + balance
+    """
+    # ── Step 1: validate ──────────────────────────────────────────────────────
+    if image.content_type not in ("image/jpeg", "image/png", "image/heic"):
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {image.content_type}")
+    image_bytes = await image.read()
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image larger than 10 MB")
+    if len(image_bytes) < 1024:
+        raise HTTPException(status_code=400, detail="Image too small / corrupt")
+
+    # ── Step 2: maybe grant first-use freebie ─────────────────────────────────
+    granted = await _image_credits.maybe_grant_first_use_freebie(db, userId)
+
+    # ── Step 3: check balance ─────────────────────────────────────────────────
+    balance = await _image_credits.get_balance(db, userId)
+    if balance < 1:
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "Insufficient credits", "balance": balance, "granted_this_call": granted},
+        )
+
+    # ── Step 4: upload to Supabase Storage ───────────────────────────────────
+    try:
+        upload = _supabase_storage.upload_tracker_image(userId, image_bytes, image.content_type)
+    except Exception as e:
+        # Don't spend the credit if the upload itself failed
+        raise HTTPException(status_code=500, detail=f"Image upload failed: {e}")
+
+    image_id = upload["image_id"]
+    object_path = upload["object_path"]
+    signed_url = upload["signed_url"]
+
+    # ── Step 5: spend credit (metadata includes object_path for re-signing) ──
+    balance_after_spend = await _image_credits.spend_credit(
+        db, userId,
+        related_id=image_id,
+        reason="image_parse",
+        metadata={"object_path": object_path},
+    )
+
+    # ── Steps 6 + 7: parse + refund on failure ────────────────────────────────
+    credit_used = True
+    try:
+        exercises = await _vision_parser.parse_workout_image(image_bytes, model="gpt-4o-mini")
+        if not exercises:
+            balance_after_spend = await _image_credits.refund_credit(
+                db, userId, related_id=image_id, reason="zero_exercises"
+            )
+            credit_used = False
+    except Exception as e:
+        balance_after_spend = await _image_credits.refund_credit(
+            db, userId, related_id=image_id, reason="vision_error"
+        )
+        credit_used = False
+        return {
+            "image_id": image_id,
+            "image_url": signed_url,
+            "object_path": object_path,
+            "exercises": [],
+            "credit_used": False,
+            "balance_after": balance_after_spend,
+            "granted_this_call": granted,
+            "error": f"Vision parse failed: {str(e)[:200]}",
+        }
+
+    return {
+        "image_id": image_id,
+        "image_url": signed_url,
+        "object_path": object_path,
+        "exercises": exercises,
+        "credit_used": credit_used,
+        "balance_after": balance_after_spend,
+        "granted_this_call": granted,
+    }
+
+
+# ── Tracker Mode: credit balance lookup ──────────────────────────────────────
+@api_router.get("/tracker/credits")
+async def get_tracker_credits(userId: str = Depends(get_current_user)):
+    """Used by frontend to show balance + decide whether to show paywall."""
+    doc = await db.image_credits.find_one({"userId": userId}) or {}
+    return {
+        "balance": doc.get("balance", 0),
+        "first_grant_at": doc.get("first_grant_at"),
+        "total_lifetime_granted": doc.get("total_lifetime_granted", 0),
+        "total_lifetime_spent": doc.get("total_lifetime_spent", 0),
+        "total_lifetime_refunded": doc.get("total_lifetime_refunded", 0),
+    }
+
+
+# ── Tracker Mode: re-sign a previously uploaded image URL ────────────────────
+@api_router.get("/tracker/image/{image_id}/url")
+async def get_tracker_image_url(image_id: str, userId: str = Depends(get_current_user)):
+    """
+    Look up the spend transaction for this image_id (verifies ownership),
+    read object_path from transaction metadata, return a fresh signed URL.
+    """
+    txn = await db.credit_transactions.find_one({
+        "userId": userId,
+        "related_id": image_id,
+        "type": "spend",
+    })
+    if not txn:
+        raise HTTPException(status_code=404, detail="Image not found")
+    object_path = (txn.get("metadata") or {}).get("object_path")
+    if not object_path:
+        raise HTTPException(status_code=404, detail="Image path not recorded in transaction")
+    try:
+        signed_url = _supabase_storage.get_signed_url(object_path)
+        return {"signed_url": signed_url, "object_path": object_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not generate signed URL: {e}")
+
 @api_router.put("/log/{entry_id}")
 async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
@@ -2919,6 +3051,11 @@ async def load_models():
         logger.warning(f"[DOC PARSER] Could not verify parse dependencies: {_e}")
     # Plans are loaded on-demand when each user first makes a request
     logger.info("Startup complete — plans load on demand.")
+    # ── Phase 2 indexes: image credits + credit transactions ─────────────────
+    await db.image_credits.create_index("userId", unique=True)
+    await db.credit_transactions.create_index([("userId", 1), ("created_at", -1)])
+    await db.credit_transactions.create_index("related_id")
+    logger.info("Tracker Phase 2 indexes ensured.")
 
 # ── Coach Models ──────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
