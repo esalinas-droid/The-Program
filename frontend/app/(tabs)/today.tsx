@@ -1963,9 +1963,7 @@ export default function TodayScreen() {
       }
 
       const todayStr = getLocalDateString();
-      console.log('[DIAG-B] useFocusEffect fired. initialLoadDone:', initialLoadDone.current, 'lastLoadDate:', lastLoadDate.current, 'todayStr:', todayStr, 'trainingMode:', trainingMode);
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
-        console.log('[DIAG-B] >>>EARLY-RETURN BLOCK ENTERED<<< trainingMode in closure:', trainingMode);
         // Safety net: re-verify added sets are present in exercises state
         // (On Expo Go, a background/foreground cycle can reset state while
         //  AsyncStorage still has the persisted data)
@@ -2096,22 +2094,16 @@ export default function TodayScreen() {
         //  IMPORTANT: read trainingModeRef.current — not the trainingMode state
         //  variable — because the useCallback is memoised on [loadKey] and
         //  trainingMode would always be null (stale closure) here otherwise.)
-        console.log('[DIAG-B] Checking trainingModeRef guard:', trainingModeRef.current, '| trainingMode state (stale):', trainingMode);
         if (trainingModeRef.current === 'free') {
-          console.log('[DIAG-B] trainingModeRef===free → fetching tracker logs');
           setTrackerLogsLoading(true);
           try {
             const tLogs = await logApi.list({ startDate: todayStr, endDate: todayStr });
             const rawLogs = Array.isArray(tLogs) ? tLogs : [];
-            console.log('[DIAG-B] Raw logs count:', rawLogs.length, '| first 3 week values:', rawLogs.slice(0,3).map((l:any) => ({ week: l.week, typeof: typeof l.week })));
-            const filtered = rawLogs.filter((l: any) => Number(l.week) === 0);
-            console.log('[DIAG-B] After Number(l.week)===0 filter:', filtered.length, 'entries');
-            setTrackerLogs(filtered);
-          } catch (e) { console.warn('[DIAG-B] tracker fetch error:', e); setTrackerLogs([]); }
+            setTrackerLogs(rawLogs.filter((l: any) => Number(l.week) === 0));
+          } catch { setTrackerLogs([]); }
           finally { setTrackerLogsLoading(false); }
           return;
         }
-        console.log('[DIAG-B] trainingModeRef is NOT free (it is:', trainingModeRef.current, ') → skipping tracker fetch, returning early');
         return; // skip full rebuild — program mode
       }
 
@@ -2147,9 +2139,7 @@ export default function TodayScreen() {
         setTrackerLogsLoading(true);
         try {
           const logs = await logApi.list({ startDate: todayStr, endDate: todayStr });
-          const rawLogs2 = Array.isArray(logs) ? logs : [];
-          console.log('[DIAG-B] First-load tracker fetch: rawLogs count:', rawLogs2.length, '| week values:', rawLogs2.slice(0,3).map((l:any) => ({week:l.week, t:typeof l.week})));
-          setTrackerLogs(rawLogs2.filter((l: any) => Number(l.week) === 0));
+          setTrackerLogs(Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : []);
         } catch {
           setTrackerLogs([]);
         } finally {
