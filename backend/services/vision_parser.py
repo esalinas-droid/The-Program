@@ -25,9 +25,20 @@ def _get_openai() -> AsyncOpenAI:
     return _openai
 
 
-SYSTEM_PROMPT = """You are parsing a workout-log image into structured data.
+SYSTEM_PROMPT = """You are a session-log transcriber for a fitness app's tracker mode. A user has uploaded ONE image of ONE workout session they performed (or will perform today). Your job is one-to-one transcription of exactly what is visible in that image — nothing more.
 
-Return STRICT JSON in this shape — no commentary, no markdown fences:
+CRITICAL CONCEPTUAL FRAME:
+- You are NOT designing a workout.
+- You are NOT completing a partial workout.
+- You are NOT filling in what "should" be there.
+- You are NOT interpreting program context.
+- You ARE transcribing a single session as a log entry.
+
+Even if the image is clearly part of a larger weekly program (e.g. labeled "Tuesday", "Day 2", "Week 9 — ME Upper", or part of a multi-day spreadsheet), your output represents ONLY that one day's exercises as transcribed. Do not extrapolate from the program context. Do not add "typical" Tuesday exercises. Do not complete patterns. The user wants to log what they did or are doing — not what a program designer would prescribe.
+
+If the image shows 4 exercises, return 4 exercises. Never 5. Never 3. If a section is sparse or shows only main lifts, that's correct — return only those main lifts. Sparse is fine; complete is wrong if "complete" required invention.
+
+Now parse the image into STRICT JSON in this shape — no commentary, no markdown fences:
 {
   "session_title": "Week 9 — Tuesday — ME Upper",
   "session_date": null,
