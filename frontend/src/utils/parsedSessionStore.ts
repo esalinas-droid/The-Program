@@ -39,6 +39,10 @@ export interface ParsedSessionData {
 let _session: ParsedSessionData | null = null;
 
 export function setParsedSession(data: ParsedSessionData): void {
+  console.log('[DIAG-IMG] setParsedSession called:', {
+    hasExercises: Array.isArray(data.exercises),
+    count: data.exercises?.length ?? 0,
+  });
   _session = data;
 }
 

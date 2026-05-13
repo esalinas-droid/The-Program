@@ -2878,6 +2878,15 @@ export default function TodayScreen() {
 
       const data = await res.json();
 
+      // [DIAG-IMG] Log 1 — raw backend response shape
+      console.log('[DIAG-IMG] response from backend:', {
+        hasExercises: Array.isArray(data.exercises),
+        count: data.exercises?.length ?? 0,
+        firstExercise: data.exercises?.[0]?.name,
+        session_title: data.session_title,
+        confidence: data.confidence,
+      });
+
       // 5. Store parsed data and navigate to review
       setParsedSession({
         session_title: data.session_title || null,

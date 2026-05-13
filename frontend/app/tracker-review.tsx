@@ -550,6 +550,14 @@ export default function TrackerReviewScreen() {
   // Read parsed session from module store
   const parsed = getParsedSession();
 
+  // [DIAG-IMG] Log 3 — what the review screen sees on mount
+  console.log('[DIAG-IMG] tracker-review mounted, parsed:', {
+    parsedIsNull: parsed === null,
+    hasExercises: Array.isArray(parsed?.exercises),
+    count: parsed?.exercises?.length ?? 0,
+    firstExercise: parsed?.exercises?.[0]?.name,
+  });
+
   // ── State ─────────────────────────────────────────────────────────────────
   const [exercises,      setExercises]      = useState<SessionExercise[]>(() =>
     (parsed?.exercises ?? []).map(convertParsedExercise)
