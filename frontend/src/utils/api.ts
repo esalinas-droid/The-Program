@@ -161,8 +161,19 @@ export const logApi = {
   create: (entry: any) => api('/log', { method: 'POST', body: JSON.stringify(entry) }),
   update: (id: string, entry: any) => api(`/log/${id}`, { method: 'PUT', body: JSON.stringify(entry) }),
   delete: (id: string) => api(`/log/${id}`, { method: 'DELETE' }),
-  createBulk: (entries: any[]) =>
-    api('/log/session-bulk', { method: 'POST', body: JSON.stringify({ entries }) }),
+  /**
+   * Bulk-insert session entries.
+   * imageId and sessionTitle (optional) are injected into every entry so the
+   * backend can link log records back to the Supabase image and user-edited title.
+   */
+  createBulk: (entries: any[], imageId?: string, sessionTitle?: string) => {
+    const enriched = entries.map(e => ({
+      ...e,
+      ...(imageId     ? { imageId }     : {}),
+      ...(sessionTitle ? { sessionTitle } : {}),
+    }));
+    return api('/log/session-bulk', { method: 'POST', body: JSON.stringify({ entries: enriched }) });
+  },
   weekStats: (week: number, startDate?: string, endDate?: string) => {
     let qs = `/log/stats/week/${week}`;
     if (startDate && endDate) {

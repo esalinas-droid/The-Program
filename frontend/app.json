@@ -16,6 +16,7 @@
       "infoPlist": {
         "NSUserNotificationUsageDescription": "Get training reminders and PR alerts",
         "NSMicrophoneUsageDescription": "Speak questions to your Pocket Coach",
+        "NSPhotoLibraryUsageDescription": "Upload workout photos to scan with AI",
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
           "remote-notification"
@@ -40,7 +41,8 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "SCHEDULE_EXACT_ALARM",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "READ_MEDIA_IMAGES"
       ],
       "versionCode": 32
     },

@@ -31,6 +31,7 @@ import {
   ExtractionConfidence,
 } from '../../../src/utils/api';
 import { getProfile, saveProfile } from '../../../src/utils/storage';
+import { setParsedSession } from '../../../src/utils/parsedSessionStore';
 import { StartFromPicker } from '../../../src/components/StartFromPicker';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -126,6 +127,29 @@ export default function BuildPlanScreen() {
     setSmartDefault(1);
     try {
       const res = await documentsApi.buildPlan(id);
+
+      // ── Single-session / skeleton detection ─────────────────────────────
+      // When the document is a single session (not a multi-week program), the
+      // backend sets is_likely_single_session=true and proposedPlan=null.
+      // We redirect to /tracker-review so the user can save it as a workout log
+      // entry rather than forcing an unusable skeleton plan.
+      if ((res as any).is_likely_single_session) {
+        setParsedSession({
+          session_title: null,
+          session_date:  null,
+          confidence:    'medium',  // single-session ≠ bad parse; just needs review
+          exercises:     [],        // backend doesn't return raw_exercises yet
+        });
+        router.replace({
+          pathname: '/tracker-review' as any,
+          params: {
+            source: 'plan_preview',
+            userHasActiveProgram: String(!!(res as any).user_has_active_program),
+          },
+        });
+        return;
+      }
+
       setResponse(res);
       setPlanName(res.proposedPlan?.name ?? 'Imported Program');
       setPhase('preview');

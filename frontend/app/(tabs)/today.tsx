@@ -7,7 +7,10 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
+import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { getAuthToken } from '../../src/utils/auth';
+import { setParsedSession } from '../../src/utils/parsedSessionStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
@@ -1593,6 +1596,7 @@ export default function TodayScreen() {
   // Tracker mode: today's logged exercises
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
   const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -2824,6 +2828,81 @@ export default function TodayScreen() {
   // ── Injury warnings ──────────────────────────────────────────────────────────
   const warnings = todaySession ? getInjuryWarnings(todaySession, injuryFlags) : [];
 
+  // ── Tracker Mode: Image upload handler ───────────────────────────────────────
+  const handleImageUpload = useCallback(async () => {
+    // 1. Request media library permissions
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please allow access to your photo library to scan workout logs.');
+      return;
+    }
+
+    // 2. Launch image picker
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: false,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+
+    setIsUploadingImage(true);
+    try {
+      // 3. Build FormData
+      const formData = new FormData();
+      formData.append('image', {
+        uri: asset.uri,
+        type: asset.mimeType || 'image/jpeg',
+        name: 'workout.jpg',
+      } as any);
+
+      // 4. Upload to backend (multipart — do NOT set Content-Type header)
+      const token   = await getAuthToken();
+      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+      const res = await fetch(`${baseUrl}/api/tracker/parse-session-image`, {
+        method: 'POST',
+        body: formData,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        if (res.status === 402) {
+          Alert.alert('No credits', 'You\'ve used all 3 free image scans. More credits coming in a future update.');
+        } else {
+          const txt = await res.text();
+          throw new Error(txt || 'Upload failed');
+        }
+        return;
+      }
+
+      const data = await res.json();
+
+      // 5. Store parsed data and navigate to review
+      setParsedSession({
+        session_title: data.session_title || null,
+        session_date:  data.session_date  || null,
+        confidence:    data.confidence    || 'low',
+        exercises:     data.exercises     || [],
+        image_id:      data.image_id,
+      });
+
+      router.push({
+        pathname: '/tracker-review',
+        params: {
+          source: 'tracker_upload',
+          imageId: data.image_id || '',
+          userHasActiveProgram: 'false',
+        },
+      } as any);
+
+    } catch (e: any) {
+      Alert.alert('Scan failed', e?.message || 'Could not parse the image. Please try again.');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  }, [router]);
+
   // ── Loading guard (B1/B2 fix) ────────────────────────────────────────────────
   // Block render until profile is loaded: prevents mode flicker and keeps
   // the loading state while tracker-mode users skip program API calls.
@@ -2912,6 +2991,21 @@ export default function TodayScreen() {
               <Text style={{ color: GOLD, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }}>Add another exercise</Text>
             </TouchableOpacity>
 
+            {/* Scan a workout photo */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10', marginTop: 2 }}
+              onPress={handleImageUpload}
+              disabled={isUploadingImage}
+              activeOpacity={0.75}
+            >
+              {isUploadingImage
+                ? <ActivityIndicator size="small" color={GOLD} />
+                : <MaterialCommunityIcons name="camera-outline" size={18} color={GOLD} />}
+              <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>
+                {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
+              </Text>
+            </TouchableOpacity>
+
             {/* Log different session */}
             <TouchableOpacity
               style={{ alignItems: 'center', paddingVertical: SPACING.md }}
@@ -2939,6 +3033,20 @@ export default function TodayScreen() {
               activeOpacity={0.85}
             >
               <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
+            </TouchableOpacity>
+            {/* Scan workout photo */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '12', paddingHorizontal: 20, paddingVertical: 12 }}
+              onPress={handleImageUpload}
+              disabled={isUploadingImage}
+              activeOpacity={0.8}
+            >
+              {isUploadingImage
+                ? <ActivityIndicator size="small" color={GOLD} />
+                : <MaterialCommunityIcons name="camera-outline" size={18} color={GOLD} />}
+              <Text style={{ color: GOLD, fontSize: 14, fontWeight: '600' }}>
+                {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
