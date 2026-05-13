@@ -551,12 +551,14 @@ export default function TrackerReviewScreen() {
   const parsed = getParsedSession();
 
   // [DIAG-IMG] Log 3 — what the review screen sees on mount
-  console.log('[DIAG-IMG] tracker-review mounted, parsed:', {
-    parsedIsNull: parsed === null,
-    hasExercises: Array.isArray(parsed?.exercises),
-    count: parsed?.exercises?.length ?? 0,
-    firstExercise: parsed?.exercises?.[0]?.name,
-  });
+  React.useEffect(() => {
+    Alert.alert(
+      '[DIAG-IMG] 3/3 review mount',
+      `parsedIsNull: ${parsed === null}\n` +
+      `count: ${parsed?.exercises?.length ?? 0}\n` +
+      `first: ${parsed?.exercises?.[0]?.name ?? 'none'}`
+    );
+  }, []);
 
   // ── State ─────────────────────────────────────────────────────────────────
   const [exercises,      setExercises]      = useState<SessionExercise[]>(() =>
