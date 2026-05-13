@@ -226,6 +226,8 @@ class WorkoutLogEntry(BaseDocument):
     distance: Optional[float] = None        # distance value (distance exercises)
     unit: Optional[str] = None              # unit string (sec/min, ft/m/yd, in/cm)
     side: Optional[str] = None              # left|right|both (per-side modifier)
+    imageId: Optional[str] = None           # tracker-review: Supabase image UUID
+    sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -250,6 +252,8 @@ class WorkoutLogCreate(BaseModel):
     distance: Optional[float] = None        # distance value (distance exercises)
     unit: Optional[str] = None              # unit string (sec/min, ft/m/yd, in/cm)
     side: Optional[str] = None              # left|right|both (per-side modifier)
+    imageId: Optional[str] = None           # tracker-review: Supabase image UUID
+    sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
 
 class CheckIn(BaseDocument):
     week: int
@@ -3065,6 +3069,7 @@ async def load_models():
     await db.image_credits.create_index("userId", unique=True)
     await db.credit_transactions.create_index([("userId", 1), ("created_at", -1)])
     await db.credit_transactions.create_index("related_id")
+    await db.log.create_index([("userId", 1), ("imageId", 1)], sparse=True)
     logger.info("Tracker Phase 2 indexes ensured.")
 
 # ── Coach Models ──────────────────────────────────────────────────────────────

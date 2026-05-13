@@ -93,6 +93,9 @@ RULES:
        to be a multi-week training program. It contains [single session / workout log / fragment
        with N exercises]. The user should upload a complete multi-week program document, or use
        Tracker Mode to log this as a session."
+     - ALSO populate raw_exercises with the flat list of all exercises and their sets visible in
+       the document, even when skeleton mode triggers. This lets the frontend surface them as a
+       tracker session for the user to review.
 5. Use the lifter profile to sanity-check intensity — if the document prescribes 5×5 @ 200kg but the lifter squats 100kg, note that in assumptions.
 6. Return ALL JSON fields even if you have to leave some as defaults.
 7. The document may be a SINGLE workout session rather than a multi-week program.
@@ -139,6 +142,15 @@ OUTPUT SCHEMA (return ONLY this JSON, nothing else):
     }
   ],
   "weeklyRotation": ["<templateId per training day, e.g. A, B, A, B for 4-day week>"],
+  "raw_exercises": [
+    {
+      "name": "<exercise name exactly as written>",
+      "prescriptionType": "<weighted|timed|distance|height|calories|emom|amrap|for_time>",
+      "sets": [
+        {"weight": <number or null>, "reps": <number or null>, "rpe": <number or null>}
+      ]
+    }
+  ],
   "confidence": {
     "summary": "<2-3 sentence plain-English description of what this program is and what you extracted>",
     "high": ["<list of fields extracted with high confidence>"],
