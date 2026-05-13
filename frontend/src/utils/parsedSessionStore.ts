@@ -8,8 +8,6 @@
  *   clearParsedSession()     → after save or cancel
  */
 
-import { Alert } from 'react-native';
-
 export interface ParsedSet {
   weight?: number | null;
   reps?: number | null;
@@ -41,11 +39,6 @@ export interface ParsedSessionData {
 let _session: ParsedSessionData | null = null;
 
 export function setParsedSession(data: ParsedSessionData): void {
-  // [DIAG-IMG] Log 2 — confirm store receives exercises
-  Alert.alert(
-    '[DIAG-IMG] 2/3 store set',
-    `count: ${data.exercises?.length ?? 0}`
-  );
   _session = data;
 }
 

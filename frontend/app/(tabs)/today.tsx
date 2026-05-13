@@ -2878,15 +2878,6 @@ export default function TodayScreen() {
 
       const data = await res.json();
 
-      // [DIAG-IMG] Log 1 — raw backend response shape
-      Alert.alert(
-        '[DIAG-IMG] 1/3 backend response',
-        `count: ${data.exercises?.length ?? 0}\n` +
-        `first: ${data.exercises?.[0]?.name ?? 'none'}\n` +
-        `title: ${data.session_title}\n` +
-        `confidence: ${data.confidence}`
-      );
-
       // 5. Store parsed data and navigate to review
       setParsedSession({
         session_title: data.session_title || null,

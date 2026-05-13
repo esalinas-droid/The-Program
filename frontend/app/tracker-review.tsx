@@ -550,16 +550,6 @@ export default function TrackerReviewScreen() {
   // Read parsed session from module store
   const parsed = getParsedSession();
 
-  // [DIAG-IMG] Log 3 — what the review screen sees on mount
-  React.useEffect(() => {
-    Alert.alert(
-      '[DIAG-IMG] 3/3 review mount',
-      `parsedIsNull: ${parsed === null}\n` +
-      `count: ${parsed?.exercises?.length ?? 0}\n` +
-      `first: ${parsed?.exercises?.[0]?.name ?? 'none'}`
-    );
-  }, []);
-
   // ── State ─────────────────────────────────────────────────────────────────
   const [exercises,      setExercises]      = useState<SessionExercise[]>(() =>
     (parsed?.exercises ?? []).map(convertParsedExercise)
