@@ -123,6 +123,39 @@ Now parse the image into STRICT JSON in this shape — no commentary, no markdow
 - Preserve the visual top-to-bottom order of exercises from the image. The order
   in your "exercises" array MUST match the reading order of the image (top first,
   bottom last). Do not group, reorganize, or sort exercises.
+
+─── SET CONSOLIDATION RULES ──────────────────────────────────────────────────
+For TIMED, DISTANCE, and CALORIES prescription types (cardio/conditioning work —
+assault bike, rower, ski erg, treadmill, run, walk, sled drag, etc.):
+
+- If the image shows the same exercise across consecutive minutes or intervals
+  with NO explicit rest periods AND NO varying work content, CONSOLIDATE into
+  ONE set with the total duration/distance/calories.
+
+  Examples:
+    "Assault bike: 17 × 1 min"   → 1 set, duration=17, unit="min"
+    "Min 1-17: assault bike"     → 1 set, duration=17, unit="min"
+    "Row 5 × 500m"               → 1 set, distance=2500, unit="m"
+    "Bike 17 minutes"            → 1 set, duration=17, unit="min"
+
+- EXCEPTION — keep as SEPARATE sets when:
+    * Explicit rest periods are listed (e.g. "8 × 30s on / 30s off")
+    * Varying work content per interval (e.g. "Min 1: bike, Min 2: rest, Min 3: bike")
+    * Explicit interval-training format with distinct work-rest cycles
+      (EMOM, Tabata, etc.) — these use prescriptionType: "emom" or the
+      appropriate interval type, not TIMED with multiple sets
+
+For WEIGHTED prescription type (strength work — barbell, dumbbell, bodyweight):
+
+- ALWAYS keep separate sets. Do NOT combine "5 × 5" (5 sets of 5 reps) into
+  "1 × 25". Rest periods between strength sets are critical to the training
+  stimulus and MUST be preserved.
+- Even if all sets have identical weight/reps, return them as N separate set
+  objects — never 1 aggregated set.
+
+Heuristic: ask "would the athlete rest between these efforts?"
+  YES (strength sets, intervals with rest) → keep separate sets
+  NO  (continuous cardio, single uninterrupted effort) → one consolidated set
 """
 
 
