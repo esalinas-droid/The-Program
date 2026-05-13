@@ -409,6 +409,40 @@ async def build_plan_from_document(
         confidence = extracted.get("confidence", {})
         skeleton_mode = bool(confidence.get("couldn_extract_sessions", False))
 
+        if skeleton_mode:
+            # ── Single-session / insufficient document — do NOT build a plan ──
+            # Do not call build_annual_plan. Do not save anything. Return
+            # diagnostic info only so the frontend can surface the right UX.
+            logger.info(
+                "[BUILD PLAN] user=%s doc=%s skeleton=True (single-session/insufficient) — "
+                "skipping build_annual_plan. summary=%s",
+                userId, doc_id, confidence.get("summary", "")[:120],
+            )
+            await log_extraction(
+                db              = db,
+                user_id         = userId,
+                doc_id          = doc_id,
+                input_chars     = extraction_meta.get("input_chars", 0),
+                output_chars    = extraction_meta.get("output_chars", 0),
+                latency_seconds = extraction_meta.get("latency_seconds", 0),
+                approx_cost_usd = extraction_meta.get("approx_cost_usd", 0),
+                success         = True,
+                skeleton_mode   = True,
+            )
+            active_plan = await db.saved_plans.find_one({"userId": userId, "status": "active"})
+            return {
+                "proposedPlan":           None,
+                "confidence":             confidence,
+                "documentId":             doc_id,
+                "skeletonMode":           True,
+                "skeleton_mode":          True,
+                "is_likely_single_session": True,
+                "extraction_summary":     confidence.get("summary"),
+                "user_has_active_program": bool(active_plan),
+                "approxCostUsd":          extraction_meta.get("approx_cost_usd", 0),
+                "latencySeconds":         extraction_meta.get("latency_seconds", 0),
+            }
+
         # Build the full AnnualPlan from the extracted structure
         plan_dict = build_annual_plan(
             extracted = extracted,
@@ -459,13 +493,19 @@ async def build_plan_from_document(
     # Strip internal metadata key from the plan dict before returning
     plan_dict.pop("_has_sessions", None)
 
+    active_plan = await db.saved_plans.find_one({"userId": userId, "status": "active"})
+
     return {
-        "proposedPlan":      plan_dict,
-        "confidence":        confidence,
-        "documentId":        doc_id,
-        "skeletonMode":      skeleton_mode,
-        "approxCostUsd":     extraction_meta.get("approx_cost_usd", 0),
-        "latencySeconds":    extraction_meta.get("latency_seconds", 0),
+        "proposedPlan":             plan_dict,
+        "confidence":               confidence,
+        "documentId":               doc_id,
+        "skeletonMode":             skeleton_mode,
+        "skeleton_mode":            skeleton_mode,
+        "is_likely_single_session": skeleton_mode,
+        "extraction_summary":       confidence.get("summary"),
+        "user_has_active_program":  bool(active_plan),
+        "approxCostUsd":            extraction_meta.get("approx_cost_usd", 0),
+        "latencySeconds":           extraction_meta.get("latency_seconds", 0),
     }
 
 

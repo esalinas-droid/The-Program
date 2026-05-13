@@ -79,9 +79,32 @@ RULES:
 1. Be conservative — better to extract less accurately than to hallucinate specifics.
 2. Never invent exercise weights or percentages that aren't in the source text.
 3. When the source is ambiguous about weekly rotation, use the simplest repeating pattern.
-4. If you cannot find session exercises, still fill sessionTemplates as best you can with the exercises mentioned anywhere in the document.
+4. If the document does NOT contain enough information to build a structured multi-week program
+   (e.g. it shows only a single session, only a handful of exercises with no week structure, or
+   only a workout log entry), DO NOT fabricate phases, sessionTemplates, or rotation. Instead:
+     - Set confidence.couldn_extract_sessions = true
+     - Leave phases as []
+     - Leave sessionTemplates as []
+     - Leave weeklyRotation as []
+     - Leave deloadWeeks as []
+     - Leave milestones as []
+     - Set totalWeeks and trainingDaysPerWeek to 0
+     - In confidence.summary, state clearly what was found, e.g.: "This document does not appear
+       to be a multi-week training program. It contains [single session / workout log / fragment
+       with N exercises]. The user should upload a complete multi-week program document, or use
+       Tracker Mode to log this as a session."
 5. Use the lifter profile to sanity-check intensity — if the document prescribes 5×5 @ 200kg but the lifter squats 100kg, note that in assumptions.
 6. Return ALL JSON fields even if you have to leave some as defaults.
+7. The document may be a SINGLE workout session rather than a multi-week program.
+   Single-session indicators:
+     - Only one workout listed, no week or day rotation
+     - Title like "Tuesday Workout" or "Today's Session"
+     - Specific date with completed sets (e.g. "5/12 — Bench 225x5") rather than prescribed
+       sets across multiple weeks
+     - Fewer than 3 distinct training sessions visible
+   If you detect any of these, follow rule #4's empty-result path. Do NOT extrapolate weekly
+   rotation from a single day. Do NOT assume the user wants you to design a program for them
+   based on the exercises shown.
 
 OUTPUT SCHEMA (return ONLY this JSON, nothing else):
 {
