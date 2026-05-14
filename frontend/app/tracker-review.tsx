@@ -667,6 +667,18 @@ export default function TrackerReviewScreen() {
           ` and the weights match what was saved)`
         );
 
+        // [DIAG-EDIT] 4.5/4 — timed entry specifically: show raw duration + unit from DB
+        const fetchedTimed = fetchedEntries.find((e: any) =>
+          e.exercise && /assault|bike|sled/i.test(e.exercise)
+        ) || fetchedEntries.find((e: any) => e.duration != null);
+        Alert.alert(
+          '[DIAG-EDIT] 4.5/4 timed entry from DB',
+          `exercise: ${fetchedTimed?.exercise}\n` +
+          `id: ${fetchedTimed?.id}\n` +
+          `duration: ${fetchedTimed?.duration}\n` +
+          `unit: ${fetchedTimed?.unit}`
+        );
+
         const exs = logsToExercises(fetchedEntries);
         setExercises(exs);
 
@@ -820,16 +832,16 @@ export default function TrackerReviewScreen() {
         `(verify edited value is in entries)`
       );
 
-      // [DIAG-EDIT] 1.5/4 — show first WEIGHTED entry so we can see the edited exercise
-      const firstWeighted = entries.find((e: any) =>
-        !e.duration && (e.weight > 0 || e.reps > 0)
-      ) || entries[10];
+      // [DIAG-EDIT] 1.5/4 — show the TIMED assault bike entry so we can see edited duration
+      const firstTimed = entries.find((e: any) =>
+        e.exercise && /assault|bike|sled/i.test(e.exercise)
+      ) || entries.find((e: any) => e.duration != null);
       Alert.alert(
-        '[DIAG-EDIT] 1.5/4 sample weighted entry',
-        `exercise: ${firstWeighted?.exercise}\n` +
-        `weight: ${firstWeighted?.weight}\n` +
-        `reps: ${firstWeighted?.reps}\n` +
-        `rpe: ${firstWeighted?.rpe}`
+        '[DIAG-EDIT] 1.5/4 timed entry (assault bike)',
+        `exercise: ${firstTimed?.exercise}\n` +
+        `duration: ${firstTimed?.duration}\n` +
+        `unit: ${firstTimed?.unit}\n` +
+        `(verify the edited duration is in entries)`
       );
 
       const result = await logApi.updateSession(editingLogIds, entries);
