@@ -664,29 +664,6 @@ export default function TrackerReviewScreen() {
         const fetchedEntries: any[] = await logApi.byIds(editingLogIds);
         if (cancelled) return;
 
-        // [DIAG-EDIT] 4/4 — verify the IDs match and weights reflect what was saved
-        Alert.alert(
-          '[DIAG-EDIT] 4/4 by-ids returned',
-          `count: ${fetchedEntries.length}\n` +
-          `first ID: ${fetchedEntries[0]?.id}\n` +
-          `first weight: ${fetchedEntries[0]?.weight}\n` +
-          `first reps: ${fetchedEntries[0]?.reps}\n` +
-          `(verify the IDs match what today passed in,\n` +
-          ` and the weights match what was saved)`
-        );
-
-        // [DIAG-EDIT] 4.5/4 — timed entry specifically: show raw duration + unit from DB
-        const fetchedTimed = fetchedEntries.find((e: any) =>
-          e.exercise && /assault|bike|sled/i.test(e.exercise)
-        ) || fetchedEntries.find((e: any) => e.duration != null);
-        Alert.alert(
-          '[DIAG-EDIT] 4.5/4 timed entry from DB',
-          `exercise: ${fetchedTimed?.exercise}\n` +
-          `id: ${fetchedTimed?.id}\n` +
-          `duration: ${fetchedTimed?.duration}\n` +
-          `unit: ${fetchedTimed?.unit}`
-        );
-
         const exs = logsToExercises(fetchedEntries);
         setExercises(exs);
 
@@ -828,41 +805,7 @@ export default function TrackerReviewScreen() {
       // Preserve the original week (0 = tracker) from the session
       const entries = buildEntries(exercises, date, 0, title, undefined);
 
-      // [DIAG-EDIT] 1/4 — verify edited values reached entries
-      Alert.alert(
-        '[DIAG-EDIT] 1/4 about to save',
-        `editingLogIds count: ${editingLogIds.length}\n` +
-        `first old ID: ${editingLogIds[0]}\n` +
-        `entries count: ${entries.length}\n` +
-        `first entry exercise: ${entries[0]?.exercise}\n` +
-        `first entry weight: ${entries[0]?.weight}\n` +
-        `first entry reps: ${entries[0]?.reps}\n` +
-        `(verify edited value is in entries)`
-      );
-
-      // [DIAG-EDIT] 1.5/4 — show the TIMED assault bike entry so we can see edited duration
-      const firstTimed = entries.find((e: any) =>
-        e.exercise && /assault|bike|sled/i.test(e.exercise)
-      ) || entries.find((e: any) => e.duration != null);
-      Alert.alert(
-        '[DIAG-EDIT] 1.5/4 timed entry (assault bike)',
-        `exercise: ${firstTimed?.exercise}\n` +
-        `duration: ${firstTimed?.duration}\n` +
-        `unit: ${firstTimed?.unit}\n` +
-        `(verify the edited duration is in entries)`
-      );
-
-      const result = await logApi.updateSession(editingLogIds, entries);
-
-      // [DIAG-EDIT] 2/4 — verify the API actually persisted
-      Alert.alert(
-        '[DIAG-EDIT] 2/4 save response',
-        `deleted: ${(result as any)?.deleted ?? '?'}\n` +
-        `inserted: ${(result as any)?.inserted ?? '?'}\n` +
-        `ok: ${(result as any)?.ok}\n` +
-        `(verify the API actually persisted)`
-      );
-
+      await logApi.updateSession(editingLogIds, entries);
       router.back();
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
