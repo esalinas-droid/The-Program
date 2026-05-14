@@ -1,18 +1,17 @@
 /**
- * tracker-review.tsx — Phase 2
- * Review, edit, and save an AI-parsed workout session.
+ * tracker-review.tsx — Phase 2 + Edit Mode
+ * Review, edit, and save an AI-parsed or existing workout session.
  *
  * Entry points:
  *   source='tracker_upload'  → came from Today tab image upload
  *   source='plan_preview'    → came from build-plan.tsx single-session detection
- *
- * Parsed session data travels via parsedSessionStore (module-level, avoids URL
- * serialization issues with large objects).
+ *   editingLogIds present    → edit mode: re-opens a saved tracker session
  *
  * Route params:
  *   source:               'tracker_upload' | 'plan_preview'
- *   imageId:              string (Supabase image UUID, tracker_upload only)
+ *   imageId:              string (Supabase UUID, tracker_upload only)
  *   userHasActiveProgram: 'true' | 'false'
+ *   editingLogIds:        JSON-stringified string[] of existing log entry IDs
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
@@ -223,6 +222,70 @@ function buildEntries(
     });
   }
   return entries;
+}
+
+// ── Edit-mode: reverse-convert saved log entries → SessionExercise[] ─────────
+function logsToExercises(logs: any[]): SessionExercise[] {
+  // Preserve original order (setIndex within each exercise group)
+  const sorted = [...logs].sort((a, b) => (a.setIndex ?? 0) - (b.setIndex ?? 0));
+  const orderKeys: string[] = [];
+  const groups = new Map<string, SessionExercise>();
+
+  for (const log of sorted) {
+    const pt  = (log.prescriptionType || 'weighted') as PrescriptionType;
+    const key = `${log.exercise}||${pt}`;
+
+    if (!groups.has(key)) {
+      _exCounter++;
+      orderKeys.push(key);
+      groups.set(key, {
+        id: `ex-edit-${Date.now()}-${_exCounter}`,
+        name: log.exercise,
+        category: 'main',
+        prescriptionType: pt,
+        modifiers: [],
+        sets: [],
+      });
+    }
+
+    const ex = groups.get(key)!;
+    _setCounter++;
+    const set = makeDefaultSet();
+
+    switch (pt) {
+      case 'weighted': case 'emom': case 'amrap': case 'for_time':
+        set.weight = log.weight != null && log.weight !== 0 ? String(log.weight) : '';
+        set.reps   = log.reps   != null && log.reps   !== 0 ? String(log.reps)   : '';
+        set.rpe    = log.rpe    != null && log.rpe    !== 0 ? String(log.rpe)    : '';
+        break;
+      case 'timed':
+        set.duration     = log.duration != null ? String(log.duration) : '';
+        set.durationUnit = (log.unit === 'min' ? 'min' : 'sec') as 'sec' | 'min';
+        set.side         = log.side || '';
+        break;
+      case 'distance':
+        set.distance     = log.distance != null ? String(log.distance) : '';
+        set.distanceUnit = (['ft','m','yd'] as const).includes(log.unit) ? log.unit : 'ft';
+        set.load         = log.weight != null && log.weight !== 0 ? String(log.weight) : '';
+        set.side         = log.side || '';
+        break;
+      case 'height':
+        set.heightVal  = log.weight != null && log.weight !== 0 ? String(log.weight) : '';
+        set.heightUnit = (log.unit === 'cm' ? 'cm' : 'in') as 'in' | 'cm';
+        set.reps       = log.reps != null && log.reps !== 0 ? String(log.reps) : '';
+        set.rpe        = log.rpe  != null && log.rpe  !== 0 ? String(log.rpe)  : '';
+        break;
+      case 'calories':
+        set.calories    = log.reps != null && log.reps !== 0 ? String(log.reps) : '';
+        if (log.unit?.startsWith('elapsed:')) {
+          set.elapsedTime = log.unit.split(':')[1] || '';
+        }
+        break;
+    }
+    ex.sets.push(set);
+  }
+
+  return orderKeys.map(k => groups.get(k)!);
 }
 
 // ── Sub-components (mirrors tracker-session.tsx) ──────────────────────────────
@@ -542,17 +605,25 @@ export default function TrackerReviewScreen() {
     source: string;
     imageId: string;
     userHasActiveProgram: string;
+    editingLogIds: string;
   }>();
   const source               = (params.source || 'tracker_upload') as 'tracker_upload' | 'plan_preview';
   const imageId              = params.imageId || undefined;
   const userHasActiveProgram = params.userHasActiveProgram === 'true';
 
-  // Read parsed session from module store
-  const parsed = getParsedSession();
+  // Edit mode: JSON-stringified array of existing log IDs
+  const editingLogIds: string[] = (() => {
+    try { return params.editingLogIds ? JSON.parse(params.editingLogIds) as string[] : []; }
+    catch { return []; }
+  })();
+  const isEditMode = editingLogIds.length > 0;
+
+  // Read parsed session from module store (new-parse path only)
+  const parsed = isEditMode ? null : getParsedSession();
 
   // ── State ─────────────────────────────────────────────────────────────────
   const [exercises,      setExercises]      = useState<SessionExercise[]>(() =>
-    (parsed?.exercises ?? []).map(convertParsedExercise)
+    isEditMode ? [] : (parsed?.exercises ?? []).map(convertParsedExercise)
   );
   const [sessionTitle,   setSessionTitle]   = useState<string>(
     parsed?.session_title || ''
@@ -568,10 +639,45 @@ export default function TrackerReviewScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showAddSheet,   setShowAddSheet]   = useState(false);
   const [saving,         setSaving]         = useState(false);
+  // Edit mode: true while fetching existing entries on first mount
+  const [isLoadingEdit,  setIsLoadingEdit]  = useState(isEditMode);
 
   const confidence = parsed?.confidence || 'high';
 
   const titleInputRef = useRef<TextInput>(null);
+
+  // ── Edit mode: load existing log entries on mount ──────────────────────────
+  useEffect(() => {
+    if (!isEditMode) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const logs: any[] = await logApi.byIds(editingLogIds);
+        if (cancelled) return;
+
+        const exs = logsToExercises(logs);
+        setExercises(exs);
+
+        // Pre-populate title + date from the first entry
+        if (logs.length > 0) {
+          const first = logs[0];
+          if (first.sessionTitle) setSessionTitle(first.sessionTitle);
+          if (first.date) {
+            const d = new Date(first.date + 'T12:00:00');
+            if (!isNaN(d.getTime())) setSelectedDate(d);
+          }
+        }
+      } catch {
+        if (!cancelled) Alert.alert('Error', 'Could not load session for editing.');
+      } finally {
+        if (!cancelled) setIsLoadingEdit(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Exercise management ────────────────────────────────────────────────────
   const handleAddExercise = useCallback((added: AddedExercise) => {
@@ -681,37 +787,48 @@ export default function TrackerReviewScreen() {
     }
   };
 
+  // Edit mode save: replace old entries with new ones atomically
+  const handleSaveEditMode = async () => {
+    if (!validateBeforeSave()) return;
+    setSaving(true);
+    try {
+      const date    = toISODate(selectedDate);
+      const title   = sessionTitle.trim() || null;
+      // Preserve the original week (0 = tracker) from the session
+      const entries = buildEntries(exercises, date, 0, title, undefined);
+      await logApi.updateSession(editingLogIds, entries);
+      router.back();
+    } catch (e: any) {
+      Alert.alert('Save failed', e?.message || 'Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCancel = () => {
     clearParsedSession();
     router.back();
   };
 
   // ── CTA copy ───────────────────────────────────────────────────────────────
-  const dateToken = ctaDateLabel(selectedDate);
+  const dateToken   = ctaDateLabel(selectedDate);
   const isDateToday = dateToken === 'today';
 
-  // CASE A / B: plan_preview
-  // CASE C: tracker_upload
-  const showSecondary =
-    source === 'plan_preview' && userHasActiveProgram;
+  // Edit mode: always "Save changes", no secondary, no Case A/B/C
+  const showSecondary = !isEditMode && source === 'plan_preview' && userHasActiveProgram;
 
   const primaryLabel = (() => {
-    if (source === 'tracker_upload') {
-      return `Save to ${dateToken}`;
-    }
+    if (isEditMode) return 'Save changes';
+    if (source === 'tracker_upload') return `Save to ${dateToken}`;
     if (userHasActiveProgram) {
-      // CASE A
-      return isDateToday
-        ? "Save to today's program"
-        : `Save to ${dateToken}'s program`;
+      return isDateToday ? "Save to today's program" : `Save to ${dateToken}'s program`;
     }
-    // CASE B
-    return `Save in Tracker Mode`;
+    return 'Save in Tracker Mode';
   })();
 
-  const primaryOnPress = source === 'plan_preview' && userHasActiveProgram
-    ? handleSaveProgramMode
-    : handleSaveTrackerMode;
+  const primaryOnPress = isEditMode
+    ? handleSaveEditMode
+    : (source === 'plan_preview' && userHasActiveProgram ? handleSaveProgramMode : handleSaveTrackerMode);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -726,10 +843,20 @@ export default function TrackerReviewScreen() {
           <TouchableOpacity onPress={handleCancel} style={rc.headerBack}>
             <MaterialCommunityIcons name="arrow-left" size={22} color={COLORS.text.primary} />
           </TouchableOpacity>
-          <Text style={rc.headerTitle}>Review Session</Text>
+          <Text style={rc.headerTitle}>
+            {isEditMode ? 'Edit Session' : 'Review Session'}
+          </Text>
           <View style={{ width: 44 }} />
         </View>
 
+        {/* ── Edit-mode loading skeleton ──────────────────────────────────── */}
+        {isLoadingEdit ? (
+          <View style={rc.loadingContainer}>
+            <ActivityIndicator size="large" color={GOLD} />
+            <Text style={rc.loadingText}>Loading session…</Text>
+          </View>
+        ) : (
+        <>
         {/* ── Scrollable body ─────────────────────────────────────────────── */}
         <ScrollView
           style={{ flex: 1 }}
@@ -737,8 +864,8 @@ export default function TrackerReviewScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Confidence banner — only for medium/low */}
-          {(confidence === 'medium' || confidence === 'low') && (
+          {/* Confidence banner — only for medium/low, never in edit mode */}
+          {!isEditMode && (confidence === 'medium' || confidence === 'low') && (
             <View style={rc.confidenceBanner}>
               <MaterialCommunityIcons
                 name={confidence === 'low' ? 'alert-outline' : 'information-outline'}
@@ -855,7 +982,7 @@ export default function TrackerReviewScreen() {
               <View style={rc.primaryBtnInner}>
                 <Text style={rc.primaryBtnText}>{primaryLabel}</Text>
                 {/* Pro badge for plan_preview + active program */}
-                {source === 'plan_preview' && userHasActiveProgram && (
+                {!isEditMode && source === 'plan_preview' && userHasActiveProgram && (
                   <View style={rc.proBadge}>
                     <Text style={rc.proBadgeText}>PRO</Text>
                   </View>
@@ -886,6 +1013,8 @@ export default function TrackerReviewScreen() {
             </TouchableOpacity>
           )}
         </View>
+        </>
+        )}
       </KeyboardAvoidingView>
 
       {/* ── Add Exercise Sheet ──────────────────────────────────────────── */}
@@ -909,6 +1038,14 @@ export default function TrackerReviewScreen() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 const rc = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+
+  // Loading (edit mode initial fetch)
+  loadingContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md,
+  },
+  loadingText: {
+    color: COLORS.text.muted, fontSize: FONTS.sizes.sm,
+  },
 
   // Header
   header: {

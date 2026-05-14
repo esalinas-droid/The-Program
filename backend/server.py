@@ -14,7 +14,7 @@ from services.plan_generator import generate_plan as _generate_plan
 from services import image_credits as _image_credits
 from services import supabase_storage as _supabase_storage
 from services import vision_parser as _vision_parser
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile as FAUploadFile
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, Query, UploadFile as FAUploadFile
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -1547,7 +1547,86 @@ async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get
     return {"saved": len(docs_to_insert)}
 
 
-# ── Tracker Mode: parse workout image with OpenAI vision ─────────────────────
+# ── Tracker Mode: fetch log entries by explicit IDs ───────────────────────────
+@api_router.get("/log/by-ids")
+async def get_log_entries_by_ids(
+    ids: str = Query(..., description="Comma-separated log-entry ObjectId strings"),
+    userId: str = Depends(get_current_user),
+):
+    """
+    Return specific log entries by their MongoDB _id values.
+    Only entries owned by the requesting user are returned.
+    Used by tracker-review edit mode to pre-populate the form.
+    """
+    from bson import ObjectId
+    id_list = [s.strip() for s in ids.split(",") if s.strip()]
+    oid_list = [ObjectId(s) for s in id_list if ObjectId.is_valid(s)]
+    if not oid_list:
+        return []
+    docs = await db.log.find(
+        {"_id": {"$in": oid_list}, "userId": userId}
+    ).to_list(len(oid_list))
+    return [
+        WorkoutLogEntry.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])}
+        for d in docs
+    ]
+
+
+# ── Tracker Mode: replace a session's entries (edit mode) ─────────────────────
+class SessionUpdate(BaseModel):
+    delete_log_ids: List[str]        # existing entry IDs to remove
+    new_entries:    List[WorkoutLogCreate]  # replacement entries to insert
+
+
+@api_router.post("/log/session-update")
+async def update_session(
+    body: SessionUpdate,
+    userId: str = Depends(get_current_user),
+):
+    """
+    Atomically replace a saved tracker session:
+      1. Verify all delete_log_ids belong to the requesting user.
+      2. Delete the old entries.
+      3. Insert the new entries.
+      4. Return { deleted: N, inserted: M }.
+    """
+    from bson import ObjectId
+
+    if not body.delete_log_ids:
+        raise HTTPException(status_code=400, detail="delete_log_ids must not be empty")
+
+    oid_list = [ObjectId(s) for s in body.delete_log_ids if ObjectId.is_valid(s)]
+    if not oid_list:
+        raise HTTPException(status_code=400, detail="No valid log IDs provided")
+
+    # Security: ensure every ID is owned by this user before deleting
+    owner_count = await db.log.count_documents({"_id": {"$in": oid_list}, "userId": userId})
+    if owner_count != len(oid_list):
+        raise HTTPException(
+            status_code=403,
+            detail="One or more log entries do not belong to this user",
+        )
+
+    del_result = await db.log.delete_many({"_id": {"$in": oid_list}, "userId": userId})
+
+    # Build and insert replacement entries
+    docs_to_insert = []
+    for entry in body.new_entries:
+        e1rm = epley_e1rm(entry.weight, entry.reps)
+        log  = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
+        docs_to_insert.append(log.to_mongo())
+
+    if docs_to_insert:
+        await db.log.insert_many(docs_to_insert)
+
+    # Invalidate weekly review cache
+    from datetime import timedelta as _td
+    _now      = datetime.now()
+    _monday   = _now - _td(days=_now.weekday())
+    _week_key = _monday.strftime("%Y-%m-%d")
+    await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_key})
+
+    return {"deleted": del_result.deleted_count, "inserted": len(docs_to_insert)}
 @api_router.post("/tracker/parse-session-image")
 async def parse_session_image(
     image: FAUploadFile = File(...),

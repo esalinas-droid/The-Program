@@ -181,6 +181,21 @@ export const logApi = {
     }
     return api(qs);
   },
+  /**
+   * Fetch specific entries by their MongoDB _id strings.
+   * Used by tracker-review edit mode to pre-populate the form.
+   */
+  byIds: (ids: string[]) =>
+    api(`/log/by-ids?ids=${encodeURIComponent(ids.join(','))}`),
+  /**
+   * Atomically replace a saved tracker session.
+   * Deletes the listed entry IDs and inserts the new entries.
+   */
+  updateSession: (deleteLogIds: string[], newEntries: any[]) =>
+    api('/log/session-update', {
+      method: 'POST',
+      body: JSON.stringify({ delete_log_ids: deleteLogIds, new_entries: newEntries }),
+    }),
 };
 
 // PRs

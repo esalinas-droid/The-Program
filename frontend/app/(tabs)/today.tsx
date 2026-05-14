@@ -2966,7 +2966,14 @@ export default function TodayScreen() {
                 <TouchableOpacity
                   key={idx}
                   style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}
-                  onPress={() => router.push(`/session-detail?date=${todayStr}` as any)}
+                  onPress={() => {
+                    // Open the FULL day's session in edit mode (not just this exercise)
+                    const allLogIds = trackerLogs.map((l: any) => l.id).filter(Boolean);
+                    router.push({
+                      pathname: '/tracker-review',
+                      params: { editingLogIds: JSON.stringify(allLogIds) },
+                    } as any);
+                  }}
                   activeOpacity={0.75}
                 >
                   <View style={{ width: 40, height: 40, borderRadius: RADIUS.md, backgroundColor: GOLD + '1A', alignItems: 'center', justifyContent: 'center' }}>
