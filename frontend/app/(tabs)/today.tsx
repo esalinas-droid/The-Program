@@ -2103,7 +2103,16 @@ export default function TodayScreen() {
           try {
             const tLogs = await logApi.list({ startDate: todayStr, endDate: todayStr });
             const rawLogs = Array.isArray(tLogs) ? tLogs : [];
-            setTrackerLogs(rawLogs.filter((l: any) => Number(l.week) === 0));
+            const newLogs = rawLogs.filter((l: any) => Number(l.week) === 0);
+            Alert.alert(
+              '[DIAG-EDIT] 3/4 today refetched',
+              `total: ${newLogs.length}\n` +
+              `first log ID: ${newLogs[0]?.id}\n` +
+              `first weight: ${newLogs[0]?.weight}\n` +
+              `first reps: ${newLogs[0]?.reps}\n` +
+              `(verify new IDs and edited values)`
+            );
+            setTrackerLogs(newLogs);
           } catch { setTrackerLogs([]); }
           finally { setTrackerLogsLoading(false); }
           return;
@@ -2143,7 +2152,16 @@ export default function TodayScreen() {
         setTrackerLogsLoading(true);
         try {
           const logs = await logApi.list({ startDate: todayStr, endDate: todayStr });
-          setTrackerLogs(Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : []);
+          const newLogs2 = Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : [];
+          Alert.alert(
+            '[DIAG-EDIT] 3/4 today refetched',
+            `total: ${newLogs2.length}\n` +
+            `first log ID: ${newLogs2[0]?.id}\n` +
+            `first weight: ${newLogs2[0]?.weight}\n` +
+            `first reps: ${newLogs2[0]?.reps}\n` +
+            `(verify new IDs and edited values)`
+          );
+          setTrackerLogs(newLogs2);
         } catch {
           setTrackerLogs([]);
         } finally {

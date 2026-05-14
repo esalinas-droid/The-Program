@@ -653,15 +653,26 @@ export default function TrackerReviewScreen() {
 
     (async () => {
       try {
-        const logs: any[] = await logApi.byIds(editingLogIds);
+        const fetchedEntries: any[] = await logApi.byIds(editingLogIds);
         if (cancelled) return;
 
-        const exs = logsToExercises(logs);
+        // [DIAG-EDIT] 4/4 — verify the IDs match and weights reflect what was saved
+        Alert.alert(
+          '[DIAG-EDIT] 4/4 by-ids returned',
+          `count: ${fetchedEntries.length}\n` +
+          `first ID: ${fetchedEntries[0]?.id}\n` +
+          `first weight: ${fetchedEntries[0]?.weight}\n` +
+          `first reps: ${fetchedEntries[0]?.reps}\n` +
+          `(verify the IDs match what today passed in,\n` +
+          ` and the weights match what was saved)`
+        );
+
+        const exs = logsToExercises(fetchedEntries);
         setExercises(exs);
 
         // Pre-populate title + date from the first entry
-        if (logs.length > 0) {
-          const first = logs[0];
+        if (fetchedEntries.length > 0) {
+          const first = fetchedEntries[0];
           if (first.sessionTitle) setSessionTitle(first.sessionTitle);
           if (first.date) {
             const d = new Date(first.date + 'T12:00:00');
@@ -796,7 +807,30 @@ export default function TrackerReviewScreen() {
       const title   = sessionTitle.trim() || null;
       // Preserve the original week (0 = tracker) from the session
       const entries = buildEntries(exercises, date, 0, title, undefined);
-      await logApi.updateSession(editingLogIds, entries);
+
+      // [DIAG-EDIT] 1/4 — verify edited values reached entries
+      Alert.alert(
+        '[DIAG-EDIT] 1/4 about to save',
+        `editingLogIds count: ${editingLogIds.length}\n` +
+        `first old ID: ${editingLogIds[0]}\n` +
+        `entries count: ${entries.length}\n` +
+        `first entry name: ${entries[0]?.exerciseName}\n` +
+        `first entry weight: ${entries[0]?.weight}\n` +
+        `first entry reps: ${entries[0]?.reps}\n` +
+        `(verify edited value is in entries)`
+      );
+
+      const result = await logApi.updateSession(editingLogIds, entries);
+
+      // [DIAG-EDIT] 2/4 — verify the API actually persisted
+      Alert.alert(
+        '[DIAG-EDIT] 2/4 save response',
+        `deleted: ${(result as any)?.deleted ?? '?'}\n` +
+        `inserted: ${(result as any)?.inserted ?? '?'}\n` +
+        `ok: ${(result as any)?.ok}\n` +
+        `(verify the API actually persisted)`
+      );
+
       router.back();
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
