@@ -9,9 +9,13 @@ All functions accept `db` (motor AsyncIOMotorDatabase) as an explicit parameter
 to avoid circular imports with server.py.
 """
 
+import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 FREE_CREDITS_ON_FIRST_USE = 3
 
@@ -96,7 +100,16 @@ async def spend_credit(
     """
     Decrement balance by 1. Raises 402 if insufficient. Returns new balance.
     Accepts optional metadata dict (e.g. {"object_path": ...}) stored in the transaction.
+
+    In dev environments where BYPASS_IMAGE_CREDITS=true the balance check is
+    skipped entirely — useful during pre-beta testing so credits are never
+    exhausted. Analytics logging still fires so we can see how many parses
+    happened. Has no effect in prod (env var unset / false).
     """
+    if os.getenv("BYPASS_IMAGE_CREDITS", "").lower() == "true":
+        logger.info("[CREDIT-BYPASS] Skipping credit check for user %s", userId)
+        return 9999
+
     doc = await _ensure_balance_doc(db, userId)
     current = doc.get("balance", 0)
     if current < 1:
