@@ -259,9 +259,17 @@ function logsToExercises(logs: any[]): SessionExercise[] {
         set.rpe    = log.rpe    != null && log.rpe    !== 0 ? String(log.rpe)    : '';
         break;
       case 'timed':
-        set.duration     = log.duration != null ? String(log.duration) : '';
-        set.durationUnit = (log.unit === 'min' ? 'min' : 'sec') as 'sec' | 'min';
-        set.side         = log.side || '';
+        if (log.unit === 'min' && log.duration != null) {
+          // Convention: stored as seconds with display unit 'min'.
+          // Convert back to minutes for the edit form.
+          set.duration     = String(Math.round(log.duration / 60));
+          set.durationUnit = 'min';
+        } else {
+          // Seconds entry — no conversion needed.
+          set.duration     = log.duration != null ? String(log.duration) : '';
+          set.durationUnit = 'sec';
+        }
+        set.side = log.side || '';
         break;
       case 'distance':
         set.distance     = log.distance != null ? String(log.distance) : '';
