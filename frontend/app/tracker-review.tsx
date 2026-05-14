@@ -814,10 +814,22 @@ export default function TrackerReviewScreen() {
         `editingLogIds count: ${editingLogIds.length}\n` +
         `first old ID: ${editingLogIds[0]}\n` +
         `entries count: ${entries.length}\n` +
-        `first entry name: ${entries[0]?.exerciseName}\n` +
+        `first entry exercise: ${entries[0]?.exercise}\n` +
         `first entry weight: ${entries[0]?.weight}\n` +
         `first entry reps: ${entries[0]?.reps}\n` +
         `(verify edited value is in entries)`
+      );
+
+      // [DIAG-EDIT] 1.5/4 — show first WEIGHTED entry so we can see the edited exercise
+      const firstWeighted = entries.find((e: any) =>
+        !e.duration && (e.weight > 0 || e.reps > 0)
+      ) || entries[10];
+      Alert.alert(
+        '[DIAG-EDIT] 1.5/4 sample weighted entry',
+        `exercise: ${firstWeighted?.exercise}\n` +
+        `weight: ${firstWeighted?.weight}\n` +
+        `reps: ${firstWeighted?.reps}\n` +
+        `rpe: ${firstWeighted?.rpe}`
       );
 
       const result = await logApi.updateSession(editingLogIds, entries);
