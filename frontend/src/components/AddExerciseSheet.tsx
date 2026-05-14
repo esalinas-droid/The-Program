@@ -69,10 +69,15 @@ interface SheetProps {
   visible: boolean;
   onClose: () => void;
   onAdd: (exercise: AddedExercise) => void;
+  /** Swap mode: when set, the sheet replaces an existing exercise instead of adding. */
+  replaceExerciseId?: string;
+  onReplace?: (exerciseId: string, exercise: AddedExercise) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps) {
+export default function AddExerciseSheet({
+  visible, onClose, onAdd, replaceExerciseId, onReplace,
+}: SheetProps) {
   const insets   = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(SCREEN_H)).current;
 
@@ -153,12 +158,17 @@ export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps
       Alert.alert('Missing info', 'Please select a measurement type and an exercise.');
       return;
     }
-    onAdd({
+    const added: AddedExercise = {
       name: selectedExercise.name,
       category: selectedExercise.category,
       prescriptionType: selectedType,
       modifiers: activeModifiers,
-    });
+    };
+    if (replaceExerciseId && onReplace) {
+      onReplace(replaceExerciseId, added);
+    } else {
+      onAdd(added);
+    }
     onClose();
   };
 
@@ -256,7 +266,9 @@ export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps
         {view === 'picker' ? (
           <View style={s.header}>
             <View style={s.headerSpacer} />
-            <Text style={s.headerTitle}>Add exercise</Text>
+            <Text style={s.headerTitle}>
+              {replaceExerciseId ? 'Swap exercise' : 'Add exercise'}
+            </Text>
             <TouchableOpacity onPress={onClose} style={s.headerBtn}>
               <MaterialCommunityIcons name="close" size={22} color={COLORS.text.secondary} />
             </TouchableOpacity>
@@ -527,7 +539,9 @@ export default function AddExerciseSheet({ visible, onClose, onAdd }: SheetProps
               onPress={handleAddToSession}
               activeOpacity={0.8}
             >
-              <Text style={[s.addBtnText, !canAdd && s.addBtnTextDim]}>Add to session</Text>
+              <Text style={[s.addBtnText, !canAdd && s.addBtnTextDim]}>
+                {replaceExerciseId ? 'Swap exercise' : 'Add to session'}
+              </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity

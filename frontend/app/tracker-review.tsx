@@ -18,7 +18,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, KeyboardAvoidingView, Platform,
-  Alert, ActivityIndicator, Modal,
+  Alert, ActivityIndicator, Modal, Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -29,6 +29,7 @@ import { getLocalDateString } from '../src/utils/dateHelpers';
 import AddExerciseSheet, {
   PrescriptionType, AddedExercise, PRESCRIPTION_TYPES,
 } from '../src/components/AddExerciseSheet';
+import EditExerciseSheet from '../src/components/EditExerciseSheet';
 import { getParsedSession, clearParsedSession } from '../src/utils/parsedSessionStore';
 import { getProfile } from '../src/utils/storage';
 
@@ -116,6 +117,41 @@ function convertParsedExercise(parsed: any): SessionExercise {
     modifiers: [],
     sets,
   };
+}
+
+// ── Type-group helper: weighted/emom/amrap/for_time all share the same field set ──
+function getTypeGroup(pt: PrescriptionType): string {
+  if (['weighted', 'emom', 'amrap', 'for_time'].includes(pt)) return 'weighted';
+  return pt;
+}
+
+// ── Applies field-clearing rules when prescription type changes between groups ──
+function applyTypeTransition(
+  set: SessionSet,
+  from: PrescriptionType,
+  to: PrescriptionType,
+): SessionSet {
+  const fromGroup = getTypeGroup(from);
+  const toGroup   = getTypeGroup(to);
+  if (fromGroup === toGroup) return set; // same group — fields are compatible
+
+  _setCounter++;
+  const fresh = makeDefaultSet();
+  fresh.id = set.id; // preserve stable ID
+
+  // Special case: weight↔height fields map to each other; reps/rpe carry over
+  if (fromGroup === 'weighted' && toGroup === 'height') {
+    fresh.heightVal  = set.weight;
+    fresh.heightUnit = 'in';
+    fresh.reps       = set.reps;
+    fresh.rpe        = set.rpe;
+  } else if (fromGroup === 'height' && toGroup === 'weighted') {
+    fresh.weight = set.heightVal;
+    fresh.reps   = set.reps;
+    fresh.rpe    = set.rpe;
+  }
+  // All other cross-group transitions: return freshly cleared set
+  return fresh;
 }
 
 function toISODate(date: Date): string {
@@ -451,11 +487,11 @@ function ExerciseColHeaders({ prescriptionType, modifiers }: { prescriptionType:
   }
 }
 
-// ExerciseCard + up/down reorder buttons
+// ExerciseCard — kebab (⋮) replaces up/down reorder arrows; X stays as direct remove
 function ExerciseCard({
   exercise, index, total,
   onUpdateSet, onAddSet, onRemoveSet, onRemoveExercise,
-  onMoveUp, onMoveDown,
+  onKebabPress,
 }: {
   exercise: SessionExercise;
   index: number;
@@ -464,13 +500,10 @@ function ExerciseCard({
   onAddSet: (exId: string) => void;
   onRemoveSet: (exId: string, setId: string) => void;
   onRemoveExercise: (exId: string) => void;
-  onMoveUp: (exId: string) => void;
-  onMoveDown: (exId: string) => void;
+  onKebabPress: (exId: string) => void;
 }) {
   const typeInfo = PRESCRIPTION_TYPES.find(p => p.type === exercise.prescriptionType);
   const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
-  const canUp   = index > 0;
-  const canDown = index < total - 1;
 
   return (
     <View style={rc.card}>
@@ -486,31 +519,16 @@ function ExerciseCard({
           <Text style={rc.cardMods}> · {exercise.modifiers.join(', ')}</Text>
         )}
 
-        {/* Up/Down reorder buttons */}
+        {/* Kebab — opens action sheet with move/swap/duplicate/rename/remove */}
         <TouchableOpacity
-          onPress={() => onMoveUp(exercise.id)}
-          disabled={!canUp}
-          style={rc.reorderBtn}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          onPress={() => onKebabPress(exercise.id)}
+          style={rc.kebabBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <MaterialCommunityIcons
-            name="chevron-up" size={17}
-            color={canUp ? COLORS.text.secondary : COLORS.border}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => onMoveDown(exercise.id)}
-          disabled={!canDown}
-          style={rc.reorderBtn}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-        >
-          <MaterialCommunityIcons
-            name="chevron-down" size={17}
-            color={canDown ? COLORS.text.secondary : COLORS.border}
-          />
+          <MaterialCommunityIcons name="dots-vertical" size={18} color={GOLD} />
         </TouchableOpacity>
 
-        {/* Remove button */}
+        {/* X — one-tap direct remove */}
         <TouchableOpacity
           onPress={() => onRemoveExercise(exercise.id)}
           style={rc.cardRemoveBtn}
@@ -543,6 +561,84 @@ function ExerciseCard({
         <Text style={rc.addSetText}>{addLabel}</Text>
       </TouchableOpacity>
     </View>
+  );
+}
+
+// ── Exercise Action Sheet ─────────────────────────────────────────────────────
+function ExerciseActionSheet({
+  visible, exercise, index, total,
+  onClose, onMoveUp, onMoveDown, onSwap, onDuplicate, onEdit, onRemove,
+}: {
+  visible: boolean;
+  exercise: SessionExercise | null;
+  index: number;
+  total: number;
+  onClose: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onSwap: () => void;
+  onDuplicate: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  if (!exercise) return null;
+  const canUp   = index > 0;
+  const canDown = index < total - 1;
+
+  type ActionRow = {
+    icon: string; label: string; onPress: () => void;
+    disabled?: boolean; danger?: boolean;
+  };
+  const rows: ActionRow[] = [
+    { icon: 'chevron-up',        label: 'Move up',              onPress: onMoveUp,    disabled: !canUp },
+    { icon: 'chevron-down',      label: 'Move down',            onPress: onMoveDown,  disabled: !canDown },
+    { icon: 'swap-horizontal',   label: 'Swap exercise',        onPress: onSwap },
+    { icon: 'content-copy',      label: 'Duplicate',            onPress: onDuplicate },
+    { icon: 'pencil-outline',    label: 'Rename / Change type', onPress: onEdit },
+    { icon: 'trash-can-outline', label: 'Remove exercise',      onPress: onRemove,    danger: true },
+  ];
+
+  return (
+    <Modal
+      transparent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <Pressable style={rc.asOverlay} onPress={onClose} />
+      <View style={rc.asSheet}>
+        <View style={rc.asHandle} />
+        <Text style={rc.asTitle} numberOfLines={1}>{exercise.name}</Text>
+        {rows.map((row, i) => (
+          <TouchableOpacity
+            key={i}
+            style={[rc.asRow, row.disabled && rc.asRowDisabled]}
+            onPress={() => { if (!row.disabled) row.onPress(); }}
+            activeOpacity={row.disabled ? 1 : 0.65}
+          >
+            <MaterialCommunityIcons
+              name={row.icon as any}
+              size={20}
+              color={
+                row.danger   ? COLORS.status.error :
+                row.disabled ? COLORS.border :
+                COLORS.text.secondary
+              }
+              style={{ marginRight: SPACING.md }}
+            />
+            <Text style={[
+              rc.asRowLabel,
+              row.danger   && rc.asRowDanger,
+              row.disabled && rc.asRowLabelMuted,
+            ]}>
+              {row.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <View style={{ height: SPACING.xl }} />
+      </View>
+    </Modal>
   );
 }
 
@@ -649,6 +745,10 @@ export default function TrackerReviewScreen() {
   const [saving,         setSaving]         = useState(false);
   // Edit mode: true while fetching existing entries on first mount
   const [isLoadingEdit,  setIsLoadingEdit]  = useState(isEditMode);
+  // Sheet states: which exercise has its action/edit/swap sheet open
+  const [actionSheetExerciseId, setActionSheetExerciseId] = useState<string | null>(null);
+  const [editSheetExerciseId,   setEditSheetExerciseId]   = useState<string | null>(null);
+  const [swapSheetExerciseId,   setSwapSheetExerciseId]   = useState<string | null>(null);
 
   const confidence = parsed?.confidence || 'high';
 
@@ -740,6 +840,59 @@ export default function TrackerReviewScreen() {
       [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
       return next;
     }), []);
+
+  /** Duplicate: inserts a deep copy with fresh IDs right after the original. */
+  const handleDuplicateExercise = useCallback((exId: string) => {
+    setExercises(prev => {
+      const idx = prev.findIndex(e => e.id === exId);
+      if (idx < 0) return prev;
+      const original = prev[idx];
+      _exCounter++;
+      const copy: SessionExercise = {
+        ...original,
+        id: `ex-dup-${Date.now()}-${_exCounter}`,
+        sets: original.sets.map(s => {
+          _setCounter++;
+          return { ...s, id: `s-dup-${Date.now()}-${_setCounter}` };
+        }),
+      };
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+    setActionSheetExerciseId(null);
+  }, []);
+
+  /** Replace: swaps out an exercise from the AddExerciseSheet (swap mode). */
+  const handleReplaceExercise = useCallback((replaceId: string, added: AddedExercise) => {
+    setExercises(prev => prev.map(ex => {
+      if (ex.id !== replaceId) return ex;
+      const newSets = ex.prescriptionType === added.prescriptionType
+        ? ex.sets
+        : ex.sets.map(s => applyTypeTransition(s, ex.prescriptionType, added.prescriptionType));
+      return {
+        ...ex,
+        name:             added.name,
+        category:         added.category,
+        prescriptionType: added.prescriptionType,
+        modifiers:        added.modifiers,
+        sets:             newSets,
+      };
+    }));
+    setSwapSheetExerciseId(null);
+  }, []);
+
+  /** SaveEdit: applies name + type change from EditExerciseSheet, clearing incompatible fields. */
+  const handleSaveEdit = useCallback((exId: string, newName: string, newType: PrescriptionType) => {
+    setExercises(prev => prev.map(ex => {
+      if (ex.id !== exId) return ex;
+      const newSets = ex.prescriptionType === newType
+        ? ex.sets
+        : ex.sets.map(s => applyTypeTransition(s, ex.prescriptionType, newType));
+      return { ...ex, name: newName, prescriptionType: newType, sets: newSets };
+    }));
+    setEditSheetExerciseId(null);
+  }, []);
 
   // ── Save helpers ───────────────────────────────────────────────────────────
   const validateBeforeSave = (): boolean => {
@@ -960,8 +1113,7 @@ export default function TrackerReviewScreen() {
               onAddSet={addSet}
               onRemoveSet={removeSet}
               onRemoveExercise={removeExercise}
-              onMoveUp={moveUp}
-              onMoveDown={moveDown}
+              onKebabPress={setActionSheetExerciseId}
             />
           ))}
 
@@ -1026,11 +1178,36 @@ export default function TrackerReviewScreen() {
         )}
       </KeyboardAvoidingView>
 
-      {/* ── Add Exercise Sheet ──────────────────────────────────────────── */}
+      {/* ── Add Exercise Sheet (standard + swap mode) ──────────────────── */}
       <AddExerciseSheet
-        visible={showAddSheet}
-        onClose={() => setShowAddSheet(false)}
+        visible={showAddSheet || swapSheetExerciseId !== null}
+        onClose={() => { setShowAddSheet(false); setSwapSheetExerciseId(null); }}
         onAdd={handleAddExercise}
+        replaceExerciseId={swapSheetExerciseId ?? undefined}
+        onReplace={handleReplaceExercise}
+      />
+
+      {/* ── Exercise Action Sheet ───────────────────────────────────────── */}
+      <ExerciseActionSheet
+        visible={actionSheetExerciseId !== null}
+        exercise={actionSheetExerciseId ? (exercises.find(e => e.id === actionSheetExerciseId) ?? null) : null}
+        index={actionSheetExerciseId ? exercises.findIndex(e => e.id === actionSheetExerciseId) : -1}
+        total={exercises.length}
+        onClose={() => setActionSheetExerciseId(null)}
+        onMoveUp={() => { moveUp(actionSheetExerciseId!); setActionSheetExerciseId(null); }}
+        onMoveDown={() => { moveDown(actionSheetExerciseId!); setActionSheetExerciseId(null); }}
+        onSwap={() => { setSwapSheetExerciseId(actionSheetExerciseId); setActionSheetExerciseId(null); }}
+        onDuplicate={() => handleDuplicateExercise(actionSheetExerciseId!)}
+        onEdit={() => { setEditSheetExerciseId(actionSheetExerciseId); setActionSheetExerciseId(null); }}
+        onRemove={() => { removeExercise(actionSheetExerciseId!); setActionSheetExerciseId(null); }}
+      />
+
+      {/* ── Edit Exercise Sheet ─────────────────────────────────────────── */}
+      <EditExerciseSheet
+        visible={editSheetExerciseId !== null}
+        exercise={editSheetExerciseId ? (exercises.find(e => e.id === editSheetExerciseId) ?? null) : null}
+        onClose={() => setEditSheetExerciseId(null)}
+        onSave={handleSaveEdit}
       />
 
       {/* ── Date Picker Modal ───────────────────────────────────────────── */}
@@ -1166,8 +1343,36 @@ const rc = StyleSheet.create({
     fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold,
   },
   cardMods:      { color: COLORS.text.muted, fontSize: FONTS.sizes.xs },
-  reorderBtn:    { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  kebabBtn:      { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   cardRemoveBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+
+  // Exercise Action Sheet
+  asOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+  asSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    paddingTop: SPACING.sm, paddingBottom: SPACING.xxl,
+  },
+  asHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: COLORS.border,
+    alignSelf: 'center', marginBottom: SPACING.sm,
+  },
+  asTitle: {
+    fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold,
+    color: COLORS.text.muted, letterSpacing: 0.3,
+    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  asRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md + 2,
+  },
+  asRowDisabled: { opacity: 0.32 },
+  asRowLabel:    { fontSize: FONTS.sizes.base, color: COLORS.text.primary },
+  asRowDanger:   { color: COLORS.status.error },
+  asRowLabelMuted: { color: COLORS.text.muted },
 
   // Column headers
   colHeaderRow: {
