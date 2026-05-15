@@ -734,15 +734,13 @@ function TrackerDayRow({
       <View style={s.trackerDateCol}>
         <Text style={[
           s.trackerDayAbbr,
-          isToday  && { color: GOLD },
-          isFuture && { color: '#2A2A2E' },
+          isToday && { color: GOLD },
         ]}>
           {dayAbbr}
         </Text>
         <Text style={[
           s.trackerDayDate,
-          isToday  && { color: GOLD },
-          isFuture && { color: '#2A2A2E' },
+          isToday && { color: GOLD },
         ]}>
           {monthAbbr} {dayNum}
         </Text>
@@ -760,7 +758,7 @@ function TrackerDayRow({
             </Text>
           </>
         ) : (
-          <Text style={[s.trackerEmpty, isFuture && { color: '#1E1E22' }]}>
+          <Text style={s.trackerEmpty}>
             {isFuture ? '—' : 'No session logged'}
           </Text>
         )}
@@ -1630,7 +1628,7 @@ const s = StyleSheet.create({
     minHeight: 60,
   },
   trackerDayRowToday:  { backgroundColor: GOLD + '08' },
-  trackerDayRowFuture: { opacity: 0.35 },
+  trackerDayRowFuture: { opacity: 0.4 },
   trackerDayRowLogged: {},
 
   trackerDateCol:  { width: 56, alignItems: 'flex-start' },
