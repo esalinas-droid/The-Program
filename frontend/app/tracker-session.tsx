@@ -9,7 +9,7 @@ import {
   TextInput, KeyboardAvoidingView, Platform,
   Alert, ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
@@ -380,9 +380,22 @@ function ExerciseCard({
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function TrackerSessionScreen() {
   const router  = useRouter();
+  const params  = useLocalSearchParams<{ date?: string }>();
   const insets  = useSafeAreaInsets();
 
-  const [sessionLabel,    setSessionLabel]    = useState(formatSessionLabel());
+  // Pre-fill session label from optional route param (e.g., tapping empty day on Schedule)
+  const [sessionLabel, setSessionLabel] = useState(() => {
+    if (params.date) {
+      try {
+        const parts = (params.date as string).split('-').map(Number);
+        if (parts.length === 3) {
+          const d = new Date(parts[0], parts[1] - 1, parts[2]);
+          return formatSessionLabel(d);
+        }
+      } catch { /* ignore */ }
+    }
+    return formatSessionLabel();
+  });
   const [isEditingLabel,  setIsEditingLabel]  = useState(false);
   const [sessionNotes,    setSessionNotes]    = useState('');
   const [exercises,       setExercises]       = useState<SessionExercise[]>([]);

@@ -30,6 +30,11 @@ interface LogEntry {
   date: string;
   e1rm?: number;
   sessionType?: string;
+  // tracker-mode type fields
+  prescriptionType?: string;
+  duration?: number;
+  unit?: string;
+  distance?: number;
 }
 
 interface ExerciseGroup {
@@ -37,11 +42,58 @@ interface ExerciseGroup {
   sets: LogEntry[];
   bestSet: LogEntry | null;
   totalVolume: number;
+  prescriptionType: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Returns a display string for a single set based on its prescriptionType */
+function formatSetDisplay(set: LogEntry): string {
+  const pt = set.prescriptionType || 'weighted';
+  switch (pt) {
+    case 'timed': {
+      const dur = set.duration || 0;
+      return set.unit === 'min' ? `${Math.round(dur / 60)} min` : `${dur} sec`;
+    }
+    case 'distance':
+      return `${set.distance || 0} ${set.unit || 'ft'}`;
+    case 'height':
+      return `${set.weight} ${set.unit || 'in'} × ${set.reps} reps`;
+    case 'calories':
+      return `${set.reps} cal`;
+    case 'weighted':
+    case 'emom':
+    case 'amrap':
+    case 'for_time':
+    default:
+      return `${set.weight} lbs × ${set.reps} reps`;
+  }
+}
+
+/** Returns "Best: ..." text for the exercise header based on prescriptionType */
+function formatBestDisplay(bestSet: LogEntry | null, pt: string): string {
+  if (!bestSet) return '';
+  switch (pt) {
+    case 'timed': {
+      const dur = bestSet.duration || 0;
+      return bestSet.unit === 'min' ? `Best: ${Math.round(dur / 60)} min` : `Best: ${dur} sec`;
+    }
+    case 'distance':
+      return `Best: ${bestSet.distance || 0} ${bestSet.unit || 'ft'}`;
+    case 'height':
+      return `Best: ${bestSet.weight} ${bestSet.unit || 'in'} × ${bestSet.reps} reps`;
+    case 'calories':
+      return `Best: ${bestSet.reps} cal`;
+    case 'weighted':
+    case 'emom':
+    case 'amrap':
+    case 'for_time':
+    default:
+      return `Best: ${bestSet.weight}×${bestSet.reps}`;
+  }
+}
 
 function formatDisplayDate(dateStr: string): { day: string; month: string; year: string; dayOfWeek: string } {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -64,20 +116,31 @@ function groupByExercise(logs: LogEntry[]): ExerciseGroup[] {
   return Array.from(map.entries()).map(([name, sets]) => {
     // Sort by setIndex (0-based) or setNumber (1-based)
     sets.sort((a, b) => (a.setIndex ?? a.setNumber ?? 0) - (b.setIndex ?? b.setNumber ?? 0));
+    const pt = sets[0]?.prescriptionType || 'weighted';
     const bestSet = sets.reduce<LogEntry | null>((best, s) => {
       if (!best) return s;
-      const bE1rm = best.weight * (1 + best.reps / 30);
-      const sE1rm = s.weight   * (1 + s.reps   / 30);
-      return sE1rm > bE1rm ? s : best;
+      switch (pt) {
+        case 'timed':    return (s.duration || 0) > (best.duration || 0) ? s : best;
+        case 'distance': return (s.distance || 0) > (best.distance || 0) ? s : best;
+        case 'calories': return (s.reps || 0) > (best.reps || 0) ? s : best;
+        case 'height':   return ((s.weight || 0) * (s.reps || 0)) > ((best.weight || 0) * (best.reps || 0)) ? s : best;
+        default: {
+          const bE1rm = (best.weight || 0) * (1 + (best.reps || 0) / 30);
+          const sE1rm = (s.weight || 0)    * (1 + (s.reps || 0)    / 30);
+          return sE1rm > bE1rm ? s : best;
+        }
+      }
     }, null);
-    const totalVolume = sets.reduce((sum, s) => sum + s.weight * s.reps, 0);
-    return { name, sets, bestSet, totalVolume };
+    const totalVolume = sets.reduce((sum, s) => sum + (s.weight || 0) * (s.reps || 0), 0);
+    return { name, sets, bestSet, totalVolume, prescriptionType: pt };
   });
 }
 
 // ── Exercise Card ─────────────────────────────────────────────────────────────
 function ExerciseCard({ group }: { group: ExerciseGroup }) {
   const [expanded, setExpanded] = useState(true);  // Start expanded for read-only detail view
+  const pt = group.prescriptionType || 'weighted';
+  const bestDisplay = formatBestDisplay(group.bestSet, pt);
   return (
     <View style={styles.exerciseCard}>
       <TouchableOpacity
@@ -89,7 +152,7 @@ function ExerciseCard({ group }: { group: ExerciseGroup }) {
           <Text style={styles.exerciseName}>{group.name}</Text>
           <Text style={styles.exerciseMeta}>
             {group.sets.length} set{group.sets.length !== 1 ? 's' : ''}
-            {group.bestSet ? `  ·  Best: ${group.bestSet.weight}×${group.bestSet.reps}` : ''}
+            {bestDisplay ? `  ·  ${bestDisplay}` : ''}
           </Text>
         </View>
         <MaterialCommunityIcons
@@ -107,8 +170,8 @@ function ExerciseCard({ group }: { group: ExerciseGroup }) {
                 Set {(s.setIndex != null ? s.setIndex + 1 : s.setNumber) || i + 1}
               </Text>
               <Text style={styles.setValues}>
-                {s.weight} lbs × {s.reps} reps
-                {s.rpe ? <Text style={styles.rpeTag}>  @RPE {s.rpe}</Text> : null}
+                {formatSetDisplay(s)}
+                {s.rpe ? <Text style={styles.rpeTag}>{`  @RPE ${s.rpe}`}</Text> : null}
               </Text>
             </View>
           ))}

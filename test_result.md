@@ -1654,6 +1654,40 @@ agent_communication:
 
   - agent: "main"
     message: >
+      TRACKER SCHEDULE TAB + SESSION-DETAIL TYPE-AWARE RENDERING COMPLETE.
+
+      Task 1 — Schedule Tab Tracker-Mode List View (log.tsx):
+      - Added TrackerDayRow, TrackerWeekSection, DatePickerModal components
+      - Added loadTrackerLogs() fetching 4 weeks via logApi.list({startDate, endDate})
+      - Modified loadData() to call loadTrackerLogs() for free mode instead of early return
+      - Added handleTrackerDayPress: logged day → /tracker-review?editingLogIds, empty → /tracker-session?date
+      - 4 collapsible week sections (This Week expanded, others collapsed by default)
+      - Empty state: "No sessions yet" + "Log your first session →" CTA
+      - "Log past session" CTA opens Calendar-based DatePickerModal at bottom
+      - All new tracker styles added to StyleSheet
+
+      Task 2 — session-detail.tsx type-aware rendering:
+      - Updated LogEntry interface: added prescriptionType, duration, unit, distance fields
+      - Updated ExerciseGroup interface: added prescriptionType field
+      - Added formatSetDisplay(set): branches by type for correct unit display
+      - Added formatBestDisplay(bestSet, pt): type-aware "Best: ..." header line
+      - Updated groupByExercise: detects prescriptionType, type-aware bestSet calculation
+      - Updated ExerciseCard: uses formatSetDisplay and formatBestDisplay
+      - timed: "X sec" or "X min" (based on unit field)
+      - distance: "{value} {unit}" (e.g., "60 ft", "100 m")
+      - height: "{value} {unit} × {reps} reps" (e.g., "24 in × 5 reps")
+      - calories: "{reps} cal"
+      - weighted/emom/amrap/for_time: "{weight} lbs × {reps} reps"
+
+      tracker-session.tsx: Added useLocalSearchParams; accepts date param to pre-fill session label.
+
+      FILES MODIFIED:
+      - /app/frontend/app/(tabs)/log.tsx
+      - /app/frontend/app/session-detail.tsx
+      - /app/frontend/app/tracker-session.tsx
+
+  - agent: "main"
+    message: >
       PHASE 1 COMPLETE — Tracker Mode Fixes + Kebab Menu + Rename.
 
       1A — BUG FIX "Switch to a program" silently fails:

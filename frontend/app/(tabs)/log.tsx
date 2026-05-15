@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Animated, LayoutAnimation,
-  UIManager, Platform, PanResponder,
+  UIManager, Platform, PanResponder, Modal,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,7 @@ import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpe
 import ExercisePicker, { PickedExercise } from '../../src/components/ExercisePicker';
 import ExerciseActionsSheet, { SessionStateType, ActionExercise } from '../../src/components/ExerciseActionsSheet';
 import AskCoachButton from '../../src/components/AskCoachButton';
+import { Calendar } from 'react-native-calendars';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -694,6 +695,237 @@ function SessionHistoryCard({
   );
 }
 
+// ── Tracker Mode Components ───────────────────────────────────────────────────
+const TRACKER_DAY_ABBRS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const TRACKER_MONTH_ABBRS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function TrackerDayRow({
+  date, logs, isFuture, isToday, onPress,
+}: {
+  date: string;
+  logs: any[];
+  isFuture: boolean;
+  isToday: boolean;
+  onPress: () => void;
+}) {
+  const d = new Date(date + 'T12:00:00');
+  const dayAbbr  = TRACKER_DAY_ABBRS[d.getDay()];
+  const monthAbbr = TRACKER_MONTH_ABBRS[d.getMonth()];
+  const dayNum   = d.getDate();
+  const isLogged = logs.length > 0;
+  // Derive unique exercise names and set count
+  const exerciseNames = [...new Set(logs.map((l: any) => l.exercise).filter(Boolean))];
+  const exerciseCount = exerciseNames.length;
+  const setCount      = logs.length;
+  const sessionTitle  = logs[0]?.sessionType || '';
+
+  return (
+    <TouchableOpacity
+      style={[
+        s.trackerDayRow,
+        isToday    && s.trackerDayRowToday,
+        isFuture   && s.trackerDayRowFuture,
+        isLogged   && !isFuture && s.trackerDayRowLogged,
+      ]}
+      onPress={isFuture ? undefined : onPress}
+      activeOpacity={isFuture ? 1 : 0.75}
+    >
+      {/* Date column */}
+      <View style={s.trackerDateCol}>
+        <Text style={[
+          s.trackerDayAbbr,
+          isToday  && { color: GOLD },
+          isFuture && { color: '#2A2A2E' },
+        ]}>
+          {dayAbbr}
+        </Text>
+        <Text style={[
+          s.trackerDayDate,
+          isToday  && { color: GOLD },
+          isFuture && { color: '#2A2A2E' },
+        ]}>
+          {monthAbbr} {dayNum}
+        </Text>
+      </View>
+
+      {/* Session info */}
+      <View style={{ flex: 1, paddingHorizontal: 12 }}>
+        {isLogged ? (
+          <>
+            <Text style={s.trackerSessionTitle} numberOfLines={1}>
+              {sessionTitle || 'Session logged'}
+            </Text>
+            <Text style={s.trackerSessionMeta}>
+              {exerciseCount} exercise{exerciseCount !== 1 ? 's' : ''} · {setCount} set{setCount !== 1 ? 's' : ''}
+            </Text>
+          </>
+        ) : (
+          <Text style={[s.trackerEmpty, isFuture && { color: '#1E1E22' }]}>
+            {isFuture ? '—' : 'No session logged'}
+          </Text>
+        )}
+      </View>
+
+      {/* Right indicator */}
+      {isLogged ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <MaterialCommunityIcons name="check-circle" size={15} color={GREEN} />
+          <MaterialCommunityIcons name="chevron-right" size={16} color={MUTED} />
+        </View>
+      ) : !isFuture ? (
+        <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#2A2A2E" />
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+function TrackerWeekSection({
+  weekOffset, logs, expanded, onToggle, onDayPress, todayStr,
+}: {
+  weekOffset: number;
+  logs: any[];
+  expanded: boolean;
+  onToggle: () => void;
+  onDayPress: (date: string, dayLogs: any[]) => void;
+  todayStr: string;
+}) {
+  const weekDates = getWeekDates(weekOffset);
+  // Build logs-by-date from the passed-in logs slice
+  const logsByDate: Record<string, any[]> = {};
+  for (const log of logs) {
+    const ld = log.date;
+    if (weekDates.includes(ld)) {
+      if (!logsByDate[ld]) logsByDate[ld] = [];
+      logsByDate[ld].push(log);
+    }
+  }
+  const sessionCount = weekDates.filter(d => (logsByDate[d]?.length ?? 0) > 0).length;
+  const weekLabel =
+    weekOffset === 0  ? 'This Week' :
+    weekOffset === -1 ? 'Last Week' :
+    `${-weekOffset} Weeks Ago`;
+
+  return (
+    <View style={s.trackerWeekSection}>
+      <TouchableOpacity style={s.trackerWeekHeader} onPress={onToggle} activeOpacity={0.75}>
+        <View style={{ flex: 1 }}>
+          <Text style={[s.trackerWeekLabel, weekOffset === 0 && { color: GOLD }]}>{weekLabel}</Text>
+          <Text style={s.trackerWeekRange}>{getWeekRangeLabel(weekOffset)}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {sessionCount > 0 && (
+            <View style={[s.trackerSessionBadge, weekOffset === 0 && { backgroundColor: GOLD + '20', borderColor: GOLD + '40' }]}>
+              <Text style={[s.trackerSessionBadgeText, weekOffset === 0 && { color: GOLD }]}>
+                {sessionCount}
+              </Text>
+            </View>
+          )}
+          <MaterialCommunityIcons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={MUTED}
+          />
+        </View>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={s.trackerWeekBody}>
+          {weekDates.map((date) => (
+            <TrackerDayRow
+              key={date}
+              date={date}
+              logs={logsByDate[date] || []}
+              isFuture={date > todayStr}
+              isToday={date === todayStr}
+              onPress={() => onDayPress(date, logsByDate[date] || [])}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function DatePickerModal({
+  visible, onClose, onDateSelected,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onDateSelected: (date: string) => void;
+}) {
+  const [selected, setSelected] = useState('');
+  const todayStr = getLocalDateString();
+  const minDate  = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return getLocalDateString(d);
+  })();
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 32 }}>
+          {/* Handle */}
+          <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: BORDER }} />
+          </View>
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 10 }}>
+            <Text style={{ color: TEXT, fontSize: 16, fontWeight: '700' }}>Pick a past date</Text>
+            <TouchableOpacity onPress={() => { setSelected(''); onClose(); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <MaterialCommunityIcons name="close" size={22} color={MUTED} />
+            </TouchableOpacity>
+          </View>
+          {/* Calendar */}
+          <Calendar
+            maxDate={todayStr}
+            minDate={minDate}
+            markedDates={selected ? { [selected]: { selected: true, selectedColor: GOLD } } : {}}
+            onDayPress={(day: { dateString: string }) => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setSelected(day.dateString);
+            }}
+            theme={{
+              backgroundColor: CARD,
+              calendarBackground: CARD,
+              textSectionTitleColor: MUTED,
+              selectedDayBackgroundColor: GOLD,
+              selectedDayTextColor: BG,
+              todayTextColor: GOLD,
+              dayTextColor: TEXT,
+              textDisabledColor: '#333',
+              arrowColor: GOLD,
+              monthTextColor: TEXT,
+              textDayFontWeight: '600',
+              textMonthFontWeight: '700',
+              textDayHeaderFontWeight: '600',
+            } as any}
+          />
+          {/* CTA */}
+          {selected ? (
+            <TouchableOpacity
+              style={{ backgroundColor: GOLD, marginHorizontal: 16, marginTop: 12, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+              onPress={() => { const d = selected; setSelected(''); onDateSelected(d); }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: BG, fontSize: 15, fontWeight: '700' }}>Log session for this date</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ height: 52, marginHorizontal: 16, marginTop: 12, borderRadius: 12, backgroundColor: '#1A1A1E', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: MUTED, fontSize: 14 }}>Tap a date above</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function ScheduleScreen() {
   const router = useRouter();
@@ -713,6 +945,11 @@ export default function ScheduleScreen() {
   // true when today's session is formally finished (programApi.getTodaySession returns 404)
   const [todaySessionDone, setTodaySessionDone] = useState(false);
   const [trainingMode, setTrainingMode] = useState<'program' | 'free'>('program');
+  // ── Tracker mode state ───────────────────────────────────────────────────────
+  const [trackerLogs,    setTrackerLogs]    = useState<any[]>([]);
+  const [trackerLoading, setTrackerLoading] = useState(false);
+  const [expandedWeeks,  setExpandedWeeks]  = useState<Set<number>>(new Set([0]));
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const weekOffsetRef = useRef(0);
   const [weekOffset, _setWeekOffset]   = useState(0);
@@ -727,6 +964,43 @@ export default function ScheduleScreen() {
   // Inside loadData, we always recompute it fresh to avoid stale closure bugs.
   const todayStr = getLocalDateString();
 
+  // ── Tracker log loader ────────────────────────────────────────────────────────
+  const loadTrackerLogs = useCallback(async () => {
+    setTrackerLoading(true);
+    try {
+      // Fetch 4 complete weeks: This Week back to 3 Weeks Ago
+      const startDate = getWeekDates(-3)[0];  // Mon of 3 weeks ago
+      const endDate   = getWeekDates(0)[6];   // Sun of current week
+      const result = await logApi.list({ startDate, endDate });
+      const logs = Array.isArray(result) ? result : ((result as any)?.logs ?? []);
+      setTrackerLogs(logs);
+    } catch (err) {
+      console.warn('[TrackerSchedule] fetch failed:', err);
+      setTrackerLogs([]);
+    } finally {
+      setTrackerLoading(false);
+    }
+  }, []);
+
+  // ── Tracker day tap handler ───────────────────────────────────────────────────
+  const handleTrackerDayPress = useCallback((date: string, dayLogs: any[]) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (dayLogs.length > 0) {
+      const logIds = dayLogs.map((l: any) => l._id || l.id).filter(Boolean);
+      if (logIds.length > 0) {
+        router.push({
+          pathname: '/tracker-review',
+          params: { editingLogIds: JSON.stringify(logIds) },
+        } as any);
+      }
+    } else {
+      router.push({
+        pathname: '/tracker-session',
+        params: { date },
+      } as any);
+    }
+  }, [router]);
+
   // ── Load data ────────────────────────────────────────────────────────────────
   const loadData = useCallback(async (offset = weekOffsetRef.current) => {
     // Always recompute today fresh — avoids stale closure if app was open overnight
@@ -736,7 +1010,7 @@ export default function ScheduleScreen() {
       // Check training mode first
       const prof = await import('../../src/utils/storage').then(m => m.getProfile());
       setTrainingMode((prof?.training_mode as 'program' | 'free') || 'program');
-      if (prof?.training_mode === 'free') { setLoading(false); return; }
+      if (prof?.training_mode === 'free') { setLoading(false); loadTrackerLogs(); return; }
       const weekDates  = getWeekDates(offset);
       const startDate  = weekDates[0];
       const endDate    = weekDates[6];
@@ -971,24 +1245,97 @@ export default function ScheduleScreen() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]} {...panResponder.panHandlers}>
-      {/* Free training mode: show empty state instead of schedule */}
+      {/* ─── TRACKER MODE (free): 4-week list view ────────────────────────── */}
       {trainingMode === 'free' ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
-          <MaterialCommunityIcons name="calendar-blank-outline" size={48} color="#2A9D8F" />
-          <Text style={{ fontSize: 20, fontWeight: '700', color: '#F2F2F7', textAlign: 'center' }}>
-            Free training mode
-          </Text>
-          <Text style={{ fontSize: 15, color: '#A0A0B0', textAlign: 'center', lineHeight: 22 }}>
-            No scheduled sessions. Tap 'Log Session' to record a workout.
-          </Text>
-          <TouchableOpacity
-            style={{ marginTop: 8, backgroundColor: '#2A9D8F', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
-            onPress={() => router.push('/tracker-session')}
-            activeOpacity={0.85}
-          >
-            <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Log Session</Text>
-          </TouchableOpacity>
-        </View>
+        <>
+          {/* Tracker header */}
+          <View style={s.header}>
+            <View>
+              <Text style={s.headerTitle}>Schedule</Text>
+              <Text style={s.headerSub}>Tracker Mode</Text>
+            </View>
+            <TouchableOpacity
+              style={s.swapDaysBtn}
+              onPress={() => router.push('/tracker-session' as any)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="plus" size={14} color={GREEN} />
+              <Text style={[s.swapDaysBtnText, { color: GREEN }]}>Log Session</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Body */}
+          {trackerLoading ? (
+            <View style={s.loadingBox}>
+              <ActivityIndicator color={GOLD} />
+            </View>
+          ) : trackerLogs.length === 0 ? (
+            /* ── Empty state ── */
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={GOLD} colors={[GOLD]} />}
+            >
+              <MaterialCommunityIcons name="calendar-blank-outline" size={60} color="#242428" />
+              <Text style={{ fontSize: 20, fontWeight: '700', color: TEXT, textAlign: 'center' }}>No sessions yet</Text>
+              <Text style={{ fontSize: 14, color: MUTED, textAlign: 'center', lineHeight: 22 }}>
+                Log your workouts to see them here
+              </Text>
+              <TouchableOpacity
+                style={{ marginTop: 8, backgroundColor: GREEN, borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14 }}
+                onPress={() => router.push('/tracker-session' as any)}
+                activeOpacity={0.85}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '700', color: BG }}>Log your first session →</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          ) : (
+            /* ── 4-week list ── */
+            <ScrollView
+              style={s.scroll}
+              contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 80 }]}
+              showsVerticalScrollIndicator={false}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={GOLD} colors={[GOLD]} />}
+            >
+              {([0, -1, -2, -3] as const).map(offset => (
+                <TrackerWeekSection
+                  key={offset}
+                  weekOffset={offset}
+                  logs={trackerLogs}
+                  expanded={expandedWeeks.has(offset)}
+                  onToggle={() => {
+                    setExpandedWeeks(prev => {
+                      const next = new Set(prev);
+                      if (next.has(offset)) next.delete(offset); else next.add(offset);
+                      return next;
+                    });
+                  }}
+                  onDayPress={handleTrackerDayPress}
+                  todayStr={todayStr}
+                />
+              ))}
+
+              {/* Log past session CTA */}
+              <TouchableOpacity
+                style={s.trackerPastCta}
+                onPress={() => setShowDatePicker(true)}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="calendar-plus" size={14} color="#666" />
+                <Text style={s.trackerPastCtaText}>+ Log past session</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+
+          {/* Date picker modal */}
+          <DatePickerModal
+            visible={showDatePicker}
+            onClose={() => setShowDatePicker(false)}
+            onDateSelected={(date) => {
+              setShowDatePicker(false);
+              router.push({ pathname: '/tracker-session', params: { date } } as any);
+            }}
+          />
+        </>
       ) : (
       <>
       {/* Part 1A: Header with WeekRing */}
@@ -1258,4 +1605,47 @@ const s = StyleSheet.create({
 
   addExBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginTop: 4, borderTopWidth: 1, borderTopColor: '#1A1A1E', justifyContent: 'center' },
   addExBtnText: { fontSize: 12, color: GREEN, fontWeight: '600' },
+
+  // ── Tracker Mode Styles ───────────────────────────────────────────────────────
+  trackerWeekSection: { marginBottom: 2 },
+  trackerWeekHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: '#0E0E11',
+    borderBottomWidth: 1, borderBottomColor: BORDER,
+  },
+  trackerWeekLabel:  { fontSize: 14, fontWeight: '700', color: TEXT, marginBottom: 2 },
+  trackerWeekRange:  { fontSize: 11, color: MUTED },
+  trackerWeekBody:   { backgroundColor: CARD },
+  trackerSessionBadge: {
+    backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#2A2A2E',
+    borderRadius: 100, paddingHorizontal: 7, paddingVertical: 2, minWidth: 22, alignItems: 'center',
+  },
+  trackerSessionBadgeText: { fontSize: 11, fontWeight: '700', color: MUTED },
+
+  trackerDayRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BORDER,
+    minHeight: 60,
+  },
+  trackerDayRowToday:  { backgroundColor: GOLD + '08' },
+  trackerDayRowFuture: { opacity: 0.35 },
+  trackerDayRowLogged: {},
+
+  trackerDateCol:  { width: 56, alignItems: 'flex-start' },
+  trackerDayAbbr:  { fontSize: 11, fontWeight: '700', color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5 },
+  trackerDayDate:  { fontSize: 12, color: TEXT, fontWeight: '600', marginTop: 2 },
+
+  trackerSessionTitle: { fontSize: 14, fontWeight: '600', color: TEXT, marginBottom: 2 },
+  trackerSessionMeta:  { fontSize: 11, color: MUTED },
+  trackerEmpty:        { fontSize: 13, color: '#3A3A3E', fontStyle: 'italic' },
+
+  trackerPastCta: {
+    alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    borderRadius: 100, paddingHorizontal: 16, paddingVertical: 9,
+    marginTop: 16, marginBottom: 12,
+  },
+  trackerPastCtaText: { fontSize: 12, color: '#666', fontWeight: '600' },
 });
