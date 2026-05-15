@@ -503,7 +503,7 @@ function ExerciseCard({
   onKebabPress: (exId: string) => void;
 }) {
   const typeInfo = PRESCRIPTION_TYPES.find(p => p.type === exercise.prescriptionType);
-  const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
+  const addLabel = exercise.prescriptionType === 'distance' ? 'Add trip' : 'Add set';
 
   return (
     <View style={rc.card}>
