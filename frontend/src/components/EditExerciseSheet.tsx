@@ -79,7 +79,12 @@ interface EditSheetProps {
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get('window');
 const GOLD  = COLORS.accent;
 const AMBER = '#F59E0B';
-const BTN_W = Math.floor((SCREEN_W - 2 * SPACING.lg - 3 * SPACING.sm) / 4);
+const BTN_W = Math.floor((SCREEN_W - 2 * SPACING.lg - 2 * SPACING.sm) / 3);
+
+// The 3 legacy types (emom/amrap/for_time) use identical LBS×REPS×RPE fields as 'weighted'.
+// We expose only the 5 distinct measurement types in the edit picker to avoid confusing layouts.
+const LEGACY_TYPES: PrescriptionType[] = ['emom', 'amrap', 'for_time'];
+const EDIT_TYPES = PRESCRIPTION_TYPES.filter(pt => !LEGACY_TYPES.includes(pt.type));
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function EditExerciseSheet({
@@ -97,11 +102,14 @@ export default function EditExerciseSheet({
     ? getFieldClearingMessage(exercise.prescriptionType, newType)
     : null;
 
-  // Sync local state whenever a different exercise is opened
+  // Sync local state whenever a different exercise is opened.
+  // Legacy types (emom/amrap/for_time) map to the 'weighted' field group,
+  // so we pre-select the 'weighted' chip visually.
   useEffect(() => {
     if (visible && exercise) {
       setNewName(exercise.name);
-      setNewType(exercise.prescriptionType);
+      const isLegacy = LEGACY_TYPES.includes(exercise.prescriptionType);
+      setNewType(isLegacy ? 'weighted' : exercise.prescriptionType);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, exercise?.id]);
@@ -121,12 +129,20 @@ export default function EditExerciseSheet({
 
   if (!visible || !exercise) return null;
 
-  const hasChanges =
-    newName.trim() !== exercise.name ||
-    newType !== exercise.prescriptionType;
+  // For legacy types pre-shown as 'weighted': only flag a type change if the user
+  // actively picks a *different* type from the 5 visible chips.
+  const isLegacyType = LEGACY_TYPES.includes(exercise.prescriptionType);
+  const typeChanged  = isLegacyType
+    ? newType !== 'weighted'
+    : newType !== exercise.prescriptionType;
+  const hasChanges = newName.trim() !== exercise.name || typeChanged;
 
   const handleSave = () => {
-    onSave(exercise.id, newName.trim() || exercise.name, newType);
+    // Preserve the original legacy type if the user left 'weighted' selected unchanged.
+    const typeToSave = (isLegacyType && newType === 'weighted')
+      ? exercise.prescriptionType
+      : newType;
+    onSave(exercise.id, newName.trim() || exercise.name, typeToSave);
     onClose();
   };
 
@@ -171,7 +187,7 @@ export default function EditExerciseSheet({
             {/* Measurement type */}
             <Text style={[es.fieldLabel, { marginTop: SPACING.lg }]}>MEASUREMENT TYPE</Text>
             <View style={es.typeGrid}>
-              {PRESCRIPTION_TYPES.map(pt => {
+              {EDIT_TYPES.map(pt => {
                 const active = newType === pt.type;
                 return (
                   <TouchableOpacity
