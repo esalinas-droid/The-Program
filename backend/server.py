@@ -3276,6 +3276,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     today_session_context   = ""
     block_directive_context = ""
     _coach_mode = (profile_doc or {}).get("training_mode", "program")
+    _cp = None   # will be set below if user is in program mode and a plan is loaded
     if _coach_mode == "free":
         today_session_context = "Today: free-training mode — no prescribed session."
     else:
