@@ -1073,7 +1073,7 @@ const rt = StyleSheet.create({
 
 // ── SetRow ────────────────────────────────────────────────────────────────────
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
-  removeMode, editMode, onRemove, onEditSave, adjustActive }: {
+  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
@@ -1088,6 +1088,8 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   onRemove?: () => void;
   onEditSave?: () => void;
   adjustActive?: boolean;
+  isActive?: boolean;
+  isTimed?: boolean;
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
@@ -1155,8 +1157,42 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
     );
   }
 
+  // ── TIMED SET (duration field only) ──
+  if (isTimed) {
+    return (
+      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
+        <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
+          {logged
+            ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
+            : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
+          }
+        </View>
+        <Text style={sr.typeTag}>{typeTag}</Text>
+        <TextInput
+          style={[sr.input, sr.timedInput, logged && sr.inputLogged]}
+          value={weight}
+          onChangeText={onWeightChange}
+          editable={!logged}
+          placeholder="e.g. 45 sec"
+          placeholderTextColor={COLORS.text.muted}
+          selectTextOnFocus
+          returnKeyType="done"
+        />
+        {!logged ? (
+          <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
+            <Text style={sr.logBtnText}>LOG</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={sr.doneWrap}>
+            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
   return (
-    <View style={[sr.row, !isLast && sr.rowBorder]}>
+    <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
       {/* Set circle */}
       <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
         {logged
@@ -1173,7 +1209,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
         <View style={sr.weightCol}>
           <Text style={sr.strikeWeight}>{set.weight}</Text>
           <TextInput
-            style={[sr.input, sr.inputFull, logged && sr.inputDone]}
+            style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
             value={weight}
             onChangeText={onWeightChange}
             keyboardType="numeric"
@@ -1186,7 +1222,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
         </View>
       ) : (
         <TextInput
-          style={[sr.input, logged && sr.inputDone]}
+          style={[sr.input, logged && sr.inputLogged]}
           value={weight}
           onChangeText={onWeightChange}
           keyboardType="numeric"
@@ -1202,7 +1238,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
 
       {/* Reps input */}
       <TextInput
-        style={[sr.input, sr.repsInput, logged && sr.inputDone]}
+        style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
         value={reps}
         onChangeText={onRepsChange}
         editable={!logged}
@@ -1226,14 +1262,21 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   );
 }
 const sr = StyleSheet.create({
-  row:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 6 },
-  rowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border + '60' },
+  row:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 6, paddingHorizontal: 4, borderRadius: RADIUS.md },
+  rowBorder:  { borderBottomWidth: 1, borderBottomColor: COLORS.border + '60' },
+  // Logged: success-green tint strip
+  rowLogged:  { backgroundColor: TEAL + '14', borderBottomColor: 'transparent' },
+  // Active (first unlogged): gold border + tint
+  rowActive:  { borderWidth: 1, borderColor: COLORS.accent + '55', backgroundColor: COLORS.accent + '08', borderRadius: RADIUS.md },
   circle:    { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   circleNum: { fontSize: 10, fontWeight: FONTS.weights.heavy },
   typeTag:   { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, width: 20, letterSpacing: 0.3 },
   input:     { flex: 1, minWidth: 0, height: 36, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 13, fontWeight: FONTS.weights.semibold },
   repsInput: { flex: 1.3, minWidth: 0 },
-  inputDone: { color: COLORS.text.muted, textDecorationLine: 'line-through' },
+  // Logged input: green tint, no strikethrough
+  inputLogged: { color: TEAL, borderColor: TEAL + '35', backgroundColor: TEAL + '08' },
+  // Timed input: single wider field
+  timedInput:  { flex: 2.5, minWidth: 0 },
   sep:       { fontSize: 14, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
   logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
   logBtnText:{ color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
@@ -1244,12 +1287,21 @@ const sr = StyleSheet.create({
   strikeWeight: { fontSize: 9, color: '#EF5350', textDecorationLine: 'line-through', fontWeight: '600', marginBottom: 2, textAlign: 'center' },
 });
 
+// ── Detect timed prescription (e.g. "45 sec", "2 min hold") ─────────────────
+function isTimedPrescription(prescription: string): boolean {
+  if (!prescription) return false;
+  const lower = prescription.toLowerCase().trim();
+  // Has a time unit and no set×rep pattern
+  return (lower.includes('sec') || lower.includes('min')) && !lower.includes('×') && !/ x /i.test(lower);
+}
+
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
 function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
   restConfig, adjustActive, previousData, prExercises, onKebab,
+  onMoveUp, onMoveDown, canMoveUp, canMoveDown,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1280,6 +1332,10 @@ function ExerciseCard({
   previousData?: Record<string, {weight: number; reps: number; date: string}[]>;
   prExercises?: Set<string>;
   onKebab?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1292,13 +1348,19 @@ function ExerciseCard({
   const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
   const cardBorderColor = inRemoveMode ? RED + '40' : inEditMode ? BLUE + '40' : COLORS.border;
 
+  // ── Phase 1: Hero mode for Primary/Speed cards ────────────────────────────
+  const heroMode      = (exercise.category === 'primary' || exercise.category === 'speed') && !inRemoveMode && !inEditMode;
+  const isTimedEx     = isTimedPrescription(exercise.prescription);
+  const activeSetIdx  = exercise.sets.findIndex(s => !loggedSets.has(s.id));
+  const activeSetId   = activeSetIdx >= 0 ? exercise.sets[activeSetIdx].id : null;
+
   return (
     <View style={[ec.card, { borderColor: cardBorderColor }]}>
-      {/* ── Collapsible header (category badge + progress + chevron) ── */}
+      {/* ── Collapsible header: [badge | SWAPPED | ...] left — [PR | progress | ↑ | ↓ | ⋮ | chevron] right ── */}
       <TouchableOpacity onPress={onToggle} style={ec.header} activeOpacity={0.8}>
         <View style={ec.headerLeft}>
           <View style={[ec.catBadge, { backgroundColor: catStyle.bg }]}>
-            <Text style={[ec.catBadgeText, { color: catStyle.text }]}>{catStyle.label}</Text>
+            <Text style={[ec.catBadgeText, { color: catStyle.text }]}>{catStyle.label.toUpperCase()}</Text>
           </View>
           {inRemoveMode && (
             <View style={ec.modeBadge}>
@@ -1318,23 +1380,46 @@ function ExerciseCard({
           )}
         </View>
         <View style={ec.headerRight}>
-          {/* Part 3D: PR badge */}
+          {/* PR badge */}
           {prExercises.has(exercise.name) && (
-            <View style={{ backgroundColor: '#C9A84C20', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6 }}>
+            <View style={{ backgroundColor: '#C9A84C20', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
               <Text style={{ fontSize: 9, fontWeight: '700', color: '#C9A84C' }}>PR</Text>
             </View>
           )}
           <View style={[ec.progressPill, { backgroundColor: progColor + '20' }]}>
             <Text style={[ec.progressText, { color: progColor }]}>{loggedCount}/{total}</Text>
           </View>
+          {/* ↑ reorder arrow */}
+          {onMoveUp && canMoveUp && (
+            <TouchableOpacity
+              onPress={onMoveUp}
+              style={ec.arrowBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              activeOpacity={0.6}
+            >
+              <MaterialCommunityIcons name="arrow-up" size={16} color={COLORS.text.secondary} />
+            </TouchableOpacity>
+          )}
+          {/* ↓ reorder arrow */}
+          {onMoveDown && canMoveDown && (
+            <TouchableOpacity
+              onPress={onMoveDown}
+              style={ec.arrowBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              activeOpacity={0.6}
+            >
+              <MaterialCommunityIcons name="arrow-down" size={16} color={COLORS.text.secondary} />
+            </TouchableOpacity>
+          )}
+          {/* ⋮ kebab */}
           {onKebab && (
             <TouchableOpacity
               onPress={onKebab}
-              style={{ padding: 6, marginLeft: 2 }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={ec.arrowBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
               activeOpacity={0.6}
             >
-              <MaterialCommunityIcons name="dots-vertical" size={18} color={COLORS.text.muted} />
+              <MaterialCommunityIcons name="dots-vertical" size={19} color={COLORS.text.secondary} />
             </TouchableOpacity>
           )}
           <MaterialCommunityIcons
@@ -1354,17 +1439,17 @@ function ExerciseCard({
       {/* ── Expanded body ── */}
       {expanded && (
         <>
-          {/* ── Watch Form Video Button ── */}
+          {/* ── FORM chip (silent — Phase 1 placeholder) ── */}
           <TouchableOpacity
-            onPress={() => Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(displayName + ' exercise proper form technique')}`)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#1E1E22', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignSelf: 'flex-start' }}
+            onPress={() => {/* silent – Phase 5 will open how-to modal */}}
+            style={ec.formChip}
             activeOpacity={0.7}
           >
-            <MaterialCommunityIcons name="play-circle-outline" size={18} color={COLORS.accent} />
-            <Text style={{ fontSize: 12, color: COLORS.accent, fontWeight: '700' as any }}>WATCH FORM</Text>
+            <MaterialCommunityIcons name="dumbbell" size={13} color={COLORS.accent} />
+            <Text style={ec.formChipText}>FORM</Text>
           </TouchableOpacity>
 
-          {/* ── Rest Period Selector (between header and set rows) ── */}
+          {/* ── Rest Period Selector ── */}
           {restConfig && (
             <RestSelector
               category={exercise.category}
@@ -1373,8 +1458,170 @@ function ExerciseCard({
               onCustom={restConfig.onCustom}
             />
           )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              HERO MODE — Primary / Speed: one focused set at a time
+          ══════════════════════════════════════════════════════════════════ */}
+          {heroMode ? (
+            <View style={ec.heroBody}>
+              {/* Previous-session reference */}
+              {previousData[exercise.name]?.length > 0 ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 8 }}>
+                  <MaterialCommunityIcons name="history" size={12} color="#555" />
+                  <Text style={{ fontSize: 11, color: '#555' }}>
+                    Last ({previousData[exercise.name][0].date.slice(5).replace('-', '/')}):
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>
+                    {previousData[exercise.name].map(s => `${s.weight}×${s.reps}`).join(' · ')}
+                  </Text>
+                </View>
+              ) : exercise.lastSession !== '—' ? (
+                <View style={[ec.lastRow, { marginBottom: 8 }]}>
+                  <MaterialCommunityIcons name="history" size={12} color={COLORS.text.muted} />
+                  <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
+                </View>
+              ) : null}
+
+              {/* Coaching cues */}
+              {exercise.cues.length > 0 && (
+                <View style={[ec.cuesRow, { marginBottom: 12 }]}>
+                  <MaterialCommunityIcons name="lightbulb-on-outline" size={12} color={COLORS.accent} style={{ marginTop: 1 }} />
+                  <Text style={ec.cuesText}>{exercise.cues.join('  ·  ')}</Text>
+                </View>
+              )}
+
+              {/* Active set or All Done state */}
+              {activeSetIdx >= 0 ? (
+                <>
+                  {/* Set counter */}
+                  <View style={ec.heroSetCounter}>
+                    <Text style={ec.heroSetLabel}>SET {activeSetIdx + 1}</Text>
+                    <Text style={ec.heroSetTotal}> of {total}</Text>
+                  </View>
+
+                  {/* Inputs: timed → single duration field; standard → weight × reps */}
+                  {isTimedEx ? (
+                    <View style={ec.heroTimedRow}>
+                      <TextInput
+                        style={ec.heroTimedInput}
+                        value={setValues[exercise.sets[activeSetIdx].id]?.weight ?? ''}
+                        onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'weight', v)}
+                        placeholder="e.g. 45 sec"
+                        placeholderTextColor={COLORS.text.muted}
+                        editable={true}
+                        selectTextOnFocus
+                        returnKeyType="done"
+                      />
+                    </View>
+                  ) : (
+                    <View style={ec.heroInputRow}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <TextInput
+                          style={ec.heroInput}
+                          value={setValues[exercise.sets[activeSetIdx].id]?.weight ?? ''}
+                          onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'weight', v)}
+                          keyboardType="numeric"
+                          placeholder="lbs"
+                          placeholderTextColor={COLORS.text.muted}
+                          selectTextOnFocus
+                          returnKeyType="next"
+                        />
+                      </View>
+                      <Text style={ec.heroSep}>×</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <TextInput
+                          style={ec.heroInput}
+                          value={setValues[exercise.sets[activeSetIdx].id]?.reps ?? ''}
+                          onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'reps', v)}
+                          placeholder="reps"
+                          placeholderTextColor={COLORS.text.muted}
+                          selectTextOnFocus
+                          returnKeyType="done"
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* LOG SET button */}
+                  <TouchableOpacity
+                    style={ec.heroLogBtn}
+                    onPress={() => onLog(exercise.sets[activeSetIdx].id, displayName, exercise.sets[activeSetIdx])}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={ec.heroLogBtnText}>LOG SET {activeSetIdx + 1}</Text>
+                    <MaterialCommunityIcons name="check" size={16} color={COLORS.primary} />
+                  </TouchableOpacity>
+                </>
+              ) : (
+                /* All sets done */
+                <View style={ec.heroDoneWrap}>
+                  <MaterialCommunityIcons name="check-decagram" size={34} color={TEAL} />
+                  <Text style={ec.heroDoneText}>ALL SETS COMPLETE</Text>
+                </View>
+              )}
+
+              {/* Set progress dots */}
+              <View style={ec.heroDotsRow}>
+                {exercise.sets.map((s, i) => {
+                  const isDotLogged  = loggedSets.has(s.id);
+                  const isDotActive  = i === activeSetIdx && !isDotLogged;
+                  return (
+                    <View
+                      key={s.id}
+                      style={[ec.heroDot, isDotLogged && ec.heroDotLogged, isDotActive && ec.heroDotActive]}
+                    />
+                  );
+                })}
+              </View>
+
+              {/* Effort + Actions (show once at least 1 set logged) */}
+              {loggedCount > 0 && (
+                <>
+                  <View style={ec.effortRow}>
+                    <Text style={ec.effortLabel}>OVERALL EFFORT</Text>
+                    <View style={ec.effortCircles}>
+                      {[1, 2, 3, 4, 5].map(v => {
+                        const selected = effort === v;
+                        return (
+                          <TouchableOpacity
+                            key={v}
+                            style={[ec.effortCircle, selected && ec.effortCircleSelected]}
+                            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortChange(v); }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[ec.effortNum, selected && ec.effortNumSelected]}>{v}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  <View style={ec.actionRow}>
+                    <TouchableOpacity style={ec.actionPill} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
+                      <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.text.muted} />
+                      <Text style={ec.actionPillText}>Swap</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[ec.actionPill, ec.actionPillPain]} onPress={() => onReportPain(displayName)} activeOpacity={0.75}>
+                      <MaterialCommunityIcons name="alert-circle-outline" size={13} color={RED} />
+                      <Text style={[ec.actionPillText, { color: RED }]}>Pain</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[ec.actionPill, ec.actionPillAdd]} onPress={() => onAddSet(exercise.id)} activeOpacity={0.75}>
+                      <MaterialCommunityIcons name="plus" size={13} color={COLORS.accent} />
+                      <Text style={[ec.actionPillText, { color: COLORS.accent }]}>Add Set</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {/* Coach notes */}
+              {exercise.notes ? <Text style={ec.notes}>{exercise.notes}</Text> : null}
+            </View>
+
+          ) : (
+          /* ══════════════════════════════════════════════════════════════════
+              NORMAL MODE — Support / Accessory / Prehab / Warm-up / Cooldown
+          ══════════════════════════════════════════════════════════════════ */
           <View style={ec.body}>
-          {/* Part 2C: Enhanced previous workout reference */}
+          {/* Previous workout reference */}
           {previousData[exercise.name]?.length > 0 ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 4 }}>
               <MaterialCommunityIcons name="history" size={12} color="#555" />
@@ -1405,27 +1652,33 @@ function ExerciseCard({
             <Text style={ec.setsLabel}>SETS</Text>
           </View>
 
-          {/* Set rows with editable inputs */}
+          {/* Set rows — active set (first unlogged) gets gold border */}
           <View>
-            {exercise.sets.map((set, idx) => (
-              <SetRow
-                key={set.id}
-                set={set}
-                setNum={idx + 1}
-                logged={loggedSets.has(set.id)}
-                weight={setValues[set.id]?.weight ?? (set.weight > 0 ? String(set.weight) : '')}
-                reps={setValues[set.id]?.reps ?? set.reps}
-                onWeightChange={(v) => onSetValueChange(set.id, 'weight', v)}
-                onRepsChange={(v) => onSetValueChange(set.id, 'reps', v)}
-                onLog={() => onLog(set.id, displayName, set)}
-                isLast={idx === exercise.sets.length - 1}
-                removeMode={inRemoveMode}
-                editMode={inEditMode}
-                onRemove={() => onRemoveSet(set.id)}
-                onEditSave={() => onEditSave(set.id)}
-                adjustActive={adjustActive}
-              />
-            ))}
+            {exercise.sets.map((set, idx) => {
+              const isActive = set.id === activeSetId;
+              const isTimed  = isTimedEx;
+              return (
+                <SetRow
+                  key={set.id}
+                  set={set}
+                  setNum={idx + 1}
+                  logged={loggedSets.has(set.id)}
+                  weight={setValues[set.id]?.weight ?? ''}
+                  reps={setValues[set.id]?.reps ?? ''}
+                  onWeightChange={(v) => onSetValueChange(set.id, 'weight', v)}
+                  onRepsChange={(v) => onSetValueChange(set.id, 'reps', v)}
+                  onLog={() => onLog(set.id, displayName, set)}
+                  isLast={idx === exercise.sets.length - 1}
+                  removeMode={inRemoveMode}
+                  editMode={inEditMode}
+                  onRemove={() => onRemoveSet(set.id)}
+                  onEditSave={() => onEditSave(set.id)}
+                  adjustActive={adjustActive}
+                  isActive={isActive}
+                  isTimed={isTimed}
+                />
+              );
+            })}
           </View>
 
           {/* ── Overall Effort selector ── */}
@@ -1520,6 +1773,7 @@ function ExerciseCard({
             <Text style={ec.notes}>{exercise.notes}</Text>
           ) : null}
         </View>
+          )}
         </>
       )}
     </View>
@@ -1529,13 +1783,15 @@ const ec = StyleSheet.create({
   card:          { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
   header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.md, paddingBottom: SPACING.sm },
   headerLeft:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
-  headerRight:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  headerRight:   { flexDirection: 'row', alignItems: 'center', gap: 2 },
   catBadge:      { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
   catBadgeText:  { fontSize: 10, fontWeight: FONTS.weights.heavy, letterSpacing: 0.5 },
   swapPill:      { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: COLORS.accent + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.full },
   swapPillText:  { fontSize: 9, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
   progressPill:  { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
   progressText:  { fontSize: 11, fontWeight: FONTS.weights.heavy },
+  // Arrow / kebab buttons in header
+  arrowBtn:      { padding: 5 },
   nameRow:       { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md },
   name:          { fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, lineHeight: 23, marginBottom: 2 },
   prescription:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
@@ -1547,6 +1803,9 @@ const ec = StyleSheet.create({
   setsHeader:    { paddingBottom: SPACING.xs, marginBottom: SPACING.xs, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   setsLabel:     { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
   notes:         { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontStyle: 'italic', marginTop: SPACING.sm, lineHeight: 17 },
+  // ── Form chip (gold, silent)
+  formChip:      { flexDirection: 'row', alignItems: 'center', gap: 5, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.accent + '15', borderWidth: 1, borderColor: COLORS.accent + '45', borderRadius: RADIUS.full, paddingVertical: 6, paddingHorizontal: 14, alignSelf: 'flex-start' },
+  formChipText:  { fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.heavy, letterSpacing: 0.8 },
   // ── Effort selector
   effortRow:         { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
   effortLabel:       { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, flex: 1 },
@@ -1575,6 +1834,24 @@ const ec = StyleSheet.create({
   doneRemoveBtnText: { color: '#EF5350', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
   doneEditBtn:       { marginTop: SPACING.sm, paddingVertical: 10, borderRadius: 8, backgroundColor: '#5B9CF520', borderWidth: 1, borderColor: '#5B9CF540', alignItems: 'center' },
   doneEditBtnText:   { color: '#5B9CF5', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
+  // ── Hero mode styles (Primary / Speed)
+  heroBody:       { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg },
+  heroSetCounter: { flexDirection: 'row', alignItems: 'baseline', marginBottom: SPACING.md },
+  heroSetLabel:   { fontSize: 22, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 0.5 },
+  heroSetTotal:   { fontSize: FONTS.sizes.base, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  heroInputRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginBottom: SPACING.lg },
+  heroInput:      { alignSelf: 'stretch', height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.accent + '50', textAlign: 'center', color: COLORS.text.primary, fontSize: 26, fontWeight: FONTS.weights.heavy },
+  heroSep:        { fontSize: 22, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, flexShrink: 0 },
+  heroTimedRow:   { marginBottom: SPACING.lg },
+  heroTimedInput: { height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.accent + '50', textAlign: 'center', color: COLORS.text.primary, fontSize: 22, fontWeight: FONTS.weights.heavy },
+  heroLogBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, marginBottom: SPACING.lg },
+  heroLogBtnText: { color: COLORS.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, letterSpacing: 1.2 },
+  heroDoneWrap:   { alignItems: 'center', paddingVertical: SPACING.xl, gap: SPACING.sm },
+  heroDoneText:   { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: TEAL, letterSpacing: 1 },
+  heroDotsRow:    { flexDirection: 'row', gap: 8, marginBottom: SPACING.md, justifyContent: 'center' },
+  heroDot:        { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.border },
+  heroDotLogged:  { backgroundColor: TEAL },
+  heroDotActive:  { backgroundColor: COLORS.accent, transform: [{ scale: 1.3 }] },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -2309,10 +2586,8 @@ export default function TodayScreen() {
       exercises.forEach(ex => {
         ex.sets.forEach(s => {
           if (!prev[s.id]) {
-            init[s.id] = {
-              weight: s.weight > 0 ? String(s.weight) : '',
-              reps: s.reps || '',
-            };
+            // Phase 1: inputs start empty — no pre-fill from target loads or prescription
+            init[s.id] = { weight: '', reps: '' };
           }
         });
       });
@@ -2742,6 +3017,24 @@ export default function TodayScreen() {
     setKebabSaving(false);
     setKebabMenuExId(null);
   };
+
+  // ── Direct inline reorder (↑↓ arrows on card header) ────────────────────────
+  const handleDirectOrder = useCallback(async (exerciseId: string, direction: 'up' | 'down') => {
+    if (!planId || !sessionId) return;
+    try {
+      await exerciseApi.reorderExercise(planId, sessionId, exerciseId, direction);
+      setExercises(prev => {
+        const idx = prev.findIndex(e => e.id === exerciseId);
+        if (direction === 'up' && idx > 0) {
+          const next = [...prev]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]; return next;
+        } else if (direction === 'down' && idx >= 0 && idx < prev.length - 1) {
+          const next = [...prev]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]; return next;
+        }
+        return prev;
+      });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) { console.warn('[Reorder] Failed:', e); }
+  }, [planId, sessionId]);
 
   const handleConfirmSwap = async (picked: PickedExercise) => {
     setModal(false);
@@ -3202,7 +3495,9 @@ export default function TodayScreen() {
         {exercises.filter(ex => ex.category === 'warmup').length > 0 && (
           <>
             <Text style={s.sectionLabel}>WARM UP</Text>
-            {exercises.filter(ex => ex.category === 'warmup').map(ex => (
+            {exercises.filter(ex => ex.category === 'warmup').map(ex => {
+              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+              return (
               <ExerciseCard
                 key={ex.id}
                 exercise={ex}
@@ -3233,9 +3528,14 @@ export default function TodayScreen() {
                   onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                   onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                 }}
-                onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
+                onKebab={() => setKebabMenuExId(ex.id)}
+                onMoveUp={() => handleDirectOrder(ex.id, 'up')}
+                onMoveDown={() => handleDirectOrder(ex.id, 'down')}
+                canMoveUp={fullIdx > 0}
+                canMoveDown={fullIdx < exercises.length - 1}
               />
-            ))}
+              );
+            })}
           </>
         )}
 
@@ -3243,7 +3543,9 @@ export default function TodayScreen() {
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
         {/* ── MAIN/SUPPLEMENTAL/ACCESSORY/PREHAB EXERCISE CARDS ── */}
-        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown').map(ex => (
+        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown').map(ex => {
+          const fullIdx = exercises.findIndex(e => e.id === ex.id);
+          return (
           <ExerciseCard
             key={ex.id}
             exercise={ex}
@@ -3279,15 +3581,22 @@ export default function TodayScreen() {
                 setCustomRestVisible(true);
               },
             }}
-            onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
+            onKebab={() => setKebabMenuExId(ex.id)}
+            onMoveUp={() => handleDirectOrder(ex.id, 'up')}
+            onMoveDown={() => handleDirectOrder(ex.id, 'down')}
+            canMoveUp={fullIdx > 0}
+            canMoveDown={fullIdx < exercises.length - 1}
           />
-        ))}
+          );
+        })}
 
         {/* ── COOLDOWN SECTION (C4: unified exercises array, category=cooldown) ── */}
         {exercises.filter(ex => ex.category === 'cooldown').length > 0 && (
           <>
             <Text style={s.sectionLabel}>COOLDOWN</Text>
-            {exercises.filter(ex => ex.category === 'cooldown').map(ex => (
+            {exercises.filter(ex => ex.category === 'cooldown').map(ex => {
+              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+              return (
               <ExerciseCard
                 key={ex.id}
                 exercise={ex}
@@ -3318,9 +3627,14 @@ export default function TodayScreen() {
                   onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                   onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                 }}
-                onKebab={planId ? () => setKebabMenuExId(ex.id) : undefined}
+                onKebab={() => setKebabMenuExId(ex.id)}
+                onMoveUp={() => handleDirectOrder(ex.id, 'up')}
+                onMoveDown={() => handleDirectOrder(ex.id, 'down')}
+                canMoveUp={fullIdx > 0}
+                canMoveDown={fullIdx < exercises.length - 1}
               />
-            ))}
+              );
+            })}
           </>
         )}
 
