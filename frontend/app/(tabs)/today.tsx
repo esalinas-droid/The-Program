@@ -827,62 +827,58 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
 }
 
 // ── RestSelector ──────────────────────────────────────────────────────────────
+// ── RestSelector — Phase 3: single REST pill (tap → CustomRestModal) ──────────
 function RestSelector({
-  category, selectedSeconds, onSelect, onCustom,
+  category, selectedSeconds, onCustom,
 }: {
   category: ExCategory;
   selectedSeconds: number | undefined;
-  onSelect: (seconds: number) => void;
+  onSelect: (seconds: number) => void; // kept for type-compat, unused in pill
   onCustom: () => void;
 }) {
-  const cfg = REST_CONFIG[category];
-  const activeSecs = selectedSeconds !== undefined ? selectedSeconds : cfg.default;
+  const cfg      = REST_CONFIG[category];
+  const active   = selectedSeconds !== undefined ? selectedSeconds : cfg.default;
+  const isCustom = selectedSeconds !== undefined && selectedSeconds !== cfg.default;
+
   return (
-    <View style={rs.row}>
+    <TouchableOpacity
+      style={rs.row}
+      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onCustom(); }}
+      activeOpacity={0.7}
+    >
       <MaterialCommunityIcons name="timer-sand" size={12} color={COLORS.text.muted} />
       <Text style={rs.label}>REST</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={rs.optionsContainer}>
-        {cfg.options.map(secs => {
-          const isActive = activeSecs === secs;
-          return (
-            <TouchableOpacity
-              key={secs}
-              style={[rs.chip, isActive && { backgroundColor: cfg.color + '20', borderColor: cfg.color }]}
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(secs); }}
-              activeOpacity={0.75}
-            >
-              <Text style={[rs.chipText, isActive && { color: cfg.color }]}>{formatTime(secs)}</Text>
-              {secs === cfg.default && selectedSeconds === undefined && (
-                <View style={[rs.defaultDot, { backgroundColor: cfg.color }]} />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-        <TouchableOpacity style={[rs.chip, rs.customChip]} onPress={onCustom} activeOpacity={0.75}>
-          <MaterialCommunityIcons name="pencil-outline" size={11} color={COLORS.text.muted} />
-          <Text style={rs.customText}>Custom</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </View>
+      <View style={[rs.pill, isCustom && { borderColor: cfg.color }]}>
+        <Text style={[rs.pillTime, { color: isCustom ? cfg.color : COLORS.text.secondary }]}>
+          {formatTime(active)}
+        </Text>
+        <MaterialCommunityIcons
+          name="pencil-outline"
+          size={11}
+          color={isCustom ? cfg.color : COLORS.text.muted}
+        />
+      </View>
+      {isCustom && (
+        <Text style={rs.defaultNote}>default: {formatTime(cfg.default)}</Text>
+      )}
+    </TouchableOpacity>
   );
 }
 const rs = StyleSheet.create({
-  row:              { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.border + '60', gap: SPACING.sm },
-  label:            { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
-  optionsContainer: { flexDirection: 'row', gap: SPACING.xs, alignItems: 'center', paddingRight: 4 },
-  chip:             { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
-  chipText:         { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, fontVariant: ['tabular-nums'] as any },
-  defaultDot:       { width: 5, height: 5, borderRadius: 2.5, marginLeft: 1 },
-  customChip:       { borderStyle: 'dashed' as any },
-  customText:       { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
+  row:         { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.border + '60', gap: SPACING.sm },
+  label:       { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
+  pill:        { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  pillTime:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, fontVariant: ['tabular-nums'] as any },
+  defaultNote: { fontSize: 9, color: COLORS.text.muted, fontStyle: 'italic' },
 });
 
 // ── CustomRestModal ───────────────────────────────────────────────────────────
 function CustomRestModal({
-  visible, currentSeconds, onConfirm, onClose,
+  visible, currentSeconds, defaultSeconds, onConfirm, onClose,
 }: {
   visible: boolean;
   currentSeconds: number;
+  defaultSeconds?: number;  // Phase 3: shows "Reset to default" link when provided
   onConfirm: (seconds: number) => void;
   onClose: () => void;
 }) {
@@ -908,6 +904,12 @@ function CustomRestModal({
     }
   };
 
+  const handleReset = () => {
+    if (!defaultSeconds) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    handleHide(() => onConfirm(defaultSeconds));
+  };
+
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow} onRequestClose={() => handleHide(onClose)}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -917,7 +919,7 @@ function CustomRestModal({
               <View style={crm.handleWrap}><View style={crm.handle} /></View>
               <View style={crm.header}>
                 <MaterialCommunityIcons name="timer-cog-outline" size={20} color={COLORS.accent} />
-                <Text style={crm.title}>Custom Rest Period</Text>
+                <Text style={crm.title}>Set Rest Period</Text>
               </View>
               <View style={crm.body}>
                 <View style={crm.inputRow}>
@@ -952,6 +954,12 @@ function CustomRestModal({
                 <TouchableOpacity style={crm.confirmBtn} onPress={handleConfirm} activeOpacity={0.85}>
                   <Text style={crm.confirmBtnText}>SET REST PERIOD</Text>
                 </TouchableOpacity>
+                {defaultSeconds !== undefined && (
+                  <TouchableOpacity style={crm.resetBtn} onPress={handleReset} activeOpacity={0.75}>
+                    <MaterialCommunityIcons name="refresh" size={13} color={COLORS.text.muted} />
+                    <Text style={crm.resetBtnText}>Reset to program default ({formatTime(defaultSeconds)})</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={crm.cancelBtn} onPress={() => handleHide(onClose)} activeOpacity={0.85}>
                   <Text style={crm.cancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
@@ -964,34 +972,37 @@ function CustomRestModal({
   );
 }
 const crm = StyleSheet.create({
-  overlay:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' },
-  sheet:         { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
-  handleWrap:    { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
-  handle:        { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
-  header:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  title:         { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
-  body:          { paddingHorizontal: SPACING.xl, paddingTop: SPACING.xl, paddingBottom: 40 },
-  inputRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.md, marginBottom: SPACING.xl },
-  inputGroup:    { alignItems: 'center', gap: SPACING.xs },
-  input:         { width: 80, height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 28, fontWeight: FONTS.weights.heavy },
-  inputLabel:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, letterSpacing: 0.5 },
-  colon:         { fontSize: 32, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, marginBottom: 16 },
-  confirmBtn:    { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, alignItems: 'center', marginBottom: SPACING.sm },
-  confirmBtnText:{ color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
-  cancelBtn:     { alignItems: 'center', paddingVertical: SPACING.md },
-  cancelBtnText: { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
+  overlay:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' },
+  sheet:          { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  handleWrap:     { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
+  handle:         { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+  header:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  title:          { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  body:           { paddingHorizontal: SPACING.xl, paddingTop: SPACING.xl, paddingBottom: 40 },
+  inputRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.md, marginBottom: SPACING.xl },
+  inputGroup:     { alignItems: 'center', gap: SPACING.xs },
+  input:          { width: 80, height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 28, fontWeight: FONTS.weights.heavy },
+  inputLabel:     { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, letterSpacing: 0.5 },
+  colon:          { fontSize: 32, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, marginBottom: 16 },
+  confirmBtn:     { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, alignItems: 'center', marginBottom: SPACING.sm },
+  confirmBtnText: { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+  resetBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: SPACING.sm, marginBottom: 2 },
+  resetBtnText:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  cancelBtn:      { alignItems: 'center', paddingVertical: SPACING.md },
+  cancelBtnText:  { color: COLORS.text.muted, fontSize: FONTS.sizes.sm },
 });
 
 // ── RestTimerBar ──────────────────────────────────────────────────────────────
 function RestTimerBar({
-  running, seconds, targetSeconds, exerciseName, onToggle, onReset,
+  running, seconds, targetSeconds, exerciseName, onToggle, onSkip, onAdjust,
 }: {
   running: boolean;
   seconds: number;
   targetSeconds: number;
   exerciseName: string;
   onToggle: () => void;
-  onReset: () => void;
+  onSkip: () => void;   // Phase 3: marks timer done (green state)
+  onAdjust: () => void; // Phase 3: opens pencil-adjust modal
 }) {
   const isIdle   = targetSeconds === 0;
   const isDone   = !running && !isIdle && seconds === 0;
@@ -1038,6 +1049,15 @@ function RestTimerBar({
           </View>
         </View>
         <View style={rt.controls}>
+          {/* Pencil: adjust active timer duration */}
+          <TouchableOpacity onPress={onAdjust} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
+            <MaterialCommunityIcons
+              name="pencil-outline"
+              size={18}
+              color={isIdle ? COLORS.border : COLORS.text.muted}
+            />
+          </TouchableOpacity>
+          {/* Play/Pause */}
           <TouchableOpacity onPress={onToggle} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
             <MaterialCommunityIcons
               name={running ? 'pause-circle' : 'play-circle'}
@@ -1045,8 +1065,13 @@ function RestTimerBar({
               color={isIdle ? COLORS.border : COLORS.accent}
             />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onReset} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
-            <MaterialCommunityIcons name="refresh" size={22} color={isIdle ? COLORS.border : COLORS.text.muted} />
+          {/* Skip: end rest, jump to done/green state */}
+          <TouchableOpacity onPress={onSkip} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
+            <MaterialCommunityIcons
+              name="skip-next"
+              size={24}
+              color={isIdle ? COLORS.border : COLORS.text.muted}
+            />
           </TouchableOpacity>
         </View>
       </View>
@@ -1922,6 +1947,7 @@ export default function TodayScreen() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerTarget, setTimerTarget]   = useState(0);     // total rest duration (for progress bar)
+  const [timerAdjustVisible, setTimerAdjustVisible] = useState(false); // Phase 3: pencil-adjust modal
   const [timerExerciseName, setTimerExerciseName] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -3731,7 +3757,8 @@ export default function TodayScreen() {
         targetSeconds={timerTarget}
         exerciseName={timerExerciseName}
         onToggle={() => setTimerRunning(r => !r)}
-        onReset={() => { setTimerRunning(false); setTimerSeconds(timerTarget); }}
+        onSkip={() => { setTimerRunning(false); setTimerSeconds(0); }}
+        onAdjust={() => setTimerAdjustVisible(true)}
       />
 
       {/* ── FIXED BOTTOM BAR ── */}
@@ -4106,7 +4133,7 @@ export default function TodayScreen() {
         );
       })()}
 
-      {/* ── CUSTOM REST MODAL ── */}
+      {/* ── CUSTOM REST MODAL (on-card: per-exercise rest duration) ── */}
       <CustomRestModal
         visible={customRestVisible}
         currentSeconds={(() => {
@@ -4114,11 +4141,33 @@ export default function TodayScreen() {
           if (!ex) return 120;
           return exerciseRestDurations[customRestExerciseId] ?? REST_CONFIG[ex.category].default;
         })()}
+        defaultSeconds={(() => {
+          const ex = exercises.find(e => e.id === customRestExerciseId);
+          return ex ? REST_CONFIG[ex.category].default : undefined;
+        })()}
         onConfirm={(secs) => {
           setExerciseRestDurations(prev => ({ ...prev, [customRestExerciseId]: secs }));
           setCustomRestVisible(false);
         }}
         onClose={() => setCustomRestVisible(false)}
+      />
+
+      {/* ── TIMER ADJUST MODAL (bar pencil: re-target active timer, keep elapsed) ── */}
+      <CustomRestModal
+        visible={timerAdjustVisible}
+        currentSeconds={timerTarget}
+        onConfirm={(secs) => {
+          // Phase 3: adjust target only, keep elapsed seconds → timer continues toward new target
+          if (timerRunning) {
+            setTimerTarget(secs);
+          } else {
+            // Paused or done: fresh start with new target
+            setTimerSeconds(secs);
+            setTimerTarget(secs);
+          }
+          setTimerAdjustVisible(false);
+        }}
+        onClose={() => setTimerAdjustVisible(false)}
       />
 
       {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
