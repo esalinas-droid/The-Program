@@ -2729,7 +2729,7 @@ export default function TodayScreen() {
   const progressPct = totalSets > 0 ? (loggedCount / totalSets) * 100 : 0;
   // Allow finish if user has logged at least 1 set (not percentage-based)
   // This ensures added sets don't push the threshold out of reach
-  const canFinish   = loggedCount > 0;
+  const canFinish   = progressPct >= 50;
 
   // Session header values
   const block        = getBlock(week);
