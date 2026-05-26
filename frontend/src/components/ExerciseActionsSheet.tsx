@@ -15,7 +15,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Modal, View, Text, StyleSheet, TouchableOpacity, Animated,
   Dimensions, Pressable, TextInput, ActivityIndicator, ScrollView,
-  Platform,
+  Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -258,6 +258,10 @@ export default function ExerciseActionsSheet({
 
         {/* ── Note view ── */}
         {view === 'note' && (
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ width: '100%' }}
+          >
           <View style={a.noteView}>
             <View style={a.noteHeader}>
               <TouchableOpacity onPress={() => setView('menu')} style={{ padding: 4 }}>
@@ -285,6 +289,7 @@ export default function ExerciseActionsSheet({
               <Text style={a.noteSaveText}>SAVE NOTE</Text>
             </TouchableOpacity>
           </View>
+          </KeyboardAvoidingView>
         )}
 
         {/* ── History view ── */}

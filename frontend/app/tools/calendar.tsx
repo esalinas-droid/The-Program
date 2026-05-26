@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView,
   Modal, ActivityIndicator, Alert, Platform, FlatList, TextInput,
-  PanResponder, Animated, Linking,
+  PanResponder, Animated, Linking, KeyboardAvoidingView,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -512,6 +512,7 @@ export default function WorkoutCalendarScreen() {
               />
             </View>
             <Text style={s.modalLabel}>Reason (optional)</Text>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
             <TextInput
               style={s.reasonInput}
               placeholder="Travel, injury, work schedule..."
@@ -531,6 +532,7 @@ export default function WorkoutCalendarScreen() {
                 <Text style={s.modalBtnConfirmTxt}>Move Session</Text>
               </TouchableOpacity>
             </View>
+            </KeyboardAvoidingView>
           </Animated.View>
         </TouchableOpacity>
       </Modal>

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
@@ -80,7 +80,8 @@ export default function CheckInScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScrollView testID="checkin-scroll">
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView testID="checkin-scroll" keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
         <View style={s.header}>
           <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={s.backBtn}>
             <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.text.secondary} />
@@ -180,6 +181,7 @@ export default function CheckInScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

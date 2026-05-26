@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, TextInput, Modal, Share, Alert,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -120,11 +121,12 @@ function GroupModal({ visible, onClose, userName }: { visible: boolean; onClose:
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: BG }}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={mod.header}>
           <Text style={mod.title}>Training Groups</Text>
           <TouchableOpacity onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={COLORS.text.secondary} /></TouchableOpacity>
         </View>
-        <ScrollView style={{ padding: 20 }}>
+        <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
           {/* Create */}
           <Text style={mod.sectionLabel}>CREATE A GROUP</Text>
           {!myCode ? (
@@ -169,6 +171,7 @@ function GroupModal({ visible, onClose, userName }: { visible: boolean; onClose:
             <Text style={[mod.primaryBtnText, { color: GOLD }]}>{joining ? 'JOINING...' : 'JOIN'}</Text>
           </TouchableOpacity>
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );

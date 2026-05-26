@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert, Image,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -1644,6 +1645,7 @@ export default function OnboardingIntake() {
 
   return (
     <SafeAreaView style={s.safe}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         {/* ── Top bar ── */}
         <View style={s.topBar}>
           {step > 1 ? (
@@ -1751,6 +1753,7 @@ export default function OnboardingIntake() {
           </TouchableOpacity>
           <Text style={s.stepCounter}>{step} of {_totalSteps}</Text>
         </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

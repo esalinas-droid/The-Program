@@ -17,6 +17,7 @@ import {
   StyleSheet,
   Animated,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -322,9 +323,11 @@ export default function BuildPlanScreen() {
     <View style={[s.screen, { paddingTop: insets.top }]}>
       {renderHeader(router, false)}
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 120 }]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* ── Skeleton mode warning ── */}
         {isSkeletonMode && (
@@ -534,6 +537,7 @@ export default function BuildPlanScreen() {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* ── Footer actions ── */}
       <View style={[s.footer, { paddingBottom: insets.bottom + SPACING.md }]}>
