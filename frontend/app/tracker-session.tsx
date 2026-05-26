@@ -627,6 +627,7 @@ function ExerciseKebabSheet({
 function ExerciseCard({  exercise, isFirst, isLast,
   onUpdateSet, onAddSet, onRemoveSet,
   onMoveUp, onMoveDown, onHowTo, onKebab, onCommitSet,
+  exerciseNote, onNoteChange,
 }: {
   exercise: SessionExercise;
   isFirst: boolean;
@@ -639,6 +640,8 @@ function ExerciseCard({  exercise, isFirst, isLast,
   onHowTo: (name: string) => void;
   onKebab: (exId: string) => void;
   onCommitSet: (exId: string, setId: string) => void;
+  exerciseNote: string;
+  onNoteChange: (v: string) => void;
 }) {
   const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
   const badgeLabel = TYPE_BADGE[exercise.prescriptionType] ?? exercise.prescriptionType.toUpperCase();
@@ -705,6 +708,21 @@ function ExerciseCard({  exercise, isFirst, isLast,
         <Text style={sc.formChipText}>FORM</Text>
       </TouchableOpacity>
 
+      {/* ── Phase 4: Per-exercise note (coach reads this) ── */}
+      <View style={sc.noteRow}>
+        <MaterialCommunityIcons name="comment-text-outline" size={13} color={COLORS.text.muted} />
+        <TextInput
+          style={sc.noteInput}
+          value={exerciseNote}
+          onChangeText={onNoteChange}
+          placeholder="Coach reads this…"
+          placeholderTextColor={COLORS.text.muted}
+          multiline
+          numberOfLines={2}
+          maxLength={200}
+        />
+      </View>
+
       {/* ── Column headers ── */}
       <ExerciseColHeaders
         prescriptionType={exercise.prescriptionType}
@@ -767,6 +785,8 @@ export default function TrackerSessionScreen() {
   const [kebabTargetId,   setKebabTargetId]   = useState<string | null>(null);
   const [swapTargetId,    setSwapTargetId]    = useState<string | null>(null);
   const kebabExercise = exercises.find(e => e.id === kebabTargetId) ?? null;
+  // Phase 4: per-exercise notes keyed by exercise.id
+  const [notesByExercise, setNotesByExercise] = useState<Record<string, string>>({});
 
   const labelInputRef = useRef<TextInput>(null);
 
@@ -909,7 +929,7 @@ export default function TrackerSessionScreen() {
         exercise: ex.name,
         setIndex: setIdx,
         prescriptionType: ex.prescriptionType,
-        notes: sessionNotes.trim() || undefined,
+        notes: notesByExercise[exId]?.trim() || undefined,
       };
       const pt = ex.prescriptionType;
       if (['weighted', 'emom', 'amrap', 'for_time'].includes(pt)) {
@@ -1047,6 +1067,8 @@ export default function TrackerSessionScreen() {
               onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
               onKebab={(exId) => setKebabTargetId(exId)}
               onCommitSet={commitSet}
+              exerciseNote={notesByExercise[ex.id] ?? ''}
+              onNoteChange={(v) => setNotesByExercise(prev => ({ ...prev, [ex.id]: v }))}
             />
           ))}
 
@@ -1235,6 +1257,18 @@ const sc = StyleSheet.create({
   },
   formChipText: {
     fontSize: 10, color: GOLD, fontWeight: FONTS.weights.heavy, letterSpacing: 0.8,
+  },
+
+  // Phase 4: per-exercise note (coach reads this)
+  noteRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm,
+    paddingHorizontal: SPACING.md, paddingTop: SPACING.sm, paddingBottom: SPACING.xs,
+    borderTopWidth: 1, borderTopColor: `${COLORS.border}50`,
+    marginTop: SPACING.xs,
+  },
+  noteInput: {
+    flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary,
+    minHeight: 36, paddingVertical: 4, lineHeight: 18,
   },
 
   // Column headers
