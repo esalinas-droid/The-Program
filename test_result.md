@@ -1220,7 +1220,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "AsyncStorage persistence — setValues + loggedSets survive tab switches"
+    - "Phase 4 — Timer system 7-mode picker (cog button, flat grid, gold selection, dismiss-safe)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

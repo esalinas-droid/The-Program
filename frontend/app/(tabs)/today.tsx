@@ -994,61 +994,95 @@ const crm = StyleSheet.create({
 
 // ── RestTimerBar ──────────────────────────────────────────────────────────────
 function RestTimerBar({
-  running, seconds, targetSeconds, exerciseName, onToggle, onSkip, onAdjust,
+  running, seconds, targetSeconds, exerciseName, onToggle, onSkip, onAdjust, onOpenPicker,
+  timerMode, timerPhase, timerRound, timerSide,
 }: {
   running: boolean;
   seconds: number;
   targetSeconds: number;
   exerciseName: string;
   onToggle: () => void;
-  onSkip: () => void;   // Phase 3: marks timer done (green state)
-  onAdjust: () => void; // Phase 3: opens pencil-adjust modal
+  onSkip: () => void;
+  onAdjust: () => void;
+  onOpenPicker?: () => void;
+  timerMode?: 'rest' | 'hold' | 'stopwatch' | 'for_time' | 'emom' | 'amrap' | 'custom_interval';
+  timerPhase?: 'work' | 'rest';
+  timerRound?: number;
+  timerSide?: 'left' | 'right' | null;
 }) {
-  const isIdle   = targetSeconds === 0;
-  const isDone   = !running && !isIdle && seconds === 0;
-  const progress = targetSeconds > 0 ? Math.max(0, (targetSeconds - seconds) / targetSeconds) : 0;
+  const isIdle   = targetSeconds === 0 && !running;
+  const isDone   = !running && targetSeconds > 0 && seconds === 0 && timerMode !== 'stopwatch' && timerMode !== 'for_time';
+  const isCountUp = timerMode === 'stopwatch' || timerMode === 'for_time';
+  const progress  = (!isCountUp && targetSeconds > 0) ? Math.max(0, (targetSeconds - seconds) / targetSeconds) : 0;
+
+  // ── Mode-aware label ──────────────────────────────────────────────────────
+  const modeLabel = timerMode === 'hold'
+    ? (timerSide === 'left' ? 'HOLD L' : timerSide === 'right' ? 'HOLD R' : 'HOLD')
+    : timerMode === 'emom'            ? 'EMOM'
+    : timerMode === 'amrap'           ? 'AMRAP'
+    : timerMode === 'stopwatch'       ? 'WATCH'
+    : timerMode === 'for_time'        ? 'TIME'
+    : timerMode === 'custom_interval' ? (timerPhase === 'work' ? 'WORK' : 'REST')
+    : 'REST';
+
+  const isNonRest = timerMode && timerMode !== 'rest';
+
+  // Sub-context line: round number for EMOM, phase hint for intervals
+  const contextLine = timerMode === 'emom' && timerRound
+    ? `Round ${timerRound}`
+    : timerMode === 'custom_interval'
+    ? (timerPhase === 'work' ? 'Work' : 'Rest')
+    : exerciseName || '';
 
   const timeColor = isDone            ? TEAL
-    : (running && seconds <= 10)      ? RED
+    : (running && !isCountUp && seconds <= 10) ? RED
     : running                         ? COLORS.accent
     : COLORS.text.muted;
 
-  const totalTime = targetSeconds > 0 ? formatTime(targetSeconds) : '';
+  const totalTime = (!isCountUp && targetSeconds > 0) ? formatTime(targetSeconds) : '';
 
   return (
     <View style={rt.bar}>
       {/* Progress track */}
-      {!isIdle && (
+      {!isIdle && !isCountUp && (
         <View style={rt.progressTrack}>
           <View style={[rt.progressFill, {
             width: `${Math.round(progress * 100)}%` as any,
-            backgroundColor: isDone ? TEAL : (running && seconds <= 10) ? RED : COLORS.accent,
+            backgroundColor: isDone ? TEAL : (running && seconds <= 10) ? RED : (isNonRest ? COLORS.accentBlue : COLORS.accent),
           }]} />
         </View>
       )}
       <View style={rt.content}>
         <View style={rt.left}>
           <MaterialCommunityIcons
-            name={isDone ? 'check-circle' : 'timer-outline'}
+            name={isDone ? 'check-circle' : isCountUp ? 'stopwatch' : 'timer-outline'}
             size={18}
             color={timeColor}
           />
           <View style={rt.textStack}>
-            {exerciseName && !isIdle ? (
-              <Text style={rt.exerciseName} numberOfLines={1}>{exerciseName}</Text>
+            {contextLine && !isIdle ? (
+              <Text style={rt.exerciseName} numberOfLines={1}>{contextLine}</Text>
             ) : null}
             <View style={rt.timeRow}>
-              <Text style={rt.label}>REST</Text>
+              <Text style={[rt.label, isNonRest && running && { color: COLORS.accentBlue }]}>{modeLabel}</Text>
               <Text style={[rt.time, { color: timeColor }]}>
                 {isIdle ? '—  —' : formatTime(seconds)}
               </Text>
               {totalTime ? <Text style={rt.totalTime}> / {totalTime}</Text> : null}
               {isDone ? <Text style={rt.doneText}>DONE ✓</Text> : null}
-              {running ? <View style={rt.activeDot} /> : null}
+              {running ? <View style={[rt.activeDot, isNonRest && { backgroundColor: COLORS.accentBlue }]} /> : null}
             </View>
           </View>
         </View>
         <View style={rt.controls}>
+          {/* Cog: open Phase 4 timer picker (never kills running timer) */}
+          <TouchableOpacity onPress={onOpenPicker} style={rt.controlBtn} activeOpacity={0.75}>
+            <MaterialCommunityIcons
+              name="timer-cog-outline"
+              size={20}
+              color={isNonRest ? COLORS.accent : COLORS.text.muted}
+            />
+          </TouchableOpacity>
           {/* Pencil: adjust active timer duration */}
           <TouchableOpacity onPress={onAdjust} style={rt.controlBtn} activeOpacity={0.75} disabled={isIdle}>
             <MaterialCommunityIcons
@@ -4168,8 +4202,13 @@ export default function TodayScreen() {
         targetSeconds={timerTarget}
         exerciseName={timerExerciseName}
         onToggle={() => setTimerRunning(r => !r)}
-        onSkip={() => { setTimerRunning(false); setTimerSeconds(0); }}
+        onSkip={() => { setTimerRunning(false); setTimerSeconds(0); setTimerMode('rest'); setTimerIsCountUp(false); }}
         onAdjust={() => setTimerAdjustVisible(true)}
+        onOpenPicker={() => setTimerPickerVisible(true)}
+        timerMode={timerMode}
+        timerPhase={timerPhase}
+        timerRound={timerRound}
+        timerSide={timerSide}
       />
 
       {/* ── FIXED BOTTOM BAR ── */}
@@ -4579,6 +4618,88 @@ export default function TodayScreen() {
           setTimerAdjustVisible(false);
         }}
         onClose={() => setTimerAdjustVisible(false)}
+      />
+
+      {/* ── PHASE 4: TIMER PICKER MODAL (cog button — 7 modes flat grid) ─────── */}
+      {/* NOTE: onClose only hides the picker, it does NOT touch timerRunning.       */}
+      {/* Closing/tapping-outside never kills a running timer.                        */}
+      {/* ⚠️  Phase 7 TODO (EAS native build required):                               */}
+      {/*     backgrounded timer survival + audio when screen is off.                */}
+      {/*     Set UIBackgroundModes:audio + staysActiveInBackground:true in app.json. */}
+      <TimerPickerModal
+        visible={timerPickerVisible}
+        selectedMode={timerMode}
+        restCurrentSecs={timerTarget > 0 ? timerTarget : 300}
+        onClose={() => setTimerPickerVisible(false)}
+
+        onConfirmRest={(secs) => {
+          setTimerMode('rest');
+          setTimerIsCountUp(false);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmHold={(secs, hasSides) => {
+          setTimerMode('hold');
+          setTimerIsCountUp(false);
+          setTimerHasSides(hasSides);
+          setTimerSide(hasSides ? 'left' : null);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmCountUp={(mode) => {
+          setTimerMode(mode);
+          setTimerIsCountUp(true);
+          setTimerSeconds(0);
+          setTimerTarget(0);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmAmrap={(secs) => {
+          setTimerMode('amrap');
+          setTimerIsCountUp(false);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmEmom={(periodSecs, totalRounds) => {
+          setTimerMode('emom');
+          setTimerIsCountUp(false);
+          setTimerRound(1);
+          setTimerTotalRounds(totalRounds);
+          setTimerSeconds(periodSecs);
+          setTimerTarget(periodSecs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmCustom={(workSecs, restSecs, rounds) => {
+          setTimerMode('custom_interval');
+          setTimerIsCountUp(false);
+          setTimerPhase('work');
+          setTimerWorkSecs(workSecs);
+          setTimerRestIntervalSecs(restSecs);
+          setTimerRound(1);
+          setTimerTotalRounds(rounds);
+          setTimerSeconds(workSecs);
+          setTimerTarget(workSecs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
       />
 
       {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
