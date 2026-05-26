@@ -3,11 +3,11 @@
  * Manual "New session" creation screen.
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, KeyboardAvoidingView, Platform,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, Animated, Modal, Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -325,11 +325,275 @@ function ExerciseColHeaders({
   }
 }
 
+// ── Phase 2: Kebab Sheet ──────────────────────────────────────────────────────
+
+const TRACKER_MODIFIERS = ['Per side', 'Tempo', 'Drop set', 'Superset'];
+
+// Field-family map for data-loss detection
+const TYPE_FAMILIES: Record<string, string> = {
+  weighted: 'A', emom: 'A', amrap: 'A', for_time: 'A',
+  timed: 'B', distance: 'C', height: 'D', calories: 'E',
+};
+
+/** Single row inside the kebab menu */
+function KebabRow({
+  icon, label, note, onPress, disabled = false, destructive = false,
+}: {
+  icon: string; label: string; note?: string;
+  onPress: () => void; disabled?: boolean; destructive?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[kb.row, disabled && kb.rowDisabled]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.65}
+    >
+      <MaterialCommunityIcons
+        name={icon as any} size={20}
+        color={disabled ? COLORS.text.muted : destructive ? COLORS.status?.error ?? '#FF4D4D' : COLORS.text.secondary}
+      />
+      <View style={{ flex: 1, marginLeft: SPACING.md }}>
+        <Text style={[kb.rowLabel, disabled && kb.rowLabelDisabled, destructive && kb.rowLabelDestructive]}>
+          {label}
+        </Text>
+        {note ? <Text style={kb.rowNote}>{note}</Text> : null}
+      </View>
+      {!disabled && !destructive && (
+        <MaterialCommunityIcons name="chevron-right" size={16} color={COLORS.text.muted} />
+      )}
+    </TouchableOpacity>
+  );
+}
+
+type KebabView = 'menu' | 'change-type' | 'modifiers' | 'confirm-remove';
+
+interface KebabSheetProps {
+  exercise: SessionExercise;
+  isFirst: boolean;
+  isLast: boolean;
+  visible: boolean;
+  onClose: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onSwapRename: () => void;
+  onChangeType: (newType: PrescriptionType) => void;
+  onToggleModifier: (mod: string) => void;
+  onRemove: () => void;
+}
+
+function ExerciseKebabSheet({
+  exercise, isFirst, isLast, visible, onClose,
+  onMoveUp, onMoveDown, onSwapRename,
+  onChangeType, onToggleModifier, onRemove,
+}: KebabSheetProps) {
+  const [view, setView] = useState<KebabView>('menu');
+  const [pendingType, setPendingType] = useState<PrescriptionType | null>(null);
+  const slideAnim = useRef(new Animated.Value(700)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setView('menu');
+      setPendingType(null);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220 }).start();
+    } else {
+      Animated.timing(slideAnim, { toValue: 700, duration: 200, useNativeDriver: true }).start();
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  /** True when switching to newType would erase existing set values */
+  const willLoseData = (newType: PrescriptionType) =>
+    TYPE_FAMILIES[exercise.prescriptionType] !== TYPE_FAMILIES[newType] &&
+    exercise.sets.some(s => hasAnyValue(s, exercise.prescriptionType));
+
+  const handleTypeSelect = (type: PrescriptionType) => {
+    if (type === exercise.prescriptionType) { onClose(); return; }
+    if (willLoseData(type)) {
+      setPendingType(type);
+    } else {
+      onChangeType(type);
+    }
+  };
+
+  const subTitleMap: Record<KebabView, string> = {
+    'menu': '',
+    'change-type': 'Change Type',
+    'modifiers': 'Modifiers',
+    'confirm-remove': 'Remove Exercise?',
+  };
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={kb.overlay} onPress={onClose} />
+      <Animated.View style={[kb.sheet, { transform: [{ translateY: slideAnim }] }]}>
+        {/* Drag handle */}
+        <View style={kb.handle} />
+
+        {/* Sub-view header row (Back + title) — hidden on main menu */}
+        {view !== 'menu' && (
+          <View style={kb.subHeader}>
+            <TouchableOpacity
+              onPress={() => { setView('menu'); setPendingType(null); }}
+              style={kb.backBtn}
+            >
+              <MaterialCommunityIcons name="arrow-left" size={18} color={COLORS.accent} />
+              <Text style={kb.backLabel}>Back</Text>
+            </TouchableOpacity>
+            <Text style={kb.subTitle}>{subTitleMap[view]}</Text>
+            <View style={{ width: 60 }} />
+          </View>
+        )}
+
+        {/* ─── MAIN MENU ─── */}
+        {view === 'menu' && (
+          <>
+            <View style={kb.exHeader}>
+              <Text style={kb.exName} numberOfLines={2}>{exercise.name}</Text>
+            </View>
+            {/* Reorder */}
+            <View style={kb.group}>
+              <KebabRow
+                icon="chevron-up" label="Move Up"
+                disabled={isFirst}
+                onPress={() => { onMoveUp(); onClose(); }}
+              />
+              <KebabRow
+                icon="chevron-down" label="Move Down"
+                disabled={isLast}
+                onPress={() => { onMoveDown(); onClose(); }}
+              />
+            </View>
+            <View style={kb.divider} />
+            {/* Edit */}
+            <View style={kb.group}>
+              <KebabRow
+                icon="swap-horizontal" label="Swap / Rename"
+                onPress={() => { onClose(); setTimeout(onSwapRename, 280); }}
+              />
+              <KebabRow
+                icon="lightning-bolt" label="Change Type"
+                note={TYPE_BADGE[exercise.prescriptionType]}
+                onPress={() => setView('change-type')}
+              />
+              <KebabRow
+                icon="dots-horizontal-circle-outline" label="Modifiers"
+                note={exercise.modifiers.length > 0 ? exercise.modifiers.join(', ') : undefined}
+                onPress={() => setView('modifiers')}
+              />
+            </View>
+            <View style={kb.divider} />
+            {/* Danger */}
+            <View style={kb.group}>
+              <KebabRow
+                icon="trash-can-outline" label="Remove Exercise"
+                destructive
+                onPress={() => setView('confirm-remove')}
+              />
+            </View>
+            <View style={{ height: SPACING.lg }} />
+          </>
+        )}
+
+        {/* ─── CHANGE TYPE ─── */}
+        {view === 'change-type' && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: SPACING.xl }}>
+            {PRESCRIPTION_TYPES.map(pt => {
+              const isCurrent = pt.type === exercise.prescriptionType;
+              const isPending = pendingType === pt.type;
+              return (
+                <TouchableOpacity
+                  key={pt.type}
+                  style={[kb.typeRow, isCurrent && kb.typeRowActive, isPending && kb.typeRowPending]}
+                  onPress={() => handleTypeSelect(pt.type as PrescriptionType)}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons
+                    name={pt.icon as any} size={18}
+                    color={isCurrent ? GOLD : COLORS.text.secondary}
+                  />
+                  <View style={{ flex: 1, marginLeft: SPACING.sm }}>
+                    <Text style={[kb.typeLabel, isCurrent && kb.typeLabelActive]}>{pt.label}</Text>
+                    {isCurrent && <Text style={kb.typeCurrent}>Current</Text>}
+                  </View>
+                  {isCurrent && <MaterialCommunityIcons name="check" size={16} color={GOLD} />}
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Data-loss warning banner */}
+            {pendingType && (
+              <View style={kb.dataLossBox}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#F5A623" />
+                <Text style={kb.dataLossText}>
+                  Switching to {TYPE_BADGE[pendingType] ?? pendingType.toUpperCase()} will clear the
+                  field values in {exercise.sets.length} set{exercise.sets.length !== 1 ? 's' : ''}.
+                  {' '}This cannot be undone.
+                </Text>
+                <View style={kb.dataLossActions}>
+                  <TouchableOpacity style={kb.keepBtn} onPress={() => setPendingType(null)}>
+                    <Text style={kb.keepBtnText}>Keep values</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={kb.switchBtn} onPress={() => onChangeType(pendingType)}>
+                    <Text style={kb.switchBtnText}>Switch anyway</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        )}
+
+        {/* ─── MODIFIERS ─── */}
+        {view === 'modifiers' && (
+          <View style={kb.modContainer}>
+            {TRACKER_MODIFIERS.map(mod => {
+              const active = exercise.modifiers.includes(mod);
+              return (
+                <TouchableOpacity
+                  key={mod}
+                  style={kb.modRow}
+                  onPress={() => onToggleModifier(mod)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[kb.modLabel, active && kb.modLabelActive]}>{mod}</Text>
+                  <View style={[kb.modToggle, active && kb.modToggleActive]}>
+                    {active && <MaterialCommunityIcons name="check" size={14} color={COLORS.background} />}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        {/* ─── CONFIRM REMOVE ─── */}
+        {view === 'confirm-remove' && (
+          <View style={kb.confirmWrap}>
+            <MaterialCommunityIcons name="trash-can-outline" size={44} color="#FF4D4D" />
+            <Text style={kb.confirmTitle}>Remove "{exercise.name}"?</Text>
+            <Text style={kb.confirmSub}>
+              Deletes all {exercise.sets.length} set{exercise.sets.length !== 1 ? 's' : ''} and cannot be undone.
+            </Text>
+            <TouchableOpacity style={kb.removeBtn} onPress={onRemove} activeOpacity={0.85}>
+              <MaterialCommunityIcons name="trash-can-outline" size={16} color="#fff" />
+              <Text style={kb.removeBtnText}>Remove exercise</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={kb.cancelBtn} onPress={() => setView('menu')} activeOpacity={0.7}>
+              <Text style={kb.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </Animated.View>
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** Full exercise card */
-function ExerciseCard({
-  exercise, isFirst, isLast,
+function ExerciseCard({  exercise, isFirst, isLast,
   onUpdateSet, onAddSet, onRemoveSet,
-  onMoveUp, onMoveDown, onHowTo,
+  onMoveUp, onMoveDown, onHowTo, onKebab,
 }: {
   exercise: SessionExercise;
   isFirst: boolean;
@@ -340,6 +604,7 @@ function ExerciseCard({
   onMoveUp: (exId: string) => void;
   onMoveDown: (exId: string) => void;
   onHowTo: (name: string) => void;
+  onKebab: (exId: string) => void;
 }) {
   const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
   const badgeLabel = TYPE_BADGE[exercise.prescriptionType] ?? exercise.prescriptionType.toUpperCase();
@@ -383,9 +648,10 @@ function ExerciseCard({
               color={isLast ? COLORS.text.muted : COLORS.text.secondary}
             />
           </TouchableOpacity>
-          {/* ⋮ kebab — inert placeholder; full actions arrive in Phase 2 */}
+          {/* ⋮ kebab — opens ExerciseKebabSheet */}
           <TouchableOpacity
             style={sc.headerIconBtn}
+            onPress={() => onKebab(exercise.id)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <MaterialCommunityIcons name="dots-vertical" size={18} color={COLORS.text.secondary} />
@@ -458,23 +724,44 @@ export default function TrackerSessionScreen() {
   const [saving,          setSaving]          = useState(false);
   const [howToVisible,    setHowToVisible]    = useState(false);
   const [howToExercise,   setHowToExercise]   = useState('');
+  // Kebab state — use id-based derivation so exercise is always fresh from state
+  const [kebabTargetId,   setKebabTargetId]   = useState<string | null>(null);
+  const [swapTargetId,    setSwapTargetId]    = useState<string | null>(null);
+  const kebabExercise = exercises.find(e => e.id === kebabTargetId) ?? null;
 
   const labelInputRef = useRef<TextInput>(null);
 
   // ── Exercise management ────────────────────────────────────────────────────
   const handleAddExercise = useCallback((added: AddedExercise) => {
-    let counter = 0;
-    counter++;
-    const newEx: SessionExercise = {
-      id: `ex-${Date.now()}-${counter}`,
-      name: added.name,
-      category: added.category,
-      prescriptionType: added.prescriptionType,
-      modifiers: added.modifiers,
-      sets: [makeDefaultSet()],
-    };
-    setExercises(prev => [...prev, newEx]);
-  }, []);
+    if (swapTargetId) {
+      // SWAP mode: replace the target exercise's name/type/modifiers; reset sets
+      setExercises(prev => prev.map(e => {
+        if (e.id !== swapTargetId) return e;
+        return {
+          ...e,
+          name: added.name,
+          category: added.category,
+          prescriptionType: added.prescriptionType,
+          modifiers: added.modifiers,
+          sets: [makeDefaultSet()],
+        };
+      }));
+      setSwapTargetId(null);
+    } else {
+      // Normal add
+      let counter = 0;
+      counter++;
+      const newEx: SessionExercise = {
+        id: `ex-${Date.now()}-${counter}`,
+        name: added.name,
+        category: added.category,
+        prescriptionType: added.prescriptionType,
+        modifiers: added.modifiers,
+        sets: [makeDefaultSet()],
+      };
+      setExercises(prev => [...prev, newEx]);
+    }
+  }, [swapTargetId]);
 
   const removeExercise = useCallback((exId: string) =>
     setExercises(prev => prev.filter(e => e.id !== exId)), []);
@@ -508,6 +795,32 @@ export default function TrackerSessionScreen() {
       [arr[idx], arr[next]] = [arr[next], arr[idx]];
       return arr;
     });
+  }, []);
+
+  // ── Kebab actions ──────────────────────────────────────────────────────────
+  const handleChangeType = useCallback((exId: string, newType: PrescriptionType) => {
+    setExercises(prev => prev.map(e => {
+      if (e.id !== exId) return e;
+      return {
+        ...e,
+        prescriptionType: newType,
+        sets: e.sets.map(() => makeDefaultSet()),
+      };
+    }));
+    setKebabTargetId(null);
+  }, []);
+
+  const handleToggleModifier = useCallback((exId: string, mod: string) => {
+    setExercises(prev => prev.map(e => {
+      if (e.id !== exId) return e;
+      const has = e.modifiers.includes(mod);
+      return { ...e, modifiers: has ? e.modifiers.filter(m => m !== mod) : [...e.modifiers, mod] };
+    }));
+  }, []);
+
+  const handleKebabRemove = useCallback((exId: string) => {
+    setExercises(prev => prev.filter(e => e.id !== exId));
+    setKebabTargetId(null);
   }, []);
 
   // ── Label edit ─────────────────────────────────────────────────────────────
@@ -683,6 +996,7 @@ export default function TrackerSessionScreen() {
               onMoveUp={() => moveExercise(ex.id, 'up')}
               onMoveDown={() => moveExercise(ex.id, 'down')}
               onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
+              onKebab={(exId) => setKebabTargetId(exId)}
             />
           ))}
 
@@ -729,6 +1043,26 @@ export default function TrackerSessionScreen() {
         exercise={howToExercise}
         onClose={() => setHowToVisible(false)}
       />
+
+      {/* ── Exercise Kebab Sheet ─────────────────────────────────────────── */}
+      {kebabExercise && (
+        <ExerciseKebabSheet
+          exercise={kebabExercise}
+          isFirst={exercises.findIndex(e => e.id === kebabTargetId) === 0}
+          isLast={exercises.findIndex(e => e.id === kebabTargetId) === exercises.length - 1}
+          visible={!!kebabTargetId}
+          onClose={() => setKebabTargetId(null)}
+          onMoveUp={() => moveExercise(kebabTargetId!, 'up')}
+          onMoveDown={() => moveExercise(kebabTargetId!, 'down')}
+          onSwapRename={() => {
+            setSwapTargetId(kebabTargetId!);
+            setShowAddSheet(true);
+          }}
+          onChangeType={(type) => handleChangeType(kebabTargetId!, type)}
+          onToggleModifier={(mod) => handleToggleModifier(kebabTargetId!, mod)}
+          onRemove={() => handleKebabRemove(kebabTargetId!)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -944,4 +1278,140 @@ const sc = StyleSheet.create({
     color: COLORS.primary, fontSize: FONTS.sizes.base,
     fontWeight: FONTS.weights.bold,
   },
+});
+
+// ── Kebab Sheet Styles ────────────────────────────────────────────────────────
+const kb = StyleSheet.create({
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    overflow: 'hidden',
+    maxHeight: '85%',
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: COLORS.border,
+    alignSelf: 'center', marginTop: SPACING.sm, marginBottom: SPACING.xs,
+  },
+
+  // Exercise name header
+  exHeader: {
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  exName: {
+    fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold,
+    color: COLORS.text.primary,
+  },
+
+  // Sub-view header (Back + title)
+  subHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, width: 60 },
+  backLabel: { fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  subTitle: {
+    flex: 1, textAlign: 'center',
+    fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, color: COLORS.text.primary,
+  },
+
+  // Menu items
+  group: {},
+  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.xs },
+  row: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: SPACING.md, paddingVertical: 13,
+    minHeight: 48,
+  },
+  rowDisabled: { opacity: 0.35 },
+  rowLabel: {
+    fontSize: FONTS.sizes.base, color: COLORS.text.primary, fontWeight: FONTS.weights.medium,
+  },
+  rowLabelDisabled: { color: COLORS.text.muted },
+  rowLabelDestructive: { color: '#FF4D4D' },
+  rowNote: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+
+  // Type picker
+  typeRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.md,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  typeRowActive: { backgroundColor: `${GOLD}12` },
+  typeRowPending: { backgroundColor: '#F5A62315' },
+  typeLabel: {
+    fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium,
+  },
+  typeLabelActive: { color: GOLD, fontWeight: FONTS.weights.bold },
+  typeCurrent: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
+
+  // Data-loss warning
+  dataLossBox: {
+    margin: SPACING.md, padding: SPACING.md,
+    backgroundColor: '#F5A62320',
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: '#F5A62345',
+    gap: SPACING.sm,
+  },
+  dataLossText: {
+    fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 18,
+  },
+  dataLossActions: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xs },
+  keepBtn: {
+    flex: 1, paddingVertical: SPACING.sm, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  keepBtnText: { color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold },
+  switchBtn: {
+    flex: 1, paddingVertical: SPACING.sm, borderRadius: RADIUS.md,
+    backgroundColor: '#F5A623',
+    alignItems: 'center',
+  },
+  switchBtnText: { color: COLORS.background, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold },
+
+  // Modifiers
+  modContainer: { padding: SPACING.md, gap: SPACING.sm },
+  modRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: SPACING.sm, minHeight: 48,
+  },
+  modLabel: {
+    fontSize: FONTS.sizes.base, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium,
+  },
+  modLabelActive: { color: COLORS.text.primary },
+  modToggle: {
+    width: 24, height: 24, borderRadius: 12,
+    borderWidth: 2, borderColor: COLORS.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  modToggleActive: { backgroundColor: GOLD, borderColor: GOLD },
+
+  // Confirm remove
+  confirmWrap: {
+    alignItems: 'center', padding: SPACING.xl, gap: SPACING.md,
+    paddingBottom: SPACING.xxl,
+  },
+  confirmTitle: {
+    fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold,
+    color: COLORS.text.primary, textAlign: 'center',
+  },
+  confirmSub: {
+    fontSize: FONTS.sizes.sm, color: COLORS.text.muted,
+    textAlign: 'center', lineHeight: 20,
+  },
+  removeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: '#FF4D4D', borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md,
+    width: '100%', justifyContent: 'center',
+  },
+  removeBtnText: { color: '#fff', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.base },
+  cancelBtn: {
+    paddingVertical: SPACING.sm, width: '100%', alignItems: 'center',
+  },
+  cancelBtnText: { color: COLORS.text.muted, fontSize: FONTS.sizes.base },
 });
