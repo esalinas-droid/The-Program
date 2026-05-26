@@ -2918,13 +2918,17 @@ async def _migrate_warmup_cooldown():
     """
     Bug 2 corrective migration: detect sessions seeded with the old generic placeholder
     names ("General Warm-Up", "Dynamic Mobility", "Static Stretching", etc.) and replace
-    them with real per-session-type warmup drills + the 4 correct cooldown exercises.
-    Source for warmup lists: server.py /warmup/today endpoint, lines 5311-5349.
-    Source for cooldown list: original today.tsx hardcoded block.
+    them with the 4 correct cooldown exercises.
+
+    Phase 5 update: warmup drills are now served exclusively by warmupApi.getToday()
+    (the WarmupDrillsCard component).  The plan structure no longer stores
+    category:'warmup' exercises.  This migration:
+      • strips any existing category:'warmup' exercises from every plan session
+      • still fixes stale cooldown placeholder names as before
+    _wu_steps / _make_wu_ex helpers removed — WarmupDrillsCard is the single source.
     """
     import uuid as _uuid
 
-    _OLD_WARMUP_NAMES  = {"General Warm-Up", "Dynamic Mobility", "Activation Circuit"}
     _OLD_COOLDOWN_NAMES = {"Static Stretching", "Recovery Breathing"}
 
     _COOLDOWN_ITEMS = [
@@ -2933,37 +2937,6 @@ async def _migrate_warmup_cooldown():
         ("cd-foam-roll",   "Foam Roll Major Muscle Groups",  "2 min per area",                   "Quads, hamstrings, calves, lats, upper back"),
         ("cd-breathing",   "Deep Breathing / Box Breathing", "2 min",                            "4 count in, 4 count hold, 4 count out"),
     ]
-
-    def _wu_steps(session_type: str) -> list:
-        stype = (session_type or "").lower()
-        if "lower" in stype or "event" in stype:
-            return [
-                "Hip circles — 10 reps each direction (slow, deliberate)",
-                "Leg swings — 10 forward / 10 lateral per leg",
-                "Goblet squat — 10 reps bodyweight (pause 1s at bottom)",
-                "Hip flexor stretch — 30s per side",
-                "Band walks — 15 steps each direction",
-                "Empty bar squat — 2 × 10 (groove the pattern)",
-            ]
-        else:
-            return [
-                "Band pull-aparts — 3 × 20 (scapular retraction)",
-                "Shoulder dislocates (band) — 15 reps slow",
-                "Face pulls (light) — 20 reps",
-                "Light dumbbell press — 12 reps (not taxing)",
-                "Thoracic extension over foam roller — 30s",
-                "Empty bar press — 2 × 10 slow tempo (groove the press)",
-            ]
-
-    def _make_wu_ex(step: str, order: int) -> dict:
-        parts = step.split(" — ", 1)
-        name = parts[0].strip()
-        rx   = parts[1].strip() if len(parts) > 1 else ""
-        slug = name.lower().replace(" ", "-").replace("(", "").replace(")", "")[:24]
-        return {"exerciseId": f"wu-{slug}", "name": name, "prescription": rx,
-                "order": order, "notes": "",
-                "sessionExerciseId": str(_uuid.uuid4()), "category": "warmup",
-                "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
 
     def _make_cd_exercises() -> list:
         return [
@@ -2986,21 +2959,19 @@ async def _migrate_warmup_cooldown():
                             warmup_names   = {e.get("name") for e in existing if e.get("category") == "warmup"}
                             cooldown_names = {e.get("name") for e in existing if e.get("category") == "cooldown"}
 
-                            needs_wu_fix = bool(warmup_names & _OLD_WARMUP_NAMES) or not warmup_names
-                            needs_cd_fix = bool(cooldown_names & _OLD_COOLDOWN_NAMES) or not cooldown_names
+                            # Strip any category:warmup — WarmupDrillsCard owns drills now
+                            needs_wu_strip = bool(warmup_names)
+                            needs_cd_fix   = bool(cooldown_names & _OLD_COOLDOWN_NAMES) or not cooldown_names
 
-                            if needs_wu_fix or needs_cd_fix:
+                            if needs_wu_strip or needs_cd_fix:
                                 main_exs = [e for e in existing if e.get("category") not in ("warmup", "cooldown")]
-
-                                new_wu = ([_make_wu_ex(s, i + 1) for i, s in enumerate(_wu_steps(_sess.get("sessionType", "")))]
-                                          if needs_wu_fix else
-                                          [e for e in existing if e.get("category") == "warmup"])
 
                                 new_cd = (_make_cd_exercises()
                                           if needs_cd_fix else
                                           [e for e in existing if e.get("category") == "cooldown"])
 
-                                _sess["exercises"] = new_wu + main_exs + new_cd
+                                # No warmup exercises in plan — empty list intentional
+                                _sess["exercises"] = main_exs + new_cd
                                 modified = True
 
             if modified:

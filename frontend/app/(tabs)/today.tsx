@@ -4399,57 +4399,6 @@ export default function TodayScreen() {
           />
         )}
 
-        {/* ── WARM UP SECTION (C4: unified exercises array, category=warmup) ── */}
-        {exercises.filter(ex => ex.category === 'warmup').length > 0 && (
-          <>
-            <Text style={s.sectionLabel}>WARM UP</Text>
-            {exercises.filter(ex => ex.category === 'warmup').map(ex => {
-              const fullIdx = exercises.findIndex(e => e.id === ex.id);
-              return (
-              <ExerciseCard
-                key={ex.id}
-                exercise={ex}
-                expanded={expanded.has(ex.id)}
-                loggedSets={loggedSets}
-                onToggle={() => handleToggleExpand(ex.id)}
-                onLog={handleLog}
-                onAdjust={openAdjust}
-                onReportPain={openPainModal}
-                onAddSet={handleAddSet}
-                swap={swaps[ex.id]}
-                setValues={setValues}
-                onSetValueChange={handleSetValueChange}
-                inRemoveMode={removeModeExId === ex.id}
-                inEditMode={editModeExId === ex.id}
-                onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
-                onEditSave={(setId) => handleEditSave(ex.id, setId)}
-                onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
-                onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
-                onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
-                adjustActive={false}
-                previousData={previousData}
-                prExercises={prExercises}
-                restConfig={{
-                  selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['warmup'].default,
-                  onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
-                  onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
-                }}
-                onKebab={() => setKebabMenuExId(ex.id)}
-                onMoveUp={() => handleDirectOrder(ex.id, 'up')}
-                onMoveDown={() => handleDirectOrder(ex.id, 'down')}
-                canMoveUp={fullIdx > 0}
-                canMoveDown={fullIdx < exercises.length - 1}
-                onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
-                exerciseNote={notesByExercise[ex.id] ?? ''}
-                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
-                pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
-                onEffortSelect={handleEffortSelect}
-              />
-              );
-            })}
-          </>
-        )}
-
         {/* ── EXERCISES LABEL ── */}
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
