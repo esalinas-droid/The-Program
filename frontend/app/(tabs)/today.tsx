@@ -4577,6 +4577,10 @@ export default function TodayScreen() {
             canMoveUp={fullIdx > 0}
             canMoveDown={fullIdx < exercises.length - 1}
             onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+            exerciseNote={notesByExercise[ex.id] ?? ''}
+            onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+            pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
+            onEffortSelect={handleEffortSelect}
           />
           );
         })}
@@ -4624,6 +4628,10 @@ export default function TodayScreen() {
                 canMoveUp={fullIdx > 0}
                 canMoveDown={fullIdx < exercises.length - 1}
                 onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                exerciseNote={notesByExercise[ex.id] ?? ''}
+                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
+                onEffortSelect={handleEffortSelect}
               />
               );
             })}
