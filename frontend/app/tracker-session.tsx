@@ -18,6 +18,7 @@ import { getLocalDateString } from '../src/utils/dateHelpers';
 import AddExerciseSheet, {
   PrescriptionType, AddedExercise, PRESCRIPTION_TYPES,
 } from '../src/components/AddExerciseSheet';
+import HowToModal from '../src/components/HowToModal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEADER_HEIGHT = 56;
@@ -28,6 +29,13 @@ const SIDE_OPTIONS = [
   { key: 'B', label: 'B' },
   { key: 'R', label: 'R' },
 ];
+
+// Badge labels for the card header gold pill
+const TYPE_BADGE: Record<string, string> = {
+  weighted: 'WEIGHTED', timed: 'TIMED', distance: 'DISTANCE',
+  height: 'HEIGHT', calories: 'CALORIES', emom: 'EMOM',
+  amrap: 'AMRAP', for_time: 'FOR TIME',
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface SessionSet {
@@ -120,9 +128,10 @@ function FieldInput({
   value: string; onChange: (v: string) => void;
   placeholder?: string; decimal?: boolean; flex?: number;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <TextInput
-      style={[sc.setInput, { flex }]}
+      style={[sc.setInput, { flex }, focused && sc.setInputFocused]}
       value={value}
       onChangeText={onChange}
       placeholder={placeholder}
@@ -130,6 +139,9 @@ function FieldInput({
       keyboardType={decimal ? 'decimal-pad' : 'number-pad'}
       returnKeyType="done"
       blurOnSubmit={false}
+      selectTextOnFocus
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
     />
   );
 }
@@ -315,46 +327,89 @@ function ExerciseColHeaders({
 
 /** Full exercise card */
 function ExerciseCard({
-  exercise, onUpdateSet, onAddSet, onRemoveSet, onRemoveExercise,
+  exercise, isFirst, isLast,
+  onUpdateSet, onAddSet, onRemoveSet,
+  onMoveUp, onMoveDown, onHowTo,
 }: {
   exercise: SessionExercise;
+  isFirst: boolean;
+  isLast: boolean;
   onUpdateSet: (exId: string, setId: string, field: string, value: string) => void;
   onAddSet: (exId: string) => void;
   onRemoveSet: (exId: string, setId: string) => void;
-  onRemoveExercise: (exId: string) => void;
+  onMoveUp: (exId: string) => void;
+  onMoveDown: (exId: string) => void;
+  onHowTo: (name: string) => void;
 }) {
-  const typeInfo = PRESCRIPTION_TYPES.find(p => p.type === exercise.prescriptionType);
   const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
+  const badgeLabel = TYPE_BADGE[exercise.prescriptionType] ?? exercise.prescriptionType.toUpperCase();
 
   return (
     <View style={sc.card}>
-      {/* Card header */}
+      {/* ── Card header ── */}
       <View style={sc.cardHeader}>
-        <MaterialCommunityIcons
-          name={typeInfo?.icon as any} size={14} color={GOLD}
-          style={{ marginRight: SPACING.xs }}
-        />
-        <Text style={sc.cardTypeLabel}>{typeInfo?.label}</Text>
-        <Text style={sc.cardName} numberOfLines={1}>{exercise.name}</Text>
-        {exercise.modifiers.length > 0 && (
-          <Text style={sc.cardMods}> · {exercise.modifiers.join(', ')}</Text>
-        )}
-        <TouchableOpacity
-          onPress={() => onRemoveExercise(exercise.id)}
-          style={sc.cardRemoveBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <MaterialCommunityIcons name="close" size={16} color={COLORS.text.muted} />
-        </TouchableOpacity>
+        {/* Left: type badge + name */}
+        <View style={sc.cardHeaderLeft}>
+          <View style={sc.typeBadge}>
+            <Text style={sc.typeBadgeText}>{badgeLabel}</Text>
+          </View>
+          <Text style={sc.cardName} numberOfLines={1}>{exercise.name}</Text>
+          {exercise.modifiers.length > 0 && (
+            <Text style={sc.cardMods}> · {exercise.modifiers.join(', ')}</Text>
+          )}
+        </View>
+
+        {/* Right: reorder arrows + kebab (kebab inert — actions in Phase 2) */}
+        <View style={sc.cardHeaderRight}>
+          <TouchableOpacity
+            style={[sc.headerIconBtn, isFirst && sc.headerIconBtnDisabled]}
+            onPress={() => !isFirst && onMoveUp(exercise.id)}
+            disabled={isFirst}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialCommunityIcons
+              name="chevron-up" size={18}
+              color={isFirst ? COLORS.text.muted : COLORS.text.secondary}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[sc.headerIconBtn, isLast && sc.headerIconBtnDisabled]}
+            onPress={() => !isLast && onMoveDown(exercise.id)}
+            disabled={isLast}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialCommunityIcons
+              name="chevron-down" size={18}
+              color={isLast ? COLORS.text.muted : COLORS.text.secondary}
+            />
+          </TouchableOpacity>
+          {/* ⋮ kebab — inert placeholder; full actions arrive in Phase 2 */}
+          <TouchableOpacity
+            style={sc.headerIconBtn}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialCommunityIcons name="dots-vertical" size={18} color={COLORS.text.secondary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Column headers */}
+      {/* ── FORM chip ── */}
+      <TouchableOpacity
+        onPress={() => onHowTo(exercise.name)}
+        style={sc.formChip}
+        activeOpacity={0.7}
+      >
+        <MaterialCommunityIcons name="dumbbell" size={12} color={GOLD} />
+        <Text style={sc.formChipText}>FORM</Text>
+      </TouchableOpacity>
+
+      {/* ── Column headers ── */}
       <ExerciseColHeaders
         prescriptionType={exercise.prescriptionType}
         modifiers={exercise.modifiers}
       />
 
-      {/* Sets */}
+      {/* ── Sets ── */}
       {exercise.sets.map((set, idx) => (
         <SetRow
           key={set.id}
@@ -368,7 +423,7 @@ function ExerciseCard({
         />
       ))}
 
-      {/* Add set */}
+      {/* ── Add set ── */}
       <TouchableOpacity onPress={() => onAddSet(exercise.id)} style={sc.addSetBtn}>
         <MaterialCommunityIcons name="plus" size={13} color={GOLD} />
         <Text style={sc.addSetText}>{addLabel}</Text>
@@ -401,6 +456,8 @@ export default function TrackerSessionScreen() {
   const [exercises,       setExercises]       = useState<SessionExercise[]>([]);
   const [showAddSheet,    setShowAddSheet]    = useState(false);
   const [saving,          setSaving]          = useState(false);
+  const [howToVisible,    setHowToVisible]    = useState(false);
+  const [howToExercise,   setHowToExercise]   = useState('');
 
   const labelInputRef = useRef<TextInput>(null);
 
@@ -440,6 +497,18 @@ export default function TrackerSessionScreen() {
         ? { ...e, sets: e.sets.map(s => s.id === setId ? { ...s, [field]: value } : s) }
         : e
     )), []);
+
+  const moveExercise = useCallback((exId: string, dir: 'up' | 'down') => {
+    setExercises(prev => {
+      const idx = prev.findIndex(e => e.id === exId);
+      if (idx < 0) return prev;
+      const next = dir === 'up' ? idx - 1 : idx + 1;
+      if (next < 0 || next >= prev.length) return prev;
+      const arr = [...prev];
+      [arr[idx], arr[next]] = [arr[next], arr[idx]];
+      return arr;
+    });
+  }, []);
 
   // ── Label edit ─────────────────────────────────────────────────────────────
   const handleLabelBlur = () => {
@@ -602,14 +671,18 @@ export default function TrackerSessionScreen() {
             </View>
           )}
 
-          {exercises.map(ex => (
+          {exercises.map((ex, idx) => (
             <ExerciseCard
               key={ex.id}
               exercise={ex}
+              isFirst={idx === 0}
+              isLast={idx === exercises.length - 1}
               onUpdateSet={updateSet}
               onAddSet={addSet}
               onRemoveSet={removeSet}
-              onRemoveExercise={removeExercise}
+              onMoveUp={() => moveExercise(ex.id, 'up')}
+              onMoveDown={() => moveExercise(ex.id, 'down')}
+              onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
             />
           ))}
 
@@ -648,6 +721,13 @@ export default function TrackerSessionScreen() {
         visible={showAddSheet}
         onClose={() => setShowAddSheet(false)}
         onAdd={handleAddExercise}
+      />
+
+      {/* ── How-To Modal (shared with Program mode) ─────────────────────── */}
+      <HowToModal
+        visible={howToVisible}
+        exercise={howToExercise}
+        onClose={() => setHowToVisible(false)}
       />
     </SafeAreaView>
   );
@@ -735,22 +815,47 @@ const sc = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: SPACING.md, paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
     backgroundColor: COLORS.surfaceHighlight,
+    gap: SPACING.xs,
   },
-  cardTypeLabel: {
-    fontSize: 10, fontWeight: FONTS.weights.bold,
-    color: COLORS.text.muted, letterSpacing: 0.8,
-    marginRight: SPACING.sm,
+  cardHeaderLeft: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, minWidth: 0,
+  },
+  cardHeaderRight: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+  },
+  typeBadge: {
+    backgroundColor: `${GOLD}20`,
+    borderWidth: 1, borderColor: `${GOLD}55`,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  typeBadgeText: {
+    fontSize: 9, fontWeight: FONTS.weights.bold,
+    color: GOLD, letterSpacing: 0.7,
   },
   cardName: {
     flex: 1, color: COLORS.text.primary,
     fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold,
   },
   cardMods: { color: COLORS.text.muted, fontSize: FONTS.sizes.xs },
-  cardRemoveBtn: {
-    width: 28, height: 28, alignItems: 'center', justifyContent: 'center',
+  headerIconBtn: {
+    width: 30, height: 30, alignItems: 'center', justifyContent: 'center',
+  },
+  headerIconBtnDisabled: { opacity: 0.3 },
+
+  // Form chip
+  formChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    marginHorizontal: SPACING.md, marginTop: SPACING.sm, marginBottom: 2,
+    backgroundColor: `${GOLD}18`, borderWidth: 1, borderColor: `${GOLD}40`,
+    borderRadius: RADIUS.full, paddingVertical: 5, paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  formChipText: {
+    fontSize: 10, color: GOLD, fontWeight: FONTS.weights.heavy, letterSpacing: 0.8,
   },
 
   // Column headers
@@ -782,6 +887,10 @@ const sc = StyleSheet.create({
     paddingHorizontal: SPACING.xs, paddingVertical: SPACING.sm,
     color: COLORS.text.primary, fontSize: FONTS.sizes.sm,
     textAlign: 'center', minHeight: 36,
+  },
+  setInputFocused: {
+    borderColor: GOLD,
+    backgroundColor: `${GOLD}08`,
   },
   trashBtn: {
     width: 28, height: 36, alignItems: 'center', justifyContent: 'center',
