@@ -1518,22 +1518,38 @@ function HowToModal({ visible, exercise, onClose }: {
           <View style={{ width: 64 }} />
         </View>
 
-        {/* ── HowTo content: always show fallback on web; WebView on native ── */}
-        {/* On native EAS build: remove the webError state default true to enable WebView path */}
-        <View style={ht.fallback}>
-          <MaterialCommunityIcons name="youtube" size={52} color="#FF0000" />
-          <Text style={ht.fallbackTitle}>Search on YouTube</Text>
-          <Text style={ht.fallbackSub}>
-            {Platform.OS === 'web'
-              ? 'Opens YouTube search in browser. On the native app, this loads embedded inside the session.'
-              : "Opens YouTube search results in an in-app browser — you stay in The Program."}
-          </Text>
-          <TouchableOpacity style={ht.openBtn} onPress={handleOpenBrowser} activeOpacity={0.85}>
-            <MaterialCommunityIcons name="open-in-app" size={16} color="#fff" />
-            <Text style={ht.openBtnText}>Search: {exercise}</Text>
-          </TouchableOpacity>
-          <Text style={ht.openNote}>Native build: opens fully embedded (no external app)</Text>
-        </View>
+        {/* ── HowTo content: WebView on native, fallback on web/error ── */}
+        {/* READY FOR EAS BUILD: WebView branch only runs on iOS/Android — not testable on web preview */}
+        {showFallback ? (
+          <View style={ht.fallback}>
+            <MaterialCommunityIcons name="youtube" size={52} color="#FF0000" />
+            <Text style={ht.fallbackTitle}>Search on YouTube</Text>
+            <Text style={ht.fallbackSub}>
+              {Platform.OS === 'web'
+                ? 'On the native app this loads embedded inside the session. Web opens in a new tab.'
+                : 'Could not load embedded player — opening in in-app browser instead.'}
+            </Text>
+            <TouchableOpacity style={ht.openBtn} onPress={handleOpenBrowser} activeOpacity={0.85}>
+              <MaterialCommunityIcons name="open-in-app" size={16} color="#fff" />
+              <Text style={ht.openBtnText}>Search: {exercise}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          /* READY FOR EAS BUILD — renders on iOS/Android only */
+          <WebView
+            source={{ uri: ytUrl }}
+            style={{ flex: 1 }}
+            onError={() => setWebError(true)}
+            onHttpError={() => setWebError(true)}
+            startInLoadingState
+            renderLoading={() => (
+              <View style={ht.loadingWrap}>
+                <ActivityIndicator color={COLORS.accent} />
+                <Text style={ht.loadingText}>Searching YouTube…</Text>
+              </View>
+            )}
+          />
+        )}
       </Animated.View>
     </Modal>
   );
