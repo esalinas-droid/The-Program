@@ -1917,10 +1917,11 @@ function isTimedPrescription(prescription: string): boolean {
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
 function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
-  onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
+  onReportPain, onAddSet, swap, setValues, onSetValueChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
   restConfig, adjustActive, previousData, prExercises, onKebab,
   onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
+  exerciseNote, onNoteChange, pendingEffortLogId, onEffortSelect,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1933,8 +1934,6 @@ function ExerciseCard({
   swap?: SwapInfo;
   setValues: Record<string, { weight: string; reps: string }>;
   onSetValueChange: (setId: string, field: 'weight' | 'reps', value: string) => void;
-  effort: number | undefined;
-  onEffortChange: (v: number) => void;
   inRemoveMode: boolean;
   inEditMode: boolean;
   onRemoveSet: (setId: string) => void;
@@ -1956,6 +1955,11 @@ function ExerciseCard({
   canMoveUp?: boolean;
   canMoveDown?: boolean;
   onHowTo?: () => void;
+  // ── Phase 6 ───────────────────────────────────────────────────────────────
+  exerciseNote?: string;
+  onNoteChange?: (note: string) => void;
+  pendingEffortLogId?: string | null;
+  onEffortSelect?: (repsInTank: number | null) => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -2197,24 +2201,27 @@ function ExerciseCard({
               {/* Effort + Actions (show once at least 1 set logged) */}
               {loggedCount > 0 && (
                 <>
-                  <View style={ec.effortRow}>
-                    <Text style={ec.effortLabel}>OVERALL EFFORT</Text>
-                    <View style={ec.effortCircles}>
-                      {[1, 2, 3, 4, 5].map(v => {
-                        const selected = effort === v;
-                        return (
+                  {/* ── Phase 6: Off-row effort prompt ─────────────────── */}
+                  {pendingEffortLogId && (
+                    <View style={ec.effortPrompt}>
+                      <Text style={ec.effortPromptLabel}>Reps left in the tank?</Text>
+                      <View style={ec.effortBtnRow}>
+                        {(['0', '1', '2', '3+'] as const).map((label, i) => (
                           <TouchableOpacity
-                            key={v}
-                            style={[ec.effortCircle, selected && ec.effortCircleSelected]}
-                            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortChange(v); }}
-                            activeOpacity={0.7}
+                            key={label}
+                            style={ec.effortBtn}
+                            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortSelect?.(i < 3 ? i : 3); }}
+                            activeOpacity={0.75}
                           >
-                            <Text style={[ec.effortNum, selected && ec.effortNumSelected]}>{v}</Text>
+                            <Text style={ec.effortBtnText}>{label}</Text>
                           </TouchableOpacity>
-                        );
-                      })}
+                        ))}
+                        <TouchableOpacity style={ec.effortSkipBtn} onPress={() => onEffortSelect?.(null)} activeOpacity={0.7}>
+                          <Text style={ec.effortSkipText}>skip</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
+                  )}
                   <View style={ec.actionRow}>
                     <TouchableOpacity style={ec.actionPill} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
                       <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.text.muted} />
@@ -2231,6 +2238,21 @@ function ExerciseCard({
                   </View>
                 </>
               )}
+
+              {/* ── Phase 6: Per-exercise note (coach reads this) ──────── */}
+              <View style={ec.noteRow}>
+                <MaterialCommunityIcons name="comment-text-outline" size={13} color={COLORS.text.muted} />
+                <TextInput
+                  style={ec.noteInput}
+                  value={exerciseNote ?? ''}
+                  onChangeText={onNoteChange}
+                  placeholder="Coach reads this…"
+                  placeholderTextColor={COLORS.text.muted}
+                  multiline
+                  numberOfLines={2}
+                  maxLength={200}
+                />
+              </View>
 
               {/* Coach notes */}
               {exercise.notes ? <Text style={ec.notes}>{exercise.notes}</Text> : null}
@@ -2301,27 +2323,41 @@ function ExerciseCard({
             })}
           </View>
 
-          {/* ── Overall Effort selector ── */}
-          <View style={ec.effortRow}>
-            <Text style={ec.effortLabel}>OVERALL EFFORT</Text>
-            <View style={ec.effortCircles}>
-              {[1, 2, 3, 4, 5].map(v => {
-                const selected = effort === v;
-                return (
+          {/* ── Phase 6: Off-row effort prompt (normal card) ─────────── */}
+          {pendingEffortLogId && (
+            <View style={ec.effortPrompt}>
+              <Text style={ec.effortPromptLabel}>Reps left in the tank?</Text>
+              <View style={ec.effortBtnRow}>
+                {(['0', '1', '2', '3+'] as const).map((label, i) => (
                   <TouchableOpacity
-                    key={v}
-                    style={[ec.effortCircle, selected && ec.effortCircleSelected]}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      onEffortChange(v);
-                    }}
-                    activeOpacity={0.7}
+                    key={label}
+                    style={ec.effortBtn}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortSelect?.(i < 3 ? i : 3); }}
+                    activeOpacity={0.75}
                   >
-                    <Text style={[ec.effortNum, selected && ec.effortNumSelected]}>{v}</Text>
+                    <Text style={ec.effortBtnText}>{label}</Text>
                   </TouchableOpacity>
-                );
-              })}
+                ))}
+                <TouchableOpacity style={ec.effortSkipBtn} onPress={() => onEffortSelect?.(null)} activeOpacity={0.7}>
+                  <Text style={ec.effortSkipText}>skip</Text>
+                </TouchableOpacity>
+              </View>
             </View>
+          )}
+
+          {/* ── Phase 6: Per-exercise note (coach reads this) ─────────── */}
+          <View style={ec.noteRow}>
+            <MaterialCommunityIcons name="comment-text-outline" size={13} color={COLORS.text.muted} />
+            <TextInput
+              style={ec.noteInput}
+              value={exerciseNote ?? ''}
+              onChangeText={onNoteChange}
+              placeholder="Coach reads this…"
+              placeholderTextColor={COLORS.text.muted}
+              multiline
+              numberOfLines={2}
+              maxLength={200}
+            />
           </View>
 
           {/* ── Pill action buttons ── */}
@@ -2427,13 +2463,23 @@ const ec = StyleSheet.create({
   formChip:      { flexDirection: 'row', alignItems: 'center', gap: 5, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.accent + '15', borderWidth: 1, borderColor: COLORS.accent + '45', borderRadius: RADIUS.full, paddingVertical: 6, paddingHorizontal: 14, alignSelf: 'flex-start' },
   formChipText:  { fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.heavy, letterSpacing: 0.8 },
   // ── Effort selector
-  effortRow:         { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border },
-  effortLabel:       { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, flex: 1 },
+  effortRow:         { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, paddingTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border, opacity: 0.4 },
+  effortLabel:       { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5, flex: 1, textDecorationLine: 'line-through' },
   effortCircles:     { flexDirection: 'row', gap: 7 },
   effortCircle:      { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1A1A1E', borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center' },
   effortCircleSelected: { backgroundColor: '#C9A84C', borderColor: '#C9A84C' },
   effortNum:         { fontSize: 13, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
   effortNumSelected: { color: '#0A0A0C' },
+  // ── Phase 6: note input + off-row effort ──────────────────────────────────
+  noteRow:           { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.xs, borderTopWidth: 1, borderTopColor: COLORS.border + '50', marginTop: SPACING.xs },
+  noteInput:         { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, minHeight: 36, paddingVertical: 4, lineHeight: 18 },
+  effortPrompt:      { margin: SPACING.md, backgroundColor: COLORS.accent + '12', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.accent + '40', padding: SPACING.md },
+  effortPromptLabel: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 0.5, marginBottom: SPACING.sm },
+  effortBtnRow:      { flexDirection: 'row', gap: SPACING.sm, alignItems: 'center' },
+  effortBtn:         { flex: 1, height: 40, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
+  effortBtnText:     { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  effortSkipBtn:     { paddingHorizontal: SPACING.sm },
+  effortSkipText:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
   // ── Action pills
   actionRow:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.md, flexWrap: 'wrap' },
   actionPill:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
@@ -2506,6 +2552,12 @@ export default function TodayScreen() {
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
   const [setValues, setSetValues]     = useState<Record<string, { weight: string; reps: string }>>({});
   const [efforts, setEfforts]         = useState<Record<string, number>>({});
+
+  // ── Phase 6: per-exercise notes + off-row effort ─────────────────────────
+  const [notesByExercise,  setNotesByExercise]  = useState<Record<string, string>>({});
+  const [repsInTank,       setRepsInTank]        = useState<Record<string, number | null>>({});   // key=logEntryId, null=skipped/timeout
+  const [pendingEffort,    setPendingEffort]     = useState<{ exerciseId: string; logEntryId: string } | null>(null);
+  const pendingEffortTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [expanded, setExpanded]       = useState<Set<string>>(() => {
     // Default expand the first exercise based on local data
     const s = getTodaySession(week || 1);
@@ -3603,10 +3655,20 @@ export default function TodayScreen() {
           pain: 0,
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
+          // ── Phase 6: pass per-exercise note to coach context ──────────
+          notes: notesByExercise[exForSet?.id ?? ''] || undefined,
         });
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
+          // ── Phase 6: trigger off-row effort prompt (8s auto-dismiss → null) ──
+          if (exForSet?.id) {
+            if (pendingEffortTimer.current) clearTimeout(pendingEffortTimer.current);
+            setPendingEffort({ exerciseId: exForSet.id, logEntryId: entryId });
+            pendingEffortTimer.current = setTimeout(() => {
+              setPendingEffort(null);
+            }, 8000);
+          }
           // Persistence is handled by the dedicated loggedSets useEffect above
         }
         postSucceeded = true;
@@ -3644,6 +3706,33 @@ export default function TodayScreen() {
       ...prev,
       [setId]: { ...(prev[setId] || { weight: '', reps: '' }), [field]: value },
     }));
+  };
+
+  // ── Phase 6: effort selection → PATCH endpoint + repsInTank→RPE mapping ───
+  // Null = timed out / skipped (coach sees null, NOT confusion with 0=max effort)
+  const REPS_IN_TANK_TO_RPE: Record<number, number> = { 0: 10, 1: 9, 2: 8, 3: 7 };
+
+  const handleEffortSelect = async (repsInTankValue: number | null) => {
+    if (!pendingEffort) return;
+    const { exerciseId, logEntryId } = pendingEffort;
+
+    // Clear the pending prompt immediately (null = didn't answer; value = answered)
+    if (pendingEffortTimer.current) clearTimeout(pendingEffortTimer.current);
+    setPendingEffort(null);
+
+    // Store locally (for session avgRPE) and PATCH to DB (for coach context)
+    setRepsInTank(prev => ({ ...prev, [logEntryId]: repsInTankValue }));
+
+    // Map reps_in_tank → RPE proxy for session rating (0→10, 1→9, 2→8, 3+→7)
+    const rpeProxy = repsInTankValue !== null ? (REPS_IN_TANK_TO_RPE[repsInTankValue] ?? 7) : null;
+    if (rpeProxy !== null) {
+      setEfforts(prev => ({ ...prev, [exerciseId]: rpeProxy }));
+    }
+
+    // PATCH to DB — reps_in_tank null=timed out/no-answer, never confused with 0=max
+    try {
+      await logApi.patchEffort(logEntryId, repsInTankValue);
+    } catch { /* non-critical — coach context gracefully handles missing field */ }
   };
 
   const handleEffortChange = (exerciseId: string, v: number) => {
@@ -4409,8 +4498,6 @@ export default function TodayScreen() {
                 swap={swaps[ex.id]}
                 setValues={setValues}
                 onSetValueChange={handleSetValueChange}
-                effort={efforts[ex.id]}
-                onEffortChange={(v) => handleEffortChange(ex.id, v)}
                 inRemoveMode={removeModeExId === ex.id}
                 inEditMode={editModeExId === ex.id}
                 onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
@@ -4432,6 +4519,10 @@ export default function TodayScreen() {
                 canMoveUp={fullIdx > 0}
                 canMoveDown={fullIdx < exercises.length - 1}
                 onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                exerciseNote={notesByExercise[ex.id] ?? ''}
+                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
+                onEffortSelect={handleEffortSelect}
               />
               );
             })}

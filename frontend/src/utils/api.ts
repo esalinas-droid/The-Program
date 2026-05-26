@@ -196,6 +196,9 @@ export const logApi = {
       method: 'POST',
       body: JSON.stringify({ delete_log_ids: deleteLogIds, new_entries: newEntries }),
     }),
+  // ── Phase 6: patch effort signal (reps_in_tank) onto a logged set ─────────
+  patchEffort: (id: string, repsInTank: number | null) =>
+    api(`/log/${id}/effort`, { method: 'PATCH', body: JSON.stringify({ reps_in_tank: repsInTank }) }),
 };
 
 // PRs

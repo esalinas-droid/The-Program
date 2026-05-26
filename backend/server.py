@@ -228,6 +228,8 @@ class WorkoutLogEntry(BaseDocument):
     side: Optional[str] = None              # left|right|both (per-side modifier)
     imageId: Optional[str] = None           # tracker-review: Supabase image UUID
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
+    # ── Phase 6: per-set effort signal ──────────────────────────────────────────
+    reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -254,6 +256,8 @@ class WorkoutLogCreate(BaseModel):
     side: Optional[str] = None              # left|right|both (per-side modifier)
     imageId: Optional[str] = None           # tracker-review: Supabase image UUID
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
+    # ── Phase 6: per-set effort signal ──────────────────────────────────────────
+    reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
 
 class CheckIn(BaseDocument):
     week: int
@@ -1846,6 +1850,26 @@ async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user
     await db.log.delete_one({"_id": ObjectId(entry_id)})
     return {"deleted": True}
 
+# ── Phase 6: PATCH effort signal on a logged set ──────────────────────────────
+class EffortPatch(BaseModel):
+    reps_in_tank: Optional[int] = None   # 0=max effort, 1/2/3+=reserves; null=no answer
+
+@api_router.patch("/log/{entry_id}/effort")
+async def patch_log_effort(
+    entry_id: str,
+    body: EffortPatch,
+    userId: str = Depends(get_current_user)
+):
+    """Store reps-left-in-tank effort signal for a logged set. Never overwrites notes/weight/etc."""
+    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    if not existing or existing.get("userId", "") not in (userId, ""):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    await db.log.update_one(
+        {"_id": ObjectId(entry_id)},
+        {"$set": {"reps_in_tank": body.reps_in_tank}}
+    )
+    return {"updated": True, "reps_in_tank": body.reps_in_tank}
+
 @api_router.get("/log/stats/week/{week_num}")
 async def get_week_stats(
     week_num: int,
@@ -3273,7 +3297,13 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     recent_log = "No recent sessions logged."
     if log_docs:
         lines = [
-            f"- {d.get('date')} | {d.get('sessionType','?')} | {d.get('exercise')} {d.get('sets')}×{d.get('reps')} @{d.get('weight')}lbs RPE{d.get('rpe')}"
+            (
+                f"- {d.get('date')} | {d.get('sessionType','?')} | "
+                f"{d.get('exercise')} {d.get('sets')}×{d.get('reps')} "
+                f"@{d.get('weight')}lbs RPE{d.get('rpe')}"
+                + (f" | reps_in_tank={d.get('reps_in_tank')}" if d.get('reps_in_tank') is not None else "")
+                + (f" | note: \"{d.get('notes')}\"" if d.get('notes') else "")
+            )
             for d in log_docs
         ]
         recent_log = "\n".join(lines)
