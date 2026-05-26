@@ -59,6 +59,9 @@ interface SessionSet {
   elapsedTime: string;
   // per-side
   side: string;           // 'L' | 'B' | 'R' | ''
+  // Phase 3: commit state
+  committed: boolean;
+  commitLoading: boolean;
 }
 
 interface SessionExercise {
@@ -104,6 +107,7 @@ function makeDefaultSet(): SessionSet {
     distance: '', distanceUnit: 'ft', load: '',
     heightVal: '', heightUnit: 'in',
     calories: '', elapsedTime: '', side: '',
+    committed: false, commitLoading: false,
   };
 }
 
@@ -123,24 +127,25 @@ function hasAnyValue(set: SessionSet, type: PrescriptionType): boolean {
 
 /** Tiny numeric input cell */
 function FieldInput({
-  value, onChange, placeholder = '—', decimal = true, flex = 1,
+  value, onChange, placeholder = '—', decimal = true, flex = 1, locked = false,
 }: {
   value: string; onChange: (v: string) => void;
-  placeholder?: string; decimal?: boolean; flex?: number;
+  placeholder?: string; decimal?: boolean; flex?: number; locked?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
-      style={[sc.setInput, { flex }, focused && sc.setInputFocused]}
+      style={[sc.setInput, { flex }, !locked && focused && sc.setInputFocused, locked && sc.setInputLocked]}
       value={value}
-      onChangeText={onChange}
+      onChangeText={locked ? undefined : onChange}
+      editable={!locked}
       placeholder={placeholder}
       placeholderTextColor={COLORS.text.muted}
       keyboardType={decimal ? 'decimal-pad' : 'number-pad'}
       returnKeyType="done"
       blurOnSubmit={false}
-      selectTextOnFocus
-      onFocus={() => setFocused(true)}
+      selectTextOnFocus={!locked}
+      onFocus={() => !locked && setFocused(true)}
       onBlur={() => setFocused(false)}
     />
   );
@@ -148,17 +153,18 @@ function FieldInput({
 
 /** Tiny toggle pill group (e.g., sec | min) */
 function UnitPills({
-  options, value, onChange,
+  options, value, onChange, disabled = false,
 }: {
-  options: string[]; value: string; onChange: (v: string) => void;
+  options: string[]; value: string; onChange: (v: string) => void; disabled?: boolean;
 }) {
   return (
     <View style={sc.pillGroup}>
       {options.map(opt => (
         <TouchableOpacity
           key={opt}
-          style={[sc.unitPill, value === opt && sc.unitPillActive]}
-          onPress={() => onChange(opt)}
+          style={[sc.unitPill, value === opt && sc.unitPillActive, disabled && sc.unitPillDisabled]}
+          onPress={() => !disabled && onChange(opt)}
+          disabled={disabled}
         >
           <Text style={[sc.unitPillText, value === opt && sc.unitPillTextActive]}>
             {opt}
@@ -173,6 +179,7 @@ function UnitPills({
 function ColHeader({ labels }: { labels: string[] }) {
   return (
     <View style={sc.colHeaderRow}>
+      <View style={{ width: 32 }} />{/* commit circle space */}
       <Text style={[sc.colHdr, { width: 24 }]}>#</Text>
       {labels.map((l, i) => (
         <Text key={i} style={[sc.colHdr, { flex: 1 }]}>{l}</Text>
@@ -186,6 +193,7 @@ function ColHeader({ labels }: { labels: string[] }) {
 function SetRow({
   setNum, set, prescriptionType, modifiers,
   onChange, onRemove, isRemovable,
+  committed, commitLoading, isActive, onCommit,
 }: {
   setNum: number;
   set: SessionSet;
@@ -194,109 +202,134 @@ function SetRow({
   onChange: (field: string, value: string) => void;
   onRemove: () => void;
   isRemovable: boolean;
+  committed: boolean;
+  commitLoading: boolean;
+  isActive: boolean;
+  onCommit: () => void;
 }) {
+  const isLocked = committed;
   const showSide = modifiers.includes('Per side');
 
-  const trashBtn = isRemovable ? (
-    <TouchableOpacity onPress={onRemove} style={sc.trashBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-      <MaterialCommunityIcons name="trash-can-outline" size={15} color={COLORS.text.muted} />
+  // "Saved ✓" flash — triggers once when committed flips true
+  const [showSaved, setShowSaved] = useState(false);
+  const prevCommittedRef = useRef(false);
+  useEffect(() => {
+    if (committed && !prevCommittedRef.current) {
+      setShowSaved(true);
+      const t = setTimeout(() => setShowSaved(false), 1400);
+      prevCommittedRef.current = true;
+      return () => clearTimeout(t);
+    }
+    if (!committed) prevCommittedRef.current = false;
+  }, [committed]);
+
+  // ── Shared elements ─────────────────────────────────────────────────────
+  const circleEl = (
+    <TouchableOpacity
+      onPress={onCommit}
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+      style={sc.commitCircleWrap}
+      activeOpacity={0.7}
+    >
+      {commitLoading ? (
+        <ActivityIndicator size="small" color={GOLD} style={{ width: 24, height: 24 }} />
+      ) : committed ? (
+        <View style={sc.circleCommitted}>
+          <MaterialCommunityIcons name="check" size={13} color="#fff" />
+        </View>
+      ) : (
+        <View style={[sc.circleIdle, isActive && sc.circleActive]} />
+      )}
     </TouchableOpacity>
-  ) : (
-    <View style={{ width: 28 }} />
   );
 
   const numCell = <Text style={sc.setNumText}>{setNum}</Text>;
 
+  const trashEl = !committed && isRemovable ? (
+    <TouchableOpacity onPress={onRemove} style={sc.trashBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+      <MaterialCommunityIcons name="trash-can-outline" size={15} color={COLORS.text.muted} />
+    </TouchableOpacity>
+  ) : <View style={{ width: 28 }} />;
+
+  const savedEl = showSaved ? (
+    <View style={sc.savedBadge} pointerEvents="none">
+      <Text style={sc.savedBadgeText}>Saved ✓</Text>
+    </View>
+  ) : null;
+
+  const rowBase = [sc.setRow, committed && sc.setRowCommitted, isActive && !committed && sc.setRowActive] as any;
+
+  // ── Per-type renders ────────────────────────────────────────────────────
   if (
     prescriptionType === 'weighted' || prescriptionType === 'emom' ||
     prescriptionType === 'amrap'    || prescriptionType === 'for_time'
   ) {
     return (
-      <View style={sc.setRow}>
-        {numCell}
-        <FieldInput value={set.weight} onChange={v => onChange('weight', v)} placeholder="0" />
-        <FieldInput value={set.reps}   onChange={v => onChange('reps', v)}   placeholder="0" decimal={false} />
-        <FieldInput value={set.rpe}    onChange={v => onChange('rpe', v)}    placeholder="—" />
-        {trashBtn}
+      <View style={rowBase}>
+        {circleEl}{numCell}
+        <FieldInput value={set.weight} onChange={v => onChange('weight', v)} placeholder="0" locked={isLocked} />
+        <FieldInput value={set.reps}   onChange={v => onChange('reps', v)}   placeholder="0" decimal={false} locked={isLocked} />
+        <FieldInput value={set.rpe}    onChange={v => onChange('rpe', v)}    placeholder="—" locked={isLocked} />
+        {trashEl}{savedEl}
       </View>
     );
   }
 
   if (prescriptionType === 'timed') {
     return (
-      <View style={sc.setRow}>
-        {numCell}
+      <View style={rowBase}>
+        {circleEl}{numCell}
         <View style={{ flex: 2 }}>
-          <FieldInput value={set.duration} onChange={v => onChange('duration', v)} placeholder="0" />
+          <FieldInput value={set.duration} onChange={v => onChange('duration', v)} placeholder="0" locked={isLocked} />
         </View>
-        <UnitPills
-          options={['sec', 'min']}
-          value={set.durationUnit}
-          onChange={v => onChange('durationUnit', v)}
-        />
+        <UnitPills options={['sec', 'min']} value={set.durationUnit} onChange={v => onChange('durationUnit', v)} disabled={isLocked} />
         {showSide && (
-          <UnitPills
-            options={['L', 'B', 'R']}
-            value={set.side}
-            onChange={v => onChange('side', set.side === v ? '' : v)}
-          />
+          <UnitPills options={['L', 'B', 'R']} value={set.side} onChange={v => onChange('side', set.side === v ? '' : v)} disabled={isLocked} />
         )}
-        {trashBtn}
+        {trashEl}{savedEl}
       </View>
     );
   }
 
   if (prescriptionType === 'distance') {
     return (
-      <View style={sc.setRow}>
-        {numCell}
+      <View style={rowBase}>
+        {circleEl}{numCell}
         <View style={{ flex: 2 }}>
-          <FieldInput value={set.distance} onChange={v => onChange('distance', v)} placeholder="0" />
+          <FieldInput value={set.distance} onChange={v => onChange('distance', v)} placeholder="0" locked={isLocked} />
         </View>
-        <UnitPills
-          options={['ft', 'm', 'yd']}
-          value={set.distanceUnit}
-          onChange={v => onChange('distanceUnit', v)}
-        />
-        <FieldInput value={set.load} onChange={v => onChange('load', v)} placeholder="0" flex={1} />
+        <UnitPills options={['ft', 'm', 'yd']} value={set.distanceUnit} onChange={v => onChange('distanceUnit', v)} disabled={isLocked} />
+        <FieldInput value={set.load} onChange={v => onChange('load', v)} placeholder="0" flex={1} locked={isLocked} />
         {showSide && (
-          <UnitPills
-            options={['L', 'B', 'R']}
-            value={set.side}
-            onChange={v => onChange('side', set.side === v ? '' : v)}
-          />
+          <UnitPills options={['L', 'B', 'R']} value={set.side} onChange={v => onChange('side', set.side === v ? '' : v)} disabled={isLocked} />
         )}
-        {trashBtn}
+        {trashEl}{savedEl}
       </View>
     );
   }
 
   if (prescriptionType === 'height') {
     return (
-      <View style={sc.setRow}>
-        {numCell}
+      <View style={rowBase}>
+        {circleEl}{numCell}
         <View style={{ flex: 2 }}>
-          <FieldInput value={set.heightVal} onChange={v => onChange('heightVal', v)} placeholder="0" />
+          <FieldInput value={set.heightVal} onChange={v => onChange('heightVal', v)} placeholder="0" locked={isLocked} />
         </View>
-        <UnitPills
-          options={['in', 'cm']}
-          value={set.heightUnit}
-          onChange={v => onChange('heightUnit', v)}
-        />
-        <FieldInput value={set.reps} onChange={v => onChange('reps', v)} placeholder="0" decimal={false} flex={1} />
-        <FieldInput value={set.rpe}  onChange={v => onChange('rpe', v)}  placeholder="—" flex={1} />
-        {trashBtn}
+        <UnitPills options={['in', 'cm']} value={set.heightUnit} onChange={v => onChange('heightUnit', v)} disabled={isLocked} />
+        <FieldInput value={set.reps} onChange={v => onChange('reps', v)} placeholder="0" decimal={false} flex={1} locked={isLocked} />
+        <FieldInput value={set.rpe}  onChange={v => onChange('rpe', v)}  placeholder="—" flex={1} locked={isLocked} />
+        {trashEl}{savedEl}
       </View>
     );
   }
 
   if (prescriptionType === 'calories') {
     return (
-      <View style={sc.setRow}>
-        {numCell}
-        <FieldInput value={set.calories}    onChange={v => onChange('calories', v)}    placeholder="0" decimal={false} />
-        <FieldInput value={set.elapsedTime} onChange={v => onChange('elapsedTime', v)} placeholder="0:00" />
-        {trashBtn}
+      <View style={rowBase}>
+        {circleEl}{numCell}
+        <FieldInput value={set.calories}    onChange={v => onChange('calories', v)}    placeholder="0" decimal={false} locked={isLocked} />
+        <FieldInput value={set.elapsedTime} onChange={v => onChange('elapsedTime', v)} placeholder="0:00" locked={isLocked} />
+        {trashEl}{savedEl}
       </View>
     );
   }
@@ -593,7 +626,7 @@ function ExerciseKebabSheet({
 /** Full exercise card */
 function ExerciseCard({  exercise, isFirst, isLast,
   onUpdateSet, onAddSet, onRemoveSet,
-  onMoveUp, onMoveDown, onHowTo, onKebab,
+  onMoveUp, onMoveDown, onHowTo, onKebab, onCommitSet,
 }: {
   exercise: SessionExercise;
   isFirst: boolean;
@@ -605,9 +638,12 @@ function ExerciseCard({  exercise, isFirst, isLast,
   onMoveDown: (exId: string) => void;
   onHowTo: (name: string) => void;
   onKebab: (exId: string) => void;
+  onCommitSet: (exId: string, setId: string) => void;
 }) {
   const addLabel = exercise.prescriptionType === 'distance' ? '+ Add trip' : '+ Add set';
   const badgeLabel = TYPE_BADGE[exercise.prescriptionType] ?? exercise.prescriptionType.toUpperCase();
+  // Active set = first uncommitted set in this exercise
+  const firstUncommittedId = exercise.sets.find(s => !s.committed)?.id ?? null;
 
   return (
     <View style={sc.card}>
@@ -686,6 +722,10 @@ function ExerciseCard({  exercise, isFirst, isLast,
           onChange={(field, value) => onUpdateSet(exercise.id, set.id, field, value)}
           onRemove={() => onRemoveSet(exercise.id, set.id)}
           isRemovable={exercise.sets.length > 1}
+          committed={set.committed}
+          commitLoading={set.commitLoading}
+          isActive={set.id === firstUncommittedId}
+          onCommit={() => onCommitSet(exercise.id, set.id)}
         />
       ))}
 
@@ -721,7 +761,6 @@ export default function TrackerSessionScreen() {
   const [sessionNotes,    setSessionNotes]    = useState('');
   const [exercises,       setExercises]       = useState<SessionExercise[]>([]);
   const [showAddSheet,    setShowAddSheet]    = useState(false);
-  const [saving,          setSaving]          = useState(false);
   const [howToVisible,    setHowToVisible]    = useState(false);
   const [howToExercise,   setHowToExercise]   = useState('');
   // Kebab state — use id-based derivation so exercise is always fresh from state
@@ -830,81 +869,91 @@ export default function TrackerSessionScreen() {
   };
 
   // ── Save ───────────────────────────────────────────────────────────────────
-  const handleSave = async () => {
-    if (exercises.length === 0) {
-      Alert.alert('Nothing to save', 'Add at least one exercise before saving.');
+  // ── Per-set commit (Phase 3) ───────────────────────────────────────────────
+  /**
+   * commitSet:
+   * - Uncommitted → API upsert (setId key) → green lock. Safe to call N times (idempotent).
+   * - Already committed → re-opens locally for re-edit. Re-commit upserts again.
+   * - Abandoned mid-session: previously committed sets already in DB — they persist.
+   * - createBulk removed: this upsert path fully replaces it.
+   */
+  const commitSet = async (exId: string, setId: string) => {
+    const ex = exercises.find(e => e.id === exId);
+    const setIdx = ex?.sets.findIndex(s => s.id === setId) ?? -1;
+    const set = ex?.sets[setIdx];
+    if (!ex || !set || setIdx < 0) return;
+
+    // Re-open: uncommit locally; DB record stays until a re-commit overwrites it
+    if (set.committed) {
+      setExercises(prev => prev.map(e =>
+        e.id === exId
+          ? { ...e, sets: e.sets.map(s => s.id === setId ? { ...s, committed: false } : s) }
+          : e
+      ));
       return;
     }
-    const hasContent = exercises.some(ex =>
-      ex.sets.some(s => hasAnyValue(s, ex.prescriptionType))
-    );
-    if (!hasContent) {
-      Alert.alert('Empty sets', 'Fill in at least one set with data before saving.');
-      return;
-    }
-    setSaving(true);
+    if (set.commitLoading) return;
+
+    setExercises(prev => prev.map(e =>
+      e.id === exId
+        ? { ...e, sets: e.sets.map(s => s.id === setId ? { ...s, commitLoading: true } : s) }
+        : e
+    ));
+
     try {
-      const date    = parseLabelToISODate(sessionLabel);
-      const entries: any[] = [];
-
-      for (const ex of exercises) {
-        ex.sets.forEach((set, idx) => {
-          const entry: any = {
-            date,
-            week: 0,                  // sentinel: 0 = tracker / free mode
-            day: 'Free Session',
-            sessionType: sessionLabel,
-            exercise: ex.name,
-            sets: 1,
-            weight: 0, reps: 0, rpe: 0,
-            pain: 0,
-            completed: 'yes',
-            setIndex: idx,
-            notes: sessionNotes.trim() || null,
-            prescriptionType: ex.prescriptionType,
-          };
-
-          switch (ex.prescriptionType) {
-            case 'weighted': case 'emom': case 'amrap': case 'for_time':
-              entry.weight = parseFloat(set.weight) || 0;
-              entry.reps   = parseInt(set.reps, 10)  || 0;
-              entry.rpe    = parseFloat(set.rpe)     || 0;
-              break;
-            case 'timed':
-              entry.duration = parseFloat(set.duration) || 0;
-              if (set.durationUnit === 'min') entry.duration *= 60;
-              entry.unit = set.durationUnit;
-              if (set.side) entry.side = set.side;
-              break;
-            case 'distance':
-              entry.weight   = parseFloat(set.load)     || 0;
-              entry.distance = parseFloat(set.distance) || 0;
-              entry.unit     = set.distanceUnit;
-              if (set.side) entry.side = set.side;
-              break;
-            case 'height':
-              entry.weight = parseFloat(set.heightVal) || 0;
-              entry.reps   = parseInt(set.reps, 10)    || 0;
-              entry.rpe    = parseFloat(set.rpe)       || 0;
-              entry.unit   = set.heightUnit;
-              break;
-            case 'calories':
-              entry.reps = parseInt(set.calories, 10) || 0;
-              if (set.elapsedTime) entry.unit = `elapsed:${set.elapsedTime}`;
-              break;
-          }
-          entries.push(entry);
-        });
+      const today = getLocalDateString(new Date());
+      const entry: Parameters<typeof logApi.commitTrackerSet>[0] = {
+        setId,
+        date: today,
+        sessionTitle: sessionLabel.trim() || 'Tracker Session',
+        exercise: ex.name,
+        setIndex: setIdx,
+        prescriptionType: ex.prescriptionType,
+        notes: sessionNotes.trim() || undefined,
+      };
+      const pt = ex.prescriptionType;
+      if (['weighted', 'emom', 'amrap', 'for_time'].includes(pt)) {
+        entry.weight = parseFloat(set.weight) || 0;
+        entry.reps   = parseInt(set.reps, 10) || 0;
+        entry.rpe    = parseFloat(set.rpe)   || 0;
+      } else if (pt === 'timed') {
+        entry.duration     = parseFloat(set.duration) || 0;
+        entry.durationUnit = set.durationUnit;
+        if (set.side) entry.side = set.side;
+      } else if (pt === 'distance') {
+        entry.load         = parseFloat(set.load)     || 0;
+        entry.distance     = parseFloat(set.distance) || 0;
+        entry.distanceUnit = set.distanceUnit;
+        if (set.side) entry.side = set.side;
+      } else if (pt === 'height') {
+        entry.heightVal  = parseFloat(set.heightVal) || 0;
+        entry.heightUnit = set.heightUnit;
+        entry.reps       = parseInt(set.reps, 10) || 0;
+        entry.rpe        = parseFloat(set.rpe)   || 0;
+      } else if (pt === 'calories') {
+        entry.calories    = parseInt(set.calories, 10) || 0;
+        entry.elapsedTime = set.elapsedTime || undefined;
       }
 
-      await logApi.createBulk(entries);
-      router.back();
-    } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
-    } finally {
-      setSaving(false);
+      await logApi.commitTrackerSet(entry);
+
+      setExercises(prev => prev.map(e =>
+        e.id === exId
+          ? { ...e, sets: e.sets.map(s => s.id === setId ? { ...s, committed: true, commitLoading: false } : s) }
+          : e
+      ));
+    } catch (err: any) {
+      setExercises(prev => prev.map(e =>
+        e.id === exId
+          ? { ...e, sets: e.sets.map(s => s.id === setId ? { ...s, commitLoading: false } : s) }
+          : e
+      ));
+      Alert.alert('Save failed', err?.message ?? 'Could not save this set. Try again.');
     }
   };
+
+  /** Finish: committed sets already in DB — just go back */
+  const handleFinish = () => router.back();
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -997,6 +1046,7 @@ export default function TrackerSessionScreen() {
               onMoveDown={() => moveExercise(ex.id, 'down')}
               onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
               onKebab={(exId) => setKebabTargetId(exId)}
+              onCommitSet={commitSet}
             />
           ))}
 
@@ -1011,21 +1061,16 @@ export default function TrackerSessionScreen() {
           </TouchableOpacity>
         </ScrollView>
 
-        {/* ── Sticky Save Footer ──────────────────────────────────────────── */}
+        {/* ── Sticky Finish Footer ─────────────────────────────────────────── */}
+        {/* Phase 3: No Save button — sets commit individually. Finish just navigates back. */}
         <View style={[sc.footer, { paddingBottom: Math.max(insets.bottom, SPACING.md) }]}>
           <TouchableOpacity
-            style={[sc.saveBtn, saving && sc.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={saving}
+            style={sc.saveBtn}
+            onPress={handleFinish}
             activeOpacity={0.85}
           >
-            {saving
-              ? <ActivityIndicator color={COLORS.primary} />
-              : <>
-                  <MaterialCommunityIcons name="check-bold" size={18} color={COLORS.primary} />
-                  <Text style={sc.saveBtnText}>Save session</Text>
-                </>
-            }
+            <MaterialCommunityIcons name="check-circle-outline" size={18} color={COLORS.primary} />
+            <Text style={sc.saveBtnText}>Finish session</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1226,6 +1271,48 @@ const sc = StyleSheet.create({
     borderColor: GOLD,
     backgroundColor: `${GOLD}08`,
   },
+  setInputLocked: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    color: COLORS.text.secondary,
+  },
+
+  // Commit circle
+  commitCircleWrap: { width: 32, alignItems: 'center', justifyContent: 'center' },
+  circleIdle: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 2, borderColor: COLORS.border,
+  },
+  circleActive: { borderColor: GOLD },
+  circleCommitted: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: '#4CAF50',
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Set row states
+  setRowActive: {
+    borderLeftWidth: 2, borderLeftColor: GOLD,
+    paddingLeft: SPACING.md - 2,
+  },
+  setRowCommitted: {
+    backgroundColor: '#4CAF5010',
+  },
+
+  // "Saved ✓" flash
+  savedBadge: {
+    position: 'absolute', right: 32, top: 0, bottom: 0,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 8,
+    backgroundColor: `${COLORS.surface}EE`,
+  },
+  savedBadgeText: {
+    fontSize: 10, color: '#4CAF50',
+    fontWeight: FONTS.weights.bold, letterSpacing: 0.4,
+  },
+
+  // Locked unit pills
+  unitPillDisabled: { opacity: 0.5 },
   trashBtn: {
     width: 28, height: 36, alignItems: 'center', justifyContent: 'center',
   },

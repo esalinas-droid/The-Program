@@ -199,6 +199,18 @@ export const logApi = {
   // ── Phase 6: patch effort signal (reps_in_tank) onto a logged set ─────────
   patchEffort: (id: string, repsInTank: number | null) =>
     api(`/log/${id}/effort`, { method: 'PATCH', body: JSON.stringify({ reps_in_tank: repsInTank }) }),
+  // ── Tracker Phase 3: per-set upsert ─────────────────────────────────────
+  commitTrackerSet: (entry: {
+    setId: string; date: string; sessionTitle: string;
+    exercise: string; setIndex: number; prescriptionType: string;
+    notes?: string;
+    weight?: number; reps?: number; rpe?: number;
+    duration?: number; durationUnit?: string; side?: string;
+    load?: number; distance?: number; distanceUnit?: string;
+    heightVal?: number; heightUnit?: string;
+    calories?: number; elapsedTime?: string;
+  }) =>
+    api('/tracker/commit-set', { method: 'POST', body: JSON.stringify(entry) }),
 };
 
 // PRs

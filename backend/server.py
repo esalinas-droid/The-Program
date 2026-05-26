@@ -1577,6 +1577,105 @@ async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_cu
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
+# ── Per-set commit (Tracker Mode Phase 3) ────────────────────────────────────
+class TrackerSetCommit(BaseModel):
+    setId: str                          # client-generated UUID — upsert dedup key
+    date: str
+    sessionTitle: str
+    exercise: str
+    setIndex: int
+    prescriptionType: str
+    notes: Optional[str] = None
+    # weighted / emom / amrap / for_time
+    weight: Optional[float] = None
+    reps: Optional[int] = None
+    rpe: Optional[float] = None
+    # timed
+    duration: Optional[float] = None
+    durationUnit: Optional[str] = None
+    side: Optional[str] = None
+    # distance
+    load: Optional[float] = None
+    distance: Optional[float] = None
+    distanceUnit: Optional[str] = None
+    # height
+    heightVal: Optional[float] = None
+    heightUnit: Optional[str] = None
+    # calories
+    calories: Optional[int] = None
+    elapsedTime: Optional[str] = None
+
+@api_router.post("/tracker/commit-set")
+async def tracker_commit_set(
+    body: TrackerSetCommit,
+    userId: str = Depends(get_current_user),
+):
+    """
+    Upsert a single tracker set into the workout log.
+    Uses (setId, userId) as the unique key — safe to call on re-commit; never double-writes.
+    Abandoned sessions: committed sets persist cleanly because each commit is independent.
+    """
+    doc: dict = {
+        "userId": userId,
+        "setId": body.setId,
+        "date": body.date,
+        "week": 0,                  # sentinel: 0 = free-mode / tracker
+        "day": "Free Session",
+        "sessionType": body.sessionTitle,
+        "exercise": body.exercise,
+        "sets": 1,
+        "setIndex": body.setIndex,
+        "prescriptionType": body.prescriptionType,
+        "completed": "yes",
+        "notes": body.notes,
+        "pain": 0,
+        "weight": 0.0, "reps": 0, "rpe": 0.0, "e1rm": 0.0,
+    }
+
+    pt = body.prescriptionType
+    if pt in ("weighted", "emom", "amrap", "for_time"):
+        w = body.weight or 0.0
+        r = body.reps or 0
+        doc["weight"] = w
+        doc["reps"]   = r
+        doc["rpe"]    = body.rpe or 0.0
+        doc["e1rm"]   = epley_e1rm(w, r)
+    elif pt == "timed":
+        dur = body.duration or 0.0
+        if body.durationUnit == "min":
+            dur *= 60
+        doc["duration"] = dur
+        doc["unit"]     = body.durationUnit or "sec"
+        if body.side:
+            doc["side"] = body.side
+    elif pt == "distance":
+        doc["weight"]   = body.load or 0.0
+        doc["distance"] = body.distance or 0.0
+        doc["unit"]     = body.distanceUnit or "m"
+        if body.side:
+            doc["side"] = body.side
+    elif pt == "height":
+        w = body.heightVal or 0.0
+        r = body.reps or 0
+        doc["weight"] = w
+        doc["reps"]   = r
+        doc["rpe"]    = body.rpe or 0.0
+        doc["unit"]   = body.heightUnit or "in"
+        doc["e1rm"]   = epley_e1rm(w, r)
+    elif pt == "calories":
+        doc["reps"] = body.calories or 0
+        if body.elapsedTime:
+            doc["unit"] = f"elapsed:{body.elapsedTime}"
+
+    result = await db.log.update_one(
+        {"setId": body.setId, "userId": userId},
+        {"$set": doc},
+        upsert=True,
+    )
+    upserted = result.upserted_id is not None
+    return {"status": "committed", "upserted": upserted}
+
+
 # ── Bulk session save (Tracker Mode) ─────────────────────────────────────────
 class SessionBulkCreate(BaseModel):
     entries: List[WorkoutLogCreate]
@@ -3238,6 +3337,14 @@ async def load_models():
     await db.credit_transactions.create_index("related_id")
     await db.log.create_index([("userId", 1), ("imageId", 1)], sparse=True)
     logger.info("Tracker Phase 2 indexes ensured.")
+    # Phase 3: setId index for per-set upsert query performance
+    # Non-unique sparse — the update_one(setId+userId) upsert is atomic dedup
+    try:
+        await db.log.drop_index("setId_1_userId_1")
+    except Exception:
+        pass  # index may not exist yet
+    await db.log.create_index("setId", sparse=True, background=True)
+    logger.info("Tracker Phase 3 index (setId) ensured.")
 
 # ── Coach Models ──────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
