@@ -1906,11 +1906,13 @@ export default function TodayScreen() {
   const [showAdjustSheet, setShowAdjustSheet] = useState(false);
   const [adjustDraftWeights, setAdjustDraftWeights] = useState<Record<string, string>>({});
   const [adjustFillAll, setAdjustFillAll]     = useState('');
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   // Reset sub-sheets whenever the kebab closes
   React.useEffect(() => {
     if (!kebabMenuExId) {
       setShowSubCatSheet(false);
       setShowAdjustSheet(false);
+      setShowRemoveConfirm(false);
       setAdjustDraftWeights({});
       setAdjustFillAll('');
     }
@@ -3091,39 +3093,30 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, [adjustDraftWeights]);
 
-  // REMOVE — Alert confirmation then delete from state + API
-  const handleKebabRemove = useCallback(async () => {
+  // REMOVE — show in-modal confirmation sheet (works on web + native)
+  const handleKebabRemove = useCallback(() => {
+    setShowRemoveConfirm(true);
+  }, []);
+
+  // REMOVE CONFIRMED — delete from state + API
+  const handleKebabRemoveConfirmed = useCallback(async () => {
     if (!kebabMenuExId) return;
-    const ex = exercises.find(e => e.id === kebabMenuExId);
-    const name = ex ? (swaps[ex.id]?.replacement ?? ex.name) : 'this exercise';
-    Alert.alert(
-      'Remove Exercise?',
-      `Remove "${name}" from today's session? This will also remove it from all future sessions of this type.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            setKebabSaving(true);
-            try {
-              if (planId && sessionId && kebabMenuExId) {
-                await exerciseApi.removeExercise(planId, sessionId, kebabMenuExId);
-              }
-              setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
-              setKebabMenuExId(null);
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            } catch (e) {
-              console.warn('[Kebab] Remove failed:', e);
-              // Still remove locally even if API fails
-              setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
-              setKebabMenuExId(null);
-            }
-            setKebabSaving(false);
-          },
-        },
-      ],
-    );
+    setShowRemoveConfirm(false);
+    setKebabSaving(true);
+    try {
+      if (planId && sessionId && kebabMenuExId) {
+        await exerciseApi.removeExercise(planId, sessionId, kebabMenuExId);
+      }
+      setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
+      setKebabMenuExId(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (e) {
+      console.warn('[Kebab] Remove failed:', e);
+      // Still remove locally even if API fails
+      setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
+      setKebabMenuExId(null);
+    }
+    setKebabSaving(false);
   }, [exercises, kebabMenuExId, swaps, planId, sessionId]);
 
   const handleConfirmSwap = async (picked: PickedExercise) => {
@@ -3830,6 +3823,43 @@ export default function TodayScreen() {
         );
 
         const sheetContent = () => {
+          // ── Level 3B: REMOVE CONFIRMATION ─────────────────────────────────────────
+          if (showRemoveConfirm && kebabEx) {
+            const name = swaps[kebabEx.id]?.replacement ?? kebabEx.name;
+            return (
+              <>
+                <BackRow onBack={() => setShowRemoveConfirm(false)} title="Remove Exercise?" />
+                <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 8 }}>
+                  <MaterialCommunityIcons name="delete-alert-outline" size={36} color={RED} style={{ alignSelf: 'center', marginBottom: 12 }} />
+                  <Text style={{ fontSize: 15, color: COLORS.text.primary, textAlign: 'center', marginBottom: 6, fontWeight: '600' }}>
+                    {name}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: COLORS.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
+                    This will remove the exercise from today's session and all future sessions of this type.
+                  </Text>
+                  <TouchableOpacity
+                    style={{ paddingVertical: 14, backgroundColor: RED, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
+                    onPress={handleKebabRemoveConfirmed}
+                    disabled={kebabSaving}
+                    activeOpacity={0.85}
+                  >
+                    {kebabSaving
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Remove Exercise</Text>
+                    }
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ paddingVertical: 14, backgroundColor: '#141416', borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border }}
+                    onPress={() => setShowRemoveConfirm(false)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            );
+          }
+
           // ── Level 3A: ADJUST WEIGHT ──────────────────────────────────────────────
           if (showAdjustSheet && kebabEx) {
             return (
@@ -4055,6 +4085,7 @@ export default function TodayScreen() {
                 if (!kebabSaving) {
                   if (showAdjustSheet) { setShowAdjustSheet(false); return; }
                   if (showSubCatSheet) { setShowSubCatSheet(false); return; }
+                  if (showRemoveConfirm) { setShowRemoveConfirm(false); return; }
                   setKebabMenuExId(null);
                 }
               }}
