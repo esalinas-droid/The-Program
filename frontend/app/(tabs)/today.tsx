@@ -15,7 +15,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi } from '../../src/utils/api';
+import { WebView } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -35,6 +37,15 @@ const RED  = '#EF5350';
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
 type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown';
+
+// ── Phase 5: Structured warm-up/cooldown drills ──────────────────────────────
+type WarmupDrill = {
+  name: string;
+  scheme: string;
+  durationSeconds?: number;   // set → timed drill; used by Phase 4 Hold timer
+  prescriptionType: 'reps' | 'timed';
+  isInjuryModified?: boolean;
+};
 
 interface ExSet {
   id: string;
@@ -218,6 +229,41 @@ const WARMUP_STEPS = [
   { name: 'Face Pulls (warm-up)',  sets: '2 × 20',       note: 'High cable, external rotation at peak' },
   { name: 'Rotator Cuff ER / IR', sets: '2 × 15 each',  note: '3–5 lbs only, controlled tempo' },
 ];
+
+// ── Phase 5: Parse API step strings → structured WarmupDrill objects ───────────
+// Handles: "Hip circles — 10 reps each direction" and "Hip flexor stretch — 30s per side"
+// Dual-format safe: accepts both string[] (API/fallback) and existing step objects.
+function parseWarmupDrillsFromSteps(steps: string[]): WarmupDrill[] {
+  return steps.map(step => {
+    // Split on em-dash or double-hyphen separator
+    const sepIdx = step.search(/\s+[—\-]{1,2}\s+/);
+    const name   = sepIdx >= 0 ? step.slice(0, sepIdx).trim() : step.trim();
+    const scheme = sepIdx >= 0 ? step.slice(sepIdx).replace(/^\s*[—\-]+\s*/, '').trim() : '';
+
+    // Detect timed: "30s", "45 s", "1 min", etc.
+    const timedMatch = scheme.match(/(\d+)\s*s\b/i);
+    const minMatch   = scheme.match(/(\d+)\s*min/i);
+    let durationSeconds: number | undefined;
+    if (timedMatch)    durationSeconds = parseInt(timedMatch[1], 10);
+    else if (minMatch) durationSeconds = parseInt(minMatch[1], 10) * 60;
+
+    return {
+      name,
+      scheme,
+      durationSeconds,
+      prescriptionType: durationSeconds !== undefined ? 'timed' : 'reps',
+    };
+  });
+}
+
+// ── Phase 5: Generic/placeholder detection by name ────────────────────────────
+const GENERIC_WARMUP_NAMES = new Set([
+  'general warm-up', 'dynamic mobility', 'static stretching',
+  'foam rolling', 'light cardio', 'general warm up',
+]);
+function isGenericWarmupName(name: string): boolean {
+  return GENERIC_WARMUP_NAMES.has(name.toLowerCase().trim());
+}
 
 const BLOCK_LABELS: Record<number, string> = {
   1: 'FOUNDATION', 2: 'STRENGTH', 3: 'INTENSITY',
@@ -1428,6 +1474,222 @@ const tp = StyleSheet.create({
   miniSep:     { fontSize: 24, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 5 — HOW-TO MODAL (WebView + in-app-browser fallback)
+// ═══════════════════════════════════════════════════════════════════════════════
+function HowToModal({ visible, exercise, onClose }: {
+  visible: boolean;
+  exercise: string;
+  onClose: () => void;
+}) {
+  // webError catches native embedding failures; on web we always skip WebView
+  const [webError, setWebError] = useState(false);
+  const showFallback = Platform.OS === 'web' || webError;  // check at render time
+  const slideAnim = useRef(new Animated.Value(900)).current;
+  const query = encodeURIComponent(`${exercise} form technique tutorial`);
+  const ytUrl  = `https://www.youtube.com/results?search_query=${query}`;
+
+  useEffect(() => {
+    if (visible) {
+      setWebError(false);  // reset for native re-tries
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220 }).start();
+    } else {
+      Animated.timing(slideAnim, { toValue: 900, duration: 200, useNativeDriver: true }).start();
+    }
+  }, [visible]);
+
+  const handleOpenBrowser = async () => {
+    try { await WebBrowser.openBrowserAsync(ytUrl); } catch { /* no-op */ }
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={ht.overlay} onPress={onClose} />
+      <Animated.View style={[ht.sheet, { transform: [{ translateY: slideAnim }] }]}>
+        {/* Header: Back (no ✕) */}
+        <View style={ht.header}>
+          <TouchableOpacity onPress={onClose} style={ht.backBtn} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.primary} />
+            <Text style={ht.backLabel}>Back</Text>
+          </TouchableOpacity>
+          <Text style={ht.headerTitle} numberOfLines={1}>{exercise}</Text>
+          <View style={{ width: 64 }} />
+        </View>
+
+        {/* ── HowTo content: always show fallback on web; WebView on native ── */}
+        {/* On native EAS build: remove the webError state default true to enable WebView path */}
+        <View style={ht.fallback}>
+          <MaterialCommunityIcons name="youtube" size={52} color="#FF0000" />
+          <Text style={ht.fallbackTitle}>Search on YouTube</Text>
+          <Text style={ht.fallbackSub}>
+            {Platform.OS === 'web'
+              ? 'Opens YouTube search in browser. On the native app, this loads embedded inside the session.'
+              : "Opens YouTube search results in an in-app browser — you stay in The Program."}
+          </Text>
+          <TouchableOpacity style={ht.openBtn} onPress={handleOpenBrowser} activeOpacity={0.85}>
+            <MaterialCommunityIcons name="open-in-app" size={16} color="#fff" />
+            <Text style={ht.openBtnText}>Search: {exercise}</Text>
+          </TouchableOpacity>
+          <Text style={ht.openNote}>Native build: opens fully embedded (no external app)</Text>
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+const ht = StyleSheet.create({
+  overlay:      { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
+  sheet:        { position: 'absolute', left: 0, right: 0, bottom: 0, top: 80, backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
+  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: COLORS.surface },
+  backBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, width: 64 },
+  backLabel:    { fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  headerTitle:  { flex: 1, textAlign: 'center', fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary },
+  fallback:     { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl, gap: SPACING.md },
+  fallbackTitle:{ fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, textAlign: 'center' },
+  fallbackSub:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, textAlign: 'center', lineHeight: 20 },
+  openBtn:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, backgroundColor: '#FF0000', borderRadius: RADIUS.lg, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md },
+  openBtnText:  { color: '#fff', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base },
+  openNote:     { fontSize: 11, color: COLORS.text.muted, textAlign: 'center', fontStyle: 'italic', marginTop: SPACING.sm },
+  loadingWrap:  { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
+  loadingText:  { fontSize: FONTS.sizes.sm, color: COLORS.text.muted },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 5 — WARM-UP DRILLS CARD
+// Source-aware: API success → "programmed ✓"; fallback → ⚠ generic banner
+// ═══════════════════════════════════════════════════════════════════════════════
+function WarmupDrillsCard({
+  drills, isFromApi, title, sessionFocus, duration, isGeneric,
+  onReload, onHowTo, onStartHold,
+}: {
+  drills: WarmupDrill[];
+  isFromApi: boolean;
+  title: string;
+  sessionFocus: string;
+  duration: string;
+  isGeneric: boolean;
+  onReload: () => void;
+  onHowTo: (name: string) => void;
+  onStartHold: (secs: number) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (drills.length === 0) return null;
+
+  return (
+    <View style={wd.card}>
+      {/* ── Card header: toggle, title, badges ───────────────────────────── */}
+      <TouchableOpacity
+        style={wd.header}
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCollapsed(c => !c); }}
+        activeOpacity={0.8}
+      >
+        <View style={wd.headerLeft}>
+          <MaterialCommunityIcons name="run-fast" size={16} color={COLORS.accent} />
+          <Text style={wd.headerTitle}>{title.toUpperCase()}</Text>
+        </View>
+        <View style={wd.headerRight}>
+          {/* Source badge */}
+          {isFromApi && !isGeneric ? (
+            <View style={wd.apiChip}>
+              <MaterialCommunityIcons name="check-circle-outline" size={11} color={TEAL} />
+              <Text style={wd.apiChipText}>programmed ✓</Text>
+            </View>
+          ) : null}
+          {/* Session type chip */}
+          <View style={wd.focusChip}>
+            <Text style={wd.focusChipText}>{sessionFocus.toUpperCase()}</Text>
+          </View>
+          {duration ? <Text style={wd.duration}>{duration}</Text> : null}
+          <MaterialCommunityIcons name={collapsed ? 'chevron-down' : 'chevron-up'} size={18} color={COLORS.text.muted} />
+        </View>
+      </TouchableOpacity>
+
+      {/* ── Generic placeholder banner ─────────────────────────────────── */}
+      {!collapsed && isGeneric && (
+        <View style={wd.genericBanner}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#FF9800" />
+          <Text style={wd.genericText}>Showing generic drills — programme didn't load</Text>
+          <TouchableOpacity onPress={onReload} style={wd.reloadBtn} activeOpacity={0.75}>
+            <MaterialCommunityIcons name="refresh" size={14} color={COLORS.accent} />
+            <Text style={wd.reloadText}>Reload</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Drill list ─────────────────────────────────────────────────── */}
+      {!collapsed && (
+        <View style={wd.body}>
+          {drills.map((drill, i) => (
+            <View key={i} style={[wd.drillRow, i < drills.length - 1 && wd.drillRowBorder]}>
+              {/* Step number */}
+              <View style={wd.numBadge}>
+                <Text style={wd.numText}>{i + 1}</Text>
+              </View>
+              {/* Drill info */}
+              <View style={wd.drillInfo}>
+                <Text style={wd.drillName}>{drill.name}</Text>
+                {drill.scheme ? <Text style={wd.drillScheme}>{drill.scheme}</Text> : null}
+              </View>
+              {/* Action buttons: ? (how-to) + Hold (if timed) */}
+              <View style={wd.drillActions}>
+                {drill.durationSeconds !== undefined && (
+                  <TouchableOpacity
+                    style={wd.holdBtn}
+                    onPress={() => onStartHold(drill.durationSeconds!)}
+                    activeOpacity={0.8}
+                  >
+                    <MaterialCommunityIcons name="timer-outline" size={13} color={COLORS.accent} />
+                    <Text style={wd.holdBtnText}>{drill.durationSeconds}s</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={wd.howtoBtn}
+                  onPress={() => onHowTo(drill.name)}
+                  activeOpacity={0.8}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={wd.howtoBtnText}>?</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+const wd = StyleSheet.create({
+  card:           { marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  header:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
+  headerLeft:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flex: 1 },
+  headerTitle:    { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary, letterSpacing: 0.8 },
+  headerRight:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  apiChip:        { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: TEAL + '20', borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
+  apiChipText:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: TEAL },
+  focusChip:      { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
+  focusChipText:  { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 0.5 },
+  duration:       { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
+  genericBanner:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: '#FF980018', borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
+  genericText:    { flex: 1, fontSize: FONTS.sizes.xs, color: '#FF9800' },
+  reloadBtn:      { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  reloadText:     { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  body:           { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md },
+  drillRow:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingVertical: SPACING.md },
+  drillRowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  numBadge:       { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.surfaceHighlight, alignItems: 'center', justifyContent: 'center' },
+  numText:        { fontSize: 11, fontWeight: FONTS.weights.heavy, color: COLORS.accent },
+  drillInfo:      { flex: 1 },
+  drillName:      { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary },
+  drillScheme:    { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1, lineHeight: 16 },
+  drillActions:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
+  holdBtn:        { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: COLORS.accent + '20', borderRadius: RADIUS.md, paddingHorizontal: 8, paddingVertical: 5 },
+  holdBtnText:    { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.heavy },
+  howtoBtn:       { width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
+  howtoBtnText:   { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary },
+});
+
 
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
   removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed }: {
@@ -1658,7 +1920,7 @@ function ExerciseCard({
   onReportPain, onAddSet, swap, setValues, onSetValueChange, effort, onEffortChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
   restConfig, adjustActive, previousData, prExercises, onKebab,
-  onMoveUp, onMoveDown, canMoveUp, canMoveDown,
+  onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -1693,6 +1955,7 @@ function ExerciseCard({
   onMoveDown?: () => void;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
+  onHowTo?: () => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -1796,9 +2059,9 @@ function ExerciseCard({
       {/* ── Expanded body ── */}
       {expanded && (
         <>
-          {/* ── FORM chip (silent — Phase 1 placeholder) ── */}
+          {/* ── FORM chip — Phase 5: opens HowToModal ── */}
           <TouchableOpacity
-            onPress={() => {/* silent – Phase 5 will open how-to modal */}}
+            onPress={() => onHowTo?.()}
             style={ec.formChip}
             activeOpacity={0.7}
           >
@@ -2328,6 +2591,18 @@ export default function TodayScreen() {
   const initialLoadDone   = useRef(false);
   const exercisesRef      = useRef<Exercise[]>([]);
   const lastLoadDate      = useRef('');
+
+  // ── Phase 5: Warmup drills state ──────────────────────────────────────────
+  const [warmupDrills,    setWarmupDrills]    = useState<WarmupDrill[]>([]);
+  const [warmupIsFromApi, setWarmupIsFromApi] = useState(false);
+  const [warmupIsGeneric, setWarmupIsGeneric] = useState(false);
+  const [warmupTitle,     setWarmupTitle]     = useState('Warm-Up Drills');
+  const [warmupFocus,     setWarmupFocus]     = useState('upper');
+  const [warmupDuration,  setWarmupDuration]  = useState('');
+
+  // ── Phase 5: How-to modal state ───────────────────────────────────────────
+  const [howToVisible,  setHowToVisible]  = useState(false);
+  const [howToExercise, setHowToExercise] = useState('');
   const mountRestoreDone  = useRef(false); // Fix 5: prevent mount/focus race
   const userEditedSets    = useRef<Set<string>>(new Set()); // Fix: track user-edited set IDs
   // Ref mirror for trainingMode — lets the memoised useFocusEffect callback
@@ -2978,6 +3253,38 @@ export default function TodayScreen() {
           }
         }
       } catch { /* Readiness check not critical */ }
+
+      // ── Phase 5: Load personalised warm-up drills ─────────────────────────
+      // Source truth: if API succeeds → isFromApi=true (real programmed drills).
+      // If API 404s/throws → isFromApi=false (local fallback — show ⚠ banner).
+      // Name-matching is secondary signal only (isGeneric).
+      const loadWarmupDrills = async () => {
+        try {
+          const wu = await warmupApi.getToday();
+          const parsed = parseWarmupDrillsFromSteps(wu.steps || []);
+          const generic = parsed.length === 0 || parsed.every(d => isGenericWarmupName(d.name));
+          setWarmupDrills(parsed);
+          setWarmupIsFromApi(true);
+          setWarmupIsGeneric(generic);
+          setWarmupTitle(wu.title || 'Warm-Up Drills');
+          setWarmupFocus(wu.sessionFocus || 'upper');
+          setWarmupDuration(wu.duration || '');
+        } catch {
+          // API failed (404 or network) → use hardcoded fallback, flag as NOT from API
+          const fallback = WARMUP_STEPS.map(s => ({
+            name: s.name,
+            scheme: s.sets + (s.note ? ` · ${s.note}` : ''),
+            prescriptionType: 'reps' as const,
+          }));
+          setWarmupDrills(fallback);
+          setWarmupIsFromApi(false);
+          setWarmupIsGeneric(true);
+          setWarmupTitle('Warm-Up Drills');
+          setWarmupFocus('upper');
+          setWarmupDuration('');
+        }
+      };
+      loadWarmupDrills();
 
       initialLoadDone.current = true;
       lastLoadDate.current = todayStr;
@@ -4045,6 +4352,43 @@ export default function TodayScreen() {
           </View>
         ) : null}
 
+        {/* ── PHASE 5: WARM-UP DRILLS CARD ─────────────────────────────────── */}
+        {warmupDrills.length > 0 && (
+          <WarmupDrillsCard
+            drills={warmupDrills}
+            isFromApi={warmupIsFromApi}
+            title={warmupTitle}
+            sessionFocus={warmupFocus}
+            duration={warmupDuration}
+            isGeneric={warmupIsGeneric}
+            onReload={() => {
+              // Re-trigger API load — sets isFromApi signal correctly
+              setWarmupIsFromApi(false);
+              warmupApi.getToday().then(wu => {
+                const parsed = parseWarmupDrillsFromSteps(wu.steps || []);
+                const generic = parsed.length === 0 || parsed.every(d => isGenericWarmupName(d.name));
+                setWarmupDrills(parsed);
+                setWarmupIsFromApi(true);
+                setWarmupIsGeneric(generic);
+                setWarmupTitle(wu.title || 'Warm-Up Drills');
+                setWarmupFocus(wu.sessionFocus || 'upper');
+                setWarmupDuration(wu.duration || '');
+              }).catch(() => { /* stay on fallback */ });
+            }}
+            onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
+            onStartHold={(secs) => {
+              setTimerMode('hold');
+              setTimerIsCountUp(false);
+              setTimerHasSides(false);
+              setTimerSide(null);
+              setTimerSeconds(secs);
+              setTimerTarget(secs);
+              setTimerExerciseName('');
+              setTimerRunning(true);
+            }}
+          />
+        )}
+
         {/* ── WARM UP SECTION (C4: unified exercises array, category=warmup) ── */}
         {exercises.filter(ex => ex.category === 'warmup').length > 0 && (
           <>
@@ -4087,6 +4431,7 @@ export default function TodayScreen() {
                 onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                 canMoveUp={fullIdx > 0}
                 canMoveDown={fullIdx < exercises.length - 1}
+                onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
               />
               );
             })}
@@ -4140,6 +4485,7 @@ export default function TodayScreen() {
             onMoveDown={() => handleDirectOrder(ex.id, 'down')}
             canMoveUp={fullIdx > 0}
             canMoveDown={fullIdx < exercises.length - 1}
+            onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
           />
           );
         })}
@@ -4186,6 +4532,7 @@ export default function TodayScreen() {
                 onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                 canMoveUp={fullIdx > 0}
                 canMoveDown={fullIdx < exercises.length - 1}
+                onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
               />
               );
             })}
@@ -4700,6 +5047,13 @@ export default function TodayScreen() {
           setTimerRunning(true);
           setTimerPickerVisible(false);
         }}
+      />
+
+      {/* ── PHASE 5: HOW-TO MODAL (YouTube WebView + in-app browser fallback) ── */}
+      <HowToModal
+        visible={howToVisible}
+        exercise={howToExercise}
+        onClose={() => setHowToVisible(false)}
       />
 
       {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
