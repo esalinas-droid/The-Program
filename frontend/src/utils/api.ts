@@ -757,4 +757,10 @@ export const exerciseApi = {
     api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}/order`, {
       method: 'PATCH', body: JSON.stringify({ direction }),
     }),
+  removeExercise: (
+    programId: string, sessionId: string, exerciseId: string
+  ): Promise<{ success: boolean; removedFromSessions: number; exercise: string }> =>
+    api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}`, {
+      method: 'DELETE',
+    }),
 };

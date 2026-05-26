@@ -1902,9 +1902,18 @@ export default function TodayScreen() {
   const [kebabSaving, setKebabSaving]     = useState(false);
   // Bug 3: two-level category picker
   const [showSubCatSheet, setShowSubCatSheet] = useState(false);
-  // Reset sub-cat sheet whenever the kebab closes
+  // Phase 2: kebab action sub-sheets
+  const [showAdjustSheet, setShowAdjustSheet] = useState(false);
+  const [adjustDraftWeights, setAdjustDraftWeights] = useState<Record<string, string>>({});
+  const [adjustFillAll, setAdjustFillAll]     = useState('');
+  // Reset sub-sheets whenever the kebab closes
   React.useEffect(() => {
-    if (!kebabMenuExId) setShowSubCatSheet(false);
+    if (!kebabMenuExId) {
+      setShowSubCatSheet(false);
+      setShowAdjustSheet(false);
+      setAdjustDraftWeights({});
+      setAdjustFillAll('');
+    }
   }, [kebabMenuExId]);
 
   // Rest timer
@@ -3036,6 +3045,87 @@ export default function TodayScreen() {
     } catch (e) { console.warn('[Reorder] Failed:', e); }
   }, [planId, sessionId]);
 
+  // ── Phase 2: Kebab action handlers ────────────────────────────────────────────
+
+  // SWAP — close kebab, open ExercisePicker with this exercise
+  const handleKebabSwap = useCallback(() => {
+    const ex = exercises.find(e => e.id === kebabMenuExId);
+    if (!ex) return;
+    const name = swaps[ex.id]?.replacement ?? ex.name;
+    setKebabMenuExId(null);
+    openAdjust(ex.id, name);
+  }, [exercises, kebabMenuExId, swaps]);
+
+  // REPORT PAIN — close kebab, open PainReportModal
+  const handleKebabPain = useCallback(() => {
+    const ex = exercises.find(e => e.id === kebabMenuExId);
+    if (!ex) return;
+    const name = swaps[ex.id]?.replacement ?? ex.name;
+    setKebabMenuExId(null);
+    openPainModal(name);
+  }, [exercises, kebabMenuExId, swaps]);
+
+  // ADJUST WEIGHT — open adjust-weight sub-sheet with current weights as draft
+  const handleKebabAdjustOpen = useCallback(() => {
+    const ex = exercises.find(e => e.id === kebabMenuExId);
+    if (!ex) return;
+    const draft: Record<string, string> = {};
+    ex.sets.forEach(s => { draft[s.id] = setValues[s.id]?.weight ?? ''; });
+    setAdjustDraftWeights(draft);
+    setAdjustFillAll('');
+    setShowSubCatSheet(false);
+    setShowAdjustSheet(true);
+  }, [exercises, kebabMenuExId, setValues]);
+
+  // ADJUST WEIGHT APPLY — write draft weights to setValues
+  const handleKebabAdjustApply = useCallback(() => {
+    setSetValues(prev => {
+      const next = { ...prev };
+      Object.entries(adjustDraftWeights).forEach(([setId, weight]) => {
+        next[setId] = { ...(next[setId] ?? { weight: '', reps: '' }), weight };
+      });
+      return next;
+    });
+    setShowAdjustSheet(false);
+    setKebabMenuExId(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [adjustDraftWeights]);
+
+  // REMOVE — Alert confirmation then delete from state + API
+  const handleKebabRemove = useCallback(async () => {
+    if (!kebabMenuExId) return;
+    const ex = exercises.find(e => e.id === kebabMenuExId);
+    const name = ex ? (swaps[ex.id]?.replacement ?? ex.name) : 'this exercise';
+    Alert.alert(
+      'Remove Exercise?',
+      `Remove "${name}" from today's session? This will also remove it from all future sessions of this type.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setKebabSaving(true);
+            try {
+              if (planId && sessionId && kebabMenuExId) {
+                await exerciseApi.removeExercise(planId, sessionId, kebabMenuExId);
+              }
+              setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
+              setKebabMenuExId(null);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            } catch (e) {
+              console.warn('[Kebab] Remove failed:', e);
+              // Still remove locally even if API fails
+              setExercises(prev => prev.filter(e => e.id !== kebabMenuExId));
+              setKebabMenuExId(null);
+            }
+            setKebabSaving(false);
+          },
+        },
+      ],
+    );
+  }, [exercises, kebabMenuExId, swaps, planId, sessionId]);
+
   const handleConfirmSwap = async (picked: PickedExercise) => {
     setModal(false);
     const key = adjustKey;
@@ -3701,21 +3791,18 @@ export default function TodayScreen() {
         onSubmit={handlePainSubmit}
       />
 
-      {/* ── KEBAB MENU MODAL — Bug 3: two-level category picker ── */}
+      {/* ── KEBAB MENU MODAL — Phase 2: 3-level sheet (main → subcat / adjust weight) ── */}
       {(() => {
         const kebabEx  = kebabMenuExId ? exercises.find(e => e.id === kebabMenuExId) : null;
         const kebabIdx = kebabMenuExId ? exercises.findIndex(e => e.id === kebabMenuExId) : -1;
         const canMoveUp   = kebabIdx > 0;
         const canMoveDown = kebabIdx >= 0 && kebabIdx < exercises.length - 1;
 
-        // First-sheet: 3 top-level sections
         const TOP_CATS = [
           { key: 'warmup',   label: 'Warm-up',   icon: 'run' },
           { key: 'main',     label: 'Exercises', icon: 'weight-lifter' },
           { key: 'cooldown', label: 'Cooldown',  icon: 'meditation' },
         ] as const;
-
-        // Second-sheet: sub-categories within Exercises
         const SUB_CATS = [
           { key: 'main',         label: 'Main Lift',         icon: 'weight-lifter' },
           { key: 'supplemental', label: 'Supplemental',      icon: 'dumbbell' },
@@ -3723,7 +3810,6 @@ export default function TodayScreen() {
           { key: 'prehab',       label: 'Injury Prevention', icon: 'shield-check-outline' },
         ] as const;
 
-        const MAIN_CATS = new Set(['primary', 'speed', 'supplemental', 'accessory', 'prehab']);
         const getTopLevel = (cat: string) =>
           cat === 'warmup' ? 'warmup' : cat === 'cooldown' ? 'cooldown' : 'main';
         const getSubCat = (cat: string) =>
@@ -3731,140 +3817,258 @@ export default function TodayScreen() {
 
         const currentTop = kebabEx ? getTopLevel(kebabEx.category) : 'main';
         const currentSub = kebabEx ? getSubCat(kebabEx.category) : 'main';
+        const displayName = kebabEx ? (swaps[kebabEx.id]?.replacement ?? kebabEx.name) : '';
+
+        // Shared back arrow for sub-sheets
+        const BackRow = ({ onBack, title }: { onBack: () => void; title: string }) => (
+          <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.secondary} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary, flex: 1 }}>{title}</Text>
+          </View>
+        );
+
+        const sheetContent = () => {
+          // ── Level 3A: ADJUST WEIGHT ──────────────────────────────────────────────
+          if (showAdjustSheet && kebabEx) {
+            return (
+              <>
+                <BackRow onBack={() => setShowAdjustSheet(false)} title="Adjust Weights" />
+                <View style={{ paddingHorizontal: 22, paddingTop: 14 }}>
+                  {/* Quick fill-all */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 18, backgroundColor: '#141416', borderRadius: 12, padding: 12 }}>
+                    <Text style={{ fontSize: 13, color: COLORS.text.secondary, flex: 1 }}>Fill all sets:</Text>
+                    <TextInput
+                      style={{ width: 90, height: 38, backgroundColor: COLORS.primary, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: 15, fontWeight: '700' }}
+                      value={adjustFillAll}
+                      onChangeText={(v) => {
+                        setAdjustFillAll(v);
+                        if (v) {
+                          const updated: Record<string, string> = {};
+                          kebabEx.sets.forEach(s => { updated[s.id] = v; });
+                          setAdjustDraftWeights(updated);
+                        }
+                      }}
+                      keyboardType="numeric"
+                      placeholder="lbs"
+                      placeholderTextColor={COLORS.text.muted}
+                      returnKeyType="done"
+                    />
+                  </View>
+                  {/* Per-set rows */}
+                  {kebabEx.sets.map((s, i) => {
+                    const tag = s.type === 'warmup' ? 'WU' : s.type === 'ramp' ? 'RM' : `Set ${i + 1}`;
+                    const isLogged = loggedSets.has(s.id);
+                    return (
+                      <View key={s.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: i < kebabEx.sets.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '40' }}>
+                        <Text style={{ fontSize: 13, color: isLogged ? TEAL : COLORS.text.muted, width: 52, fontWeight: '600' }}>{tag}{isLogged ? ' ✓' : ''}</Text>
+                        <View style={{ flex: 1 }}>
+                          <TextInput
+                            style={[{ height: 40, backgroundColor: COLORS.primary, borderRadius: 8, borderWidth: 1, borderColor: isLogged ? TEAL + '40' : COLORS.border, textAlign: 'center', color: isLogged ? TEAL : COLORS.text.primary, fontSize: 15, fontWeight: '600' }]}
+                            value={adjustDraftWeights[s.id] ?? ''}
+                            onChangeText={(v) => setAdjustDraftWeights(prev => ({ ...prev, [s.id]: v }))}
+                            keyboardType="numeric"
+                            placeholder="lbs"
+                            placeholderTextColor={COLORS.text.muted}
+                            editable={!isLogged}
+                            returnKeyType="done"
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                  {/* Apply button */}
+                  <TouchableOpacity
+                    style={{ marginTop: 18, paddingVertical: 14, backgroundColor: COLORS.accent, borderRadius: 12, alignItems: 'center' }}
+                    onPress={handleKebabAdjustApply}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.primary, letterSpacing: 0.5 }}>Apply Weights</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            );
+          }
+
+          // ── Level 2: SUB-CATEGORY (exercises) ───────────────────────────────────
+          if (showSubCatSheet) {
+            return (
+              <>
+                <BackRow onBack={() => setShowSubCatSheet(false)} title="Exercise Category" />
+                <View style={{ paddingHorizontal: 22, paddingTop: 12 }}>
+                  {SUB_CATS.map((cat, idx) => {
+                    const isCurr = cat.key === currentSub;
+                    return (
+                      <TouchableOpacity
+                        key={cat.key}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: idx < SUB_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
+                        onPress={() => { handleKebabCategory(cat.key); setShowSubCatSheet(false); }}
+                        disabled={kebabSaving}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
+                        <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>{cat.label}</Text>
+                        {isCurr && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
+                        {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TouchableOpacity style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }} onPress={() => { setShowSubCatSheet(false); setKebabMenuExId(null); }} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            );
+          }
+
+          // ── Level 1: MAIN SHEET ──────────────────────────────────────────────────
+          return (
+            <>
+              {/* Exercise title */}
+              {kebabEx && (
+                <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                  <Text style={{ fontSize: 10, color: COLORS.text.muted, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 }}>EDITING</Text>
+                  <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text.primary }} numberOfLines={1}>{displayName}</Text>
+                </View>
+              )}
+
+              {/* REORDER */}
+              <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 10 }}>REORDER</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  {(['up', 'down'] as const).map(dir => {
+                    const enabled = dir === 'up' ? canMoveUp : canMoveDown;
+                    return (
+                      <TouchableOpacity
+                        key={dir}
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, backgroundColor: enabled ? '#1E1E22' : '#141416', borderRadius: 12, borderWidth: 1, borderColor: enabled ? COLORS.border : COLORS.border + '40', opacity: enabled ? 1 : 0.4 }}
+                        onPress={() => enabled && handleKebabOrder(dir)}
+                        disabled={!enabled || kebabSaving}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialCommunityIcons name={dir === 'up' ? 'arrow-up' : 'arrow-down'} size={16} color={enabled ? COLORS.text.primary : COLORS.text.muted} />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: enabled ? COLORS.text.primary : COLORS.text.muted }}>{dir === 'up' ? 'Move Up' : 'Move Down'}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* CHANGE CATEGORY */}
+              <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>CHANGE CATEGORY</Text>
+                {TOP_CATS.map((cat, catIdx) => {
+                  const isCurr = cat.key === currentTop;
+                  const showChevron = cat.key === 'main';
+                  const subLabel = isCurr && cat.key === 'main' ? ` — ${SUB_CATS.find(s => s.key === currentSub)?.label ?? ''}` : '';
+                  return (
+                    <TouchableOpacity
+                      key={cat.key}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: catIdx < TOP_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
+                      onPress={() => cat.key === 'main' ? setShowSubCatSheet(true) : handleKebabCategory(cat.key)}
+                      disabled={kebabSaving}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
+                      <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>{cat.label}{subLabel}</Text>
+                      {isCurr && !showChevron && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
+                      {showChevron && <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />}
+                      {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* ACTIONS — Phase 2 */}
+              <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>ACTIONS</Text>
+
+                {/* Swap */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border + '50' }}
+                  onPress={handleKebabSwap}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="swap-horizontal" size={18} color={COLORS.text.secondary} />
+                  <Text style={{ fontSize: 15, color: COLORS.text.primary, flex: 1 }}>Swap Exercise</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+                </TouchableOpacity>
+
+                {/* Adjust Weight */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border + '50' }}
+                  onPress={handleKebabAdjustOpen}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="tune-vertical" size={18} color={COLORS.text.secondary} />
+                  <Text style={{ fontSize: 15, color: COLORS.text.primary, flex: 1 }}>Adjust Weights</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+                </TouchableOpacity>
+
+                {/* Report Pain */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border + '50' }}
+                  onPress={handleKebabPain}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color={RED} />
+                  <Text style={{ fontSize: 15, color: RED, flex: 1 }}>Report Pain</Text>
+                </TouchableOpacity>
+
+                {/* Remove Exercise */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 }}
+                  onPress={handleKebabRemove}
+                  disabled={kebabSaving}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="delete-outline" size={18} color={RED} />
+                  <Text style={{ fontSize: 15, color: RED, flex: 1 }}>Remove Exercise</Text>
+                  {kebabSaving && <ActivityIndicator size="small" color={RED} />}
+                </TouchableOpacity>
+              </View>
+
+              {/* Cancel */}
+              <TouchableOpacity
+                style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
+                onPress={() => setKebabMenuExId(null)}
+                disabled={kebabSaving}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
+              </TouchableOpacity>
+            </>
+          );
+        };
 
         return (
           <Modal
             visible={kebabMenuExId !== null}
             transparent
             animationType="slide"
-            onRequestClose={() => { setKebabMenuExId(null); }}
+            onRequestClose={() => setKebabMenuExId(null)}
           >
             <Pressable
               style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)' }}
-              onPress={() => !kebabSaving && (showSubCatSheet ? setShowSubCatSheet(false) : setKebabMenuExId(null))}
+              onPress={() => {
+                if (!kebabSaving) {
+                  if (showAdjustSheet) { setShowAdjustSheet(false); return; }
+                  if (showSubCatSheet) { setShowSubCatSheet(false); return; }
+                  setKebabMenuExId(null);
+                }
+              }}
             >
               <View style={{ flex: 1 }} />
-              <Pressable onPress={() => {}} style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34 }}>
+              <Pressable onPress={() => {}} style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '92%' }}>
                 {/* Handle */}
                 <View style={{ alignItems: 'center', paddingTop: 14, paddingBottom: 10 }}>
                   <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border }} />
                 </View>
-
-                {showSubCatSheet ? (
-                  /* ── Second sheet: Exercise sub-categories ── */
-                  <>
-                    <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <TouchableOpacity onPress={() => setShowSubCatSheet(false)} disabled={kebabSaving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        <MaterialCommunityIcons name="arrow-left" size={20} color={COLORS.text.secondary} />
-                      </TouchableOpacity>
-                      <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary, flex: 1 }}>Exercise Category</Text>
-                    </View>
-                    <View style={{ paddingHorizontal: 22, paddingTop: 12 }}>
-                      {SUB_CATS.map((cat, idx) => {
-                        const isCurr = cat.key === currentSub;
-                        return (
-                          <TouchableOpacity
-                            key={cat.key}
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: idx < SUB_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
-                            onPress={() => { handleKebabCategory(cat.key); setShowSubCatSheet(false); }}
-                            disabled={kebabSaving}
-                            activeOpacity={0.7}
-                          >
-                            <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
-                            <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>{cat.label}</Text>
-                            {isCurr && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
-                            {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <TouchableOpacity
-                      style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
-                      onPress={() => { setShowSubCatSheet(false); setKebabMenuExId(null); }}
-                      disabled={kebabSaving}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  /* ── First sheet: top-level sections + reorder ── */
-                  <>
-                    {/* Exercise title */}
-                    {kebabEx && (
-                      <View style={{ paddingHorizontal: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
-                        <Text style={{ fontSize: 10, color: COLORS.text.muted, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 }}>EDITING</Text>
-                        <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.text.primary }} numberOfLines={1}>{kebabEx.name}</Text>
-                      </View>
-                    )}
-                    {/* REORDER */}
-                    <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 10 }}>REORDER</Text>
-                      <View style={{ flexDirection: 'row', gap: 10 }}>
-                        {(['up', 'down'] as const).map(dir => {
-                          const enabled = dir === 'up' ? canMoveUp : canMoveDown;
-                          return (
-                            <TouchableOpacity
-                              key={dir}
-                              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, backgroundColor: enabled ? '#1E1E22' : '#141416', borderRadius: 12, borderWidth: 1, borderColor: enabled ? COLORS.border : COLORS.border + '40', opacity: enabled ? 1 : 0.4 }}
-                              onPress={() => enabled && handleKebabOrder(dir)}
-                              disabled={!enabled || kebabSaving}
-                              activeOpacity={0.7}
-                            >
-                              <MaterialCommunityIcons name={dir === 'up' ? 'arrow-up' : 'arrow-down'} size={16} color={enabled ? COLORS.text.primary : COLORS.text.muted} />
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: enabled ? COLORS.text.primary : COLORS.text.muted }}>
-                                {dir === 'up' ? 'Move Up' : 'Move Down'}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    </View>
-                    {/* CHANGE CATEGORY */}
-                    <View style={{ paddingHorizontal: 22, paddingTop: 18 }}>
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 6 }}>CHANGE CATEGORY</Text>
-                      {TOP_CATS.map((cat, catIdx) => {
-                        const isCurr = cat.key === currentTop;
-                        const showChevron = cat.key === 'main';
-                        const subLabel = isCurr && cat.key === 'main'
-                          ? ` — ${SUB_CATS.find(s => s.key === currentSub)?.label ?? ''}` : '';
-                        return (
-                          <TouchableOpacity
-                            key={cat.key}
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, borderBottomWidth: catIdx < TOP_CATS.length - 1 ? 1 : 0, borderBottomColor: COLORS.border + '50' }}
-                            onPress={() => {
-                              if (cat.key === 'main') {
-                                // Always show sub-category sheet for Exercises
-                                setShowSubCatSheet(true);
-                              } else {
-                                handleKebabCategory(cat.key);
-                              }
-                            }}
-                            disabled={kebabSaving}
-                            activeOpacity={0.7}
-                          >
-                            <MaterialCommunityIcons name={cat.icon as any} size={18} color={isCurr ? COLORS.accent : COLORS.text.secondary} />
-                            <Text style={{ fontSize: 15, color: isCurr ? COLORS.accent : COLORS.text.primary, flex: 1, fontWeight: isCurr ? '700' : '400' as any }}>
-                              {cat.label}{subLabel}
-                            </Text>
-                            {isCurr && !showChevron && <MaterialCommunityIcons name="check" size={16} color={COLORS.accent} />}
-                            {showChevron && <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />}
-                            {kebabSaving && <ActivityIndicator size="small" color={COLORS.accent} />}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    {/* Cancel */}
-                    <TouchableOpacity
-                      style={{ marginHorizontal: 22, marginTop: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#141416', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border }}
-                      onPress={() => setKebabMenuExId(null)}
-                      disabled={kebabSaving}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.muted }}>Cancel</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
+                <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                  {sheetContent()}
+                  <View style={{ height: 8 }} />
+                </ScrollView>
               </Pressable>
             </Pressable>
           </Modal>

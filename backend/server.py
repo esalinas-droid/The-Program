@@ -809,6 +809,65 @@ async def reorder_exercise_in_plan(
     return {"success": True, "updatedSessions": updated, "direction": direction}
 
 
+@api_router.delete("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}")
+async def remove_exercise_from_plan(
+    program_id: str, session_id: str, exercise_id: str,
+    userId: str = Depends(get_current_user)
+):
+    """Remove an exercise from current + all future occurrences of the same session type."""
+    plan_doc = await db.saved_plans.find_one({"planId": program_id, "userId": userId, "status": "active"})
+    if not plan_doc:
+        raise HTTPException(status_code=404, detail="Active plan not found.")
+
+    from models.schemas import AnnualPlan as _AP
+    plan_obj = _AP(**plan_doc)
+    plan_start = str(getattr(plan_obj, "planStartDate", None) or getattr(plan_obj, "startDate", None) or "")
+    current_week_num = _calculate_current_week(plan_start) if plan_start else 1
+
+    # Locate target session → exercise name + session type
+    target_session_type, target_exercise_name = None, None
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                for session in (week.sessions or []):
+                    if session.sessionId == session_id:
+                        for ex in session.exercises:
+                            if ex.sessionExerciseId == exercise_id:
+                                target_session_type = session.sessionType
+                                target_exercise_name = ex.name
+                                break
+                        if target_exercise_name:
+                            break
+                if target_exercise_name:
+                    break
+            if target_exercise_name:
+                break
+        if target_exercise_name:
+            break
+
+    if not target_session_type or not target_exercise_name:
+        raise HTTPException(status_code=404, detail="Exercise not found in plan.")
+
+    # Remove from current week + all future weeks
+    removed = 0
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                if week.weekNumber < current_week_num:
+                    continue
+                for session in (week.sessions or []):
+                    if str(session.sessionType) != str(target_session_type):
+                        continue
+                    before = len(session.exercises)
+                    session.exercises = [e for e in session.exercises if e.name != target_exercise_name]
+                    removed += before - len(session.exercises)
+
+    await _save_plan_to_db(plan_obj, userId)
+    _prog_store["plans"].pop(userId, None)
+    logger.info(f"[ExRemove] user={userId} exercise='{target_exercise_name}' removed from {removed} sessions")
+    return {"success": True, "removedFromSessions": removed, "exercise": target_exercise_name}
+
+
 @api_router.get("/plan/block/current")
 async def get_current_block_mongo(userId: str = Depends(get_current_user)):
     """Get current active block — auto-loads from MongoDB if not in memory."""
