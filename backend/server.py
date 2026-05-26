@@ -458,15 +458,20 @@ async def _plan_stats(plan_id: str, user_id: str) -> dict:
             if e1rm > during.get(ex, 0):
                 during[ex] = e1rm
 
-        # Compare against max e1rm before this plan started
-        for ex, max_during in during.items():
-            prior_logs = await db.log.find(
-                {"userId": user_id, "exercise": ex, "date": {"$lt": plan_start}, "e1rm": {"$gt": 0}},
-                projection={"e1rm": 1},
-            ).to_list(500)
-            max_before = max((float(e.get("e1rm", 0)) for e in prior_logs), default=0)
-            if max_during > max_before:
-                prs_hit += 1
+        # Compare against max e1rm before this plan started — single batched query
+        if during:
+            all_prior = await db.log.find(
+                {"userId": user_id, "exercise": {"$in": list(during.keys())},
+                 "date": {"$lt": plan_start}, "e1rm": {"$gt": 0}},
+                projection={"exercise": 1, "e1rm": 1},
+            ).to_list(5000)
+            prior_by_ex: dict[str, float] = {}
+            for e in all_prior:
+                ex = e.get("exercise", "")
+                prior_by_ex[ex] = max(prior_by_ex.get(ex, 0.0), float(e.get("e1rm", 0)))
+            for ex, max_during in during.items():
+                if max_during > prior_by_ex.get(ex, 0.0):
+                    prs_hit += 1
     except Exception:
         prs_hit = 0
 
