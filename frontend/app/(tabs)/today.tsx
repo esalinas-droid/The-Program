@@ -1096,7 +1096,305 @@ const rt = StyleSheet.create({
   controlBtn:   { padding: 4 },
 });
 
-// ── SetRow ────────────────────────────────────────────────────────────────────
+// ── TimerPickerModal — Phase 4: 7-mode timer selector ─────────────────────────
+type TimerMode = 'rest' | 'hold' | 'stopwatch' | 'for_time' | 'emom' | 'amrap' | 'custom_interval';
+
+interface TimerPickerProps {
+  visible: boolean;
+  selectedMode: TimerMode;
+  // Rest context (for updating per-exercise rest duration)
+  restExerciseId?: string;
+  restCurrentSecs?: number;
+  restDefaultSecs?: number;
+  // Confirm callbacks
+  onConfirmRest:   (secs: number) => void;
+  onConfirmHold:   (secs: number, hasSides: boolean) => void;
+  onConfirmCountUp:(mode: TimerMode) => void;                         // stopwatch / for_time
+  onConfirmAmrap:  (secs: number) => void;
+  onConfirmEmom:   (periodSecs: number, totalRounds: number) => void;
+  onConfirmCustom: (workSecs: number, restSecs: number, rounds: number) => void;
+  onClose: () => void;
+}
+
+const TIMER_MODES: { id: TimerMode; icon: string; label: string; sub: string }[] = [
+  { id: 'rest',             icon: 'timer-sand',        label: 'Rest',            sub: 'Countdown' },
+  { id: 'hold',             icon: 'arm-flex-outline',  label: 'Hold',            sub: 'Work timer' },
+  { id: 'stopwatch',        icon: 'stopwatch',          label: 'Stopwatch',       sub: 'Count up' },
+  { id: 'for_time',         icon: 'run-fast',           label: 'For Time',        sub: 'Count up' },
+  { id: 'emom',             icon: 'repeat',             label: 'EMOM',            sub: 'Every min on min' },
+  { id: 'amrap',            icon: 'counter',            label: 'AMRAP',           sub: 'As many as possible' },
+  { id: 'custom_interval',  icon: 'tune',               label: 'Custom',          sub: 'Work / Rest cycles' },
+];
+
+function TimerPickerModal({
+  visible, selectedMode,
+  restCurrentSecs = 300, restDefaultSecs, restExerciseId,
+  onConfirmRest, onConfirmHold, onConfirmCountUp, onConfirmAmrap, onConfirmEmom, onConfirmCustom,
+  onClose,
+}: TimerPickerProps) {
+  const slideAnim = useRef(new Animated.Value(700)).current;
+  // Grid → Setup navigation
+  const [screen, setScreen] = useState<'grid' | 'setup'>('grid');
+  const [pendingMode, setPendingMode] = useState<TimerMode>(selectedMode);
+  // Setup field state
+  const [sMin, setSMin]     = useState('');
+  const [sSec, setSSec]     = useState('');
+  const [hasSides, setHasSides] = useState(false);
+  const [amMin, setAmMin]   = useState('');
+  const [amSec, setAmSec]   = useState('');
+  const [emomPeriod, setEmomPeriod]   = useState('60');
+  const [emomRounds, setEmomRounds]   = useState('0');
+  const [cwMin, setCwMin]   = useState('0');
+  const [cwSec, setCwSec]   = useState('40');
+  const [crMin, setCrMin]   = useState('0');
+  const [crSec, setCrSec]   = useState('20');
+  const [ciRounds, setCiRounds]       = useState('0');
+
+  const handleShow = () => {
+    setPendingMode(selectedMode);
+    setScreen('grid');
+    const m = Math.floor(restCurrentSecs / 60);
+    const s = restCurrentSecs % 60;
+    setSMin(String(m)); setSSec(String(s).padStart(2, '0'));
+    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 200 }).start();
+  };
+  const handleHide = (cb?: () => void) =>
+    Animated.timing(slideAnim, { toValue: 700, duration: 220, useNativeDriver: true }).start(() => cb?.());
+
+  const selectMode = (mode: TimerMode) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPendingMode(mode);
+    if (mode === 'stopwatch' || mode === 'for_time') {
+      // No setup needed — confirm immediately
+      handleHide(() => onConfirmCountUp(mode));
+    } else {
+      setScreen('setup');
+    }
+  };
+
+  const confirmSetup = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (pendingMode === 'rest') {
+      const total = (parseInt(sMin) || 0) * 60 + (parseInt(sSec) || 0);
+      if (total > 0) handleHide(() => onConfirmRest(total));
+    } else if (pendingMode === 'hold') {
+      const total = (parseInt(sMin) || 0) * 60 + (parseInt(sSec) || 0);
+      if (total > 0) handleHide(() => onConfirmHold(total, hasSides));
+    } else if (pendingMode === 'amrap') {
+      const total = (parseInt(amMin) || 0) * 60 + (parseInt(amSec) || 0);
+      if (total > 0) handleHide(() => onConfirmAmrap(total));
+    } else if (pendingMode === 'emom') {
+      const period = parseInt(emomPeriod) || 60;
+      const rounds = parseInt(emomRounds) || 0;
+      handleHide(() => onConfirmEmom(period, rounds));
+    } else if (pendingMode === 'custom_interval') {
+      const ws = (parseInt(cwMin) || 0) * 60 + (parseInt(cwSec) || 0);
+      const rs = (parseInt(crMin) || 0) * 60 + (parseInt(crSec) || 0);
+      const rds = parseInt(ciRounds) || 0;
+      if (ws > 0) handleHide(() => onConfirmCustom(ws, rs, rds));
+    }
+  };
+
+  const renderSetupScreen = () => {
+    switch (pendingMode) {
+      case 'rest':
+      case 'hold': {
+        const isHold = pendingMode === 'hold';
+        return (
+          <View style={tp.setupBody}>
+            <Text style={tp.setupTitle}>{isHold ? 'Hold Duration' : 'Rest Duration'}</Text>
+            <View style={crm.inputRow}>
+              <View style={crm.inputGroup}>
+                <TextInput style={crm.input} value={sMin} onChangeText={setSMin} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="0" placeholderTextColor={COLORS.text.muted} />
+                <Text style={crm.inputLabel}>min</Text>
+              </View>
+              <Text style={crm.colon}>:</Text>
+              <View style={crm.inputGroup}>
+                <TextInput style={crm.input} value={sSec} onChangeText={v => setSSec(v.replace(/\D/g,'').slice(0,2))} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="00" placeholderTextColor={COLORS.text.muted} />
+                <Text style={crm.inputLabel}>sec</Text>
+              </View>
+            </View>
+            {isHold && (
+              <TouchableOpacity
+                style={[tp.sidesToggle, hasSides && { borderColor: COLORS.accent }]}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setHasSides(v => !v); }}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name={hasSides ? 'checkbox-marked' : 'checkbox-blank-outline'} size={18} color={hasSides ? COLORS.accent : COLORS.text.muted} />
+                <Text style={[tp.sidesToggleText, hasSides && { color: COLORS.accent }]}>Two sides (auto-advance left → right)</Text>
+              </TouchableOpacity>
+            )}
+            {pendingMode === 'rest' && restDefaultSecs !== undefined && (
+              <TouchableOpacity style={crm.resetBtn} onPress={() => { const m = Math.floor(restDefaultSecs! / 60); const s = restDefaultSecs! % 60; setSMin(String(m)); setSSec(String(s).padStart(2,'0')); }} activeOpacity={0.75}>
+                <MaterialCommunityIcons name="refresh" size={13} color={COLORS.text.muted} />
+                <Text style={crm.resetBtnText}>Reset to default ({formatTime(restDefaultSecs!)})</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={tp.confirmBtn} onPress={confirmSetup} activeOpacity={0.85}>
+              <Text style={tp.confirmBtnText}>{isHold ? 'START HOLD' : 'SET REST'}</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
+      case 'amrap':
+        return (
+          <View style={tp.setupBody}>
+            <Text style={tp.setupTitle}>AMRAP Duration</Text>
+            <View style={crm.inputRow}>
+              <View style={crm.inputGroup}><TextInput style={crm.input} value={amMin} onChangeText={setAmMin} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="0" placeholderTextColor={COLORS.text.muted} /><Text style={crm.inputLabel}>min</Text></View>
+              <Text style={crm.colon}>:</Text>
+              <View style={crm.inputGroup}><TextInput style={crm.input} value={amSec} onChangeText={v => setAmSec(v.replace(/\D/g,'').slice(0,2))} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="00" placeholderTextColor={COLORS.text.muted} /><Text style={crm.inputLabel}>sec</Text></View>
+            </View>
+            <TouchableOpacity style={tp.confirmBtn} onPress={confirmSetup} activeOpacity={0.85}><Text style={tp.confirmBtnText}>START AMRAP</Text></TouchableOpacity>
+          </View>
+        );
+      case 'emom':
+        return (
+          <View style={tp.setupBody}>
+            <Text style={tp.setupTitle}>EMOM Setup</Text>
+            <View style={tp.fieldRow}>
+              <View style={tp.fieldGroup}>
+                <Text style={tp.fieldLabel}>PERIOD (sec)</Text>
+                <TextInput style={tp.fieldInput} value={emomPeriod} onChangeText={setEmomPeriod} keyboardType="number-pad" maxLength={4} selectTextOnFocus />
+              </View>
+              <View style={tp.fieldGroup}>
+                <Text style={tp.fieldLabel}>ROUNDS (0=∞)</Text>
+                <TextInput style={tp.fieldInput} value={emomRounds} onChangeText={setEmomRounds} keyboardType="number-pad" maxLength={3} selectTextOnFocus />
+              </View>
+            </View>
+            <Text style={tp.setupHint}>Each round counts down {parseInt(emomPeriod)||60}s. Beep fires at the top of every minute.</Text>
+            <TouchableOpacity style={tp.confirmBtn} onPress={confirmSetup} activeOpacity={0.85}><Text style={tp.confirmBtnText}>START EMOM</Text></TouchableOpacity>
+          </View>
+        );
+      case 'custom_interval':
+        return (
+          <View style={tp.setupBody}>
+            <Text style={tp.setupTitle}>Custom Interval</Text>
+            <View style={tp.dualRow}>
+              <View style={tp.dualCol}>
+                <Text style={[tp.fieldLabel, { color: COLORS.accent }]}>WORK</Text>
+                <View style={tp.miniTimeRow}>
+                  <TextInput style={tp.miniInput} value={cwMin} onChangeText={setCwMin} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="0" placeholderTextColor={COLORS.text.muted} />
+                  <Text style={tp.miniSep}>:</Text>
+                  <TextInput style={tp.miniInput} value={cwSec} onChangeText={v => setCwSec(v.replace(/\D/g,'').slice(0,2))} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="40" placeholderTextColor={COLORS.text.muted} />
+                </View>
+              </View>
+              <View style={tp.dualCol}>
+                <Text style={[tp.fieldLabel, { color: TEAL }]}>REST</Text>
+                <View style={tp.miniTimeRow}>
+                  <TextInput style={tp.miniInput} value={crMin} onChangeText={setCrMin} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="0" placeholderTextColor={COLORS.text.muted} />
+                  <Text style={tp.miniSep}>:</Text>
+                  <TextInput style={tp.miniInput} value={crSec} onChangeText={v => setCrSec(v.replace(/\D/g,'').slice(0,2))} keyboardType="number-pad" maxLength={2} selectTextOnFocus placeholder="20" placeholderTextColor={COLORS.text.muted} />
+                </View>
+              </View>
+            </View>
+            <View style={tp.fieldRow}>
+              <View style={tp.fieldGroup}>
+                <Text style={tp.fieldLabel}>ROUNDS (0=∞)</Text>
+                <TextInput style={tp.fieldInput} value={ciRounds} onChangeText={setCiRounds} keyboardType="number-pad" maxLength={3} selectTextOnFocus />
+              </View>
+            </View>
+            <TouchableOpacity style={tp.confirmBtn} onPress={confirmSetup} activeOpacity={0.85}><Text style={tp.confirmBtnText}>START INTERVALS</Text></TouchableOpacity>
+          </View>
+        );
+      default: return null;
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onShow={handleShow} onRequestClose={() => handleHide(onClose)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <Pressable style={tp.overlay} onPress={() => handleHide(onClose)}>
+          <Animated.View style={[tp.sheet, { transform: [{ translateY: slideAnim }] }]}>
+            <Pressable onPress={e => e.stopPropagation()}>
+              {/* Handle */}
+              <View style={tp.handleWrap}><View style={tp.handle} /></View>
+
+              {/* Header row: back arrow + title */}
+              <View style={tp.headerRow}>
+                {screen === 'setup' ? (
+                  <TouchableOpacity onPress={() => setScreen('grid')} style={tp.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialCommunityIcons name="arrow-left" size={22} color={COLORS.text.secondary} />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity onPress={() => handleHide(onClose)} style={tp.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialCommunityIcons name="arrow-left" size={22} color={COLORS.text.secondary} />
+                  </TouchableOpacity>
+                )}
+                <Text style={tp.headerTitle}>
+                  {screen === 'grid' ? 'Set Timer' : TIMER_MODES.find(m => m.id === pendingMode)?.label ?? 'Setup'}
+                </Text>
+                <View style={{ width: 40 }} />
+              </View>
+
+              {screen === 'grid' ? (
+                /* ── GRID (7 tiles) ── */
+                <View style={tp.grid}>
+                  {TIMER_MODES.map(m => {
+                    const active = selectedMode === m.id;
+                    return (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[tp.tile, active && tp.tileActive]}
+                        onPress={() => selectMode(m.id)}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialCommunityIcons
+                          name={m.icon as any}
+                          size={28}
+                          color={active ? COLORS.accent : COLORS.text.secondary}
+                        />
+                        <Text style={[tp.tileLabel, active && { color: COLORS.accent }]}>{m.label}</Text>
+                        <Text style={tp.tileSub}>{m.sub}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                /* ── SETUP SCREEN ── */
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+                  {renderSetupScreen()}
+                </KeyboardAvoidingView>
+              )}
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+const tp = StyleSheet.create({
+  overlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'flex-end' },
+  sheet:       { backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingBottom: 34 },
+  handleWrap:  { alignItems: 'center', paddingTop: 12, paddingBottom: 4 },
+  handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+  headerRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  backBtn:     { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, flex: 1, textAlign: 'center' },
+  grid:        { flexDirection: 'row', flexWrap: 'wrap', padding: SPACING.md, gap: SPACING.sm },
+  tile:        { width: '30%', aspectRatio: 1, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', padding: SPACING.xs, gap: 4 },
+  tileActive:  { borderColor: COLORS.accent, backgroundColor: COLORS.accent + '18' },
+  tileLabel:   { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary, textAlign: 'center' },
+  tileSub:     { fontSize: 9, color: COLORS.text.muted, textAlign: 'center', letterSpacing: 0.2 },
+  setupBody:   { paddingHorizontal: SPACING.xl, paddingTop: SPACING.lg, paddingBottom: SPACING.xl },
+  setupTitle:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, color: COLORS.text.secondary, letterSpacing: 1, marginBottom: SPACING.md, textAlign: 'center' },
+  sidesToggle: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.md },
+  sidesToggleText: { fontSize: FONTS.sizes.sm, color: COLORS.text.muted, flex: 1 },
+  setupHint:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, textAlign: 'center', marginBottom: SPACING.md, lineHeight: 16 },
+  confirmBtn:  { backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, alignItems: 'center', marginTop: SPACING.sm },
+  confirmBtnText: { color: COLORS.primary, fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.base, letterSpacing: 1 },
+  fieldRow:    { flexDirection: 'row', gap: SPACING.md, marginBottom: SPACING.md },
+  fieldGroup:  { flex: 1, gap: SPACING.xs },
+  fieldLabel:  { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 1.5 },
+  fieldInput:  { backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, textAlign: 'center', paddingVertical: SPACING.sm },
+  dualRow:     { flexDirection: 'row', gap: SPACING.lg, marginBottom: SPACING.md, justifyContent: 'center' },
+  dualCol:     { alignItems: 'center', gap: SPACING.xs },
+  miniTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  miniInput:   { width: 52, height: 52, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, textAlign: 'center', color: COLORS.text.primary, fontSize: FONTS.sizes.xl, fontWeight: FONTS.weights.heavy },
+  miniSep:     { fontSize: 24, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
+});
+
+
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
   removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed }: {
   set: ExSet;
@@ -1946,8 +2244,46 @@ export default function TodayScreen() {
   // Rest timer
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerTarget, setTimerTarget]   = useState(0);     // total rest duration (for progress bar)
-  const [timerAdjustVisible, setTimerAdjustVisible] = useState(false); // Phase 3: pencil-adjust modal
+  const [timerTarget, setTimerTarget]   = useState(0);
+  const [timerAdjustVisible, setTimerAdjustVisible] = useState(false);  // kept for compat (now routes to picker)
+
+  // Phase 4 — timer mode system
+  type TimerMode = 'rest' | 'hold' | 'stopwatch' | 'for_time' | 'emom' | 'amrap' | 'custom_interval';
+  const [timerMode,        setTimerMode]        = useState<TimerMode>('rest');
+  const [timerPickerVisible, setTimerPickerVisible] = useState(false);
+  const [timerIsCountUp,   setTimerIsCountUp]   = useState(false);
+  // EMOM
+  const [timerRound,       setTimerRound]       = useState(1);
+  const [timerTotalRounds, setTimerTotalRounds] = useState(0);  // 0 = infinite
+  // Custom Interval
+  const [timerPhase,       setTimerPhase]       = useState<'work' | 'rest'>('work');
+  const [timerWorkSecs,    setTimerWorkSecs]     = useState(40);
+  const [timerRestIntervalSecs, setTimerRestIntervalSecs] = useState(20);
+  // Hold
+  const [timerSide,        setTimerSide]        = useState<'left' | 'right' | null>(null);
+  const [timerHasSides,    setTimerHasSides]    = useState(false);
+  // Refs for transition useEffect (avoids stale closure)
+  const timerModeRef    = useRef<TimerMode>('rest');
+  const timerPhaseRef   = useRef<'work'|'rest'>('work');
+  const timerRoundRef   = useRef(1);
+  const timerTotalRef   = useRef(0);
+  const timerWorkRef    = useRef(40);
+  const timerRestIntRef = useRef(20);
+  const timerSideRef    = useRef<'left'|'right'|null>(null);
+  const timerHasSidesRef = useRef(false);
+  const timerTargetRef  = useRef(0);
+  const timerIsCountUpRef = useRef(false);
+  // Sync refs
+  useEffect(() => { timerModeRef.current = timerMode; },        [timerMode]);
+  useEffect(() => { timerPhaseRef.current = timerPhase; },      [timerPhase]);
+  useEffect(() => { timerRoundRef.current = timerRound; },      [timerRound]);
+  useEffect(() => { timerTotalRef.current = timerTotalRounds; }, [timerTotalRounds]);
+  useEffect(() => { timerWorkRef.current = timerWorkSecs; },    [timerWorkSecs]);
+  useEffect(() => { timerRestIntRef.current = timerRestIntervalSecs; }, [timerRestIntervalSecs]);
+  useEffect(() => { timerSideRef.current = timerSide; },        [timerSide]);
+  useEffect(() => { timerHasSidesRef.current = timerHasSides; }, [timerHasSides]);
+  useEffect(() => { timerTargetRef.current = timerTarget; },    [timerTarget]);
+  useEffect(() => { timerIsCountUpRef.current = timerIsCountUp; }, [timerIsCountUp]);
   const [timerExerciseName, setTimerExerciseName] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -2731,23 +3067,98 @@ export default function TodayScreen() {
     setShowPainModal(true);
   };
 
-  // ── Rest timer effect (COUNT-DOWN) ──────────────────────────────────────────
+  // ── Phase 4: audio beep on interval transitions ─────────────────────────────
+  const playBeep = useCallback(async (type: 'round' | 'done' = 'round') => {
+    try {
+      Haptics.notificationAsync(
+        type === 'done'
+          ? Haptics.NotificationFeedbackType.Success
+          : Haptics.NotificationFeedbackType.Warning
+      );
+      // expo-av beep (foreground reliable; background requires UIBackgroundModes:audio)
+      const { Audio } = require('expo-av');
+      await Audio.setAudioModeAsync({ staysActiveInBackground: true, playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../assets/audio/beep.wav'),
+        { volume: type === 'done' ? 0.9 : 0.7 }
+      );
+      await sound.playAsync();
+      sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) sound.unloadAsync(); });
+    } catch (_) { /* haptics already fired */ }
+  }, []);
+
+  // ── Rest timer: COUNT-DOWN (supports count-up for Stopwatch / For Time) ──────
   useEffect(() => {
     if (timerRunning) {
-      timerRef.current = setInterval(() => setTimerSeconds(s => Math.max(0, s - 1)), 1000);
+      timerRef.current = setInterval(() => {
+        if (timerIsCountUpRef.current) {
+          setTimerSeconds(s => s + 1);
+        } else {
+          setTimerSeconds(s => Math.max(0, s - 1));
+        }
+      }, 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [timerRunning]);
 
-  // ── Auto-stop and haptic when countdown reaches 0 ───────────────────────────
+  // ── Timer zero-crossing: mode transitions ────────────────────────────────────
   useEffect(() => {
-    if (timerSeconds === 0 && timerRunning) {
+    if (timerSeconds !== 0 || !timerRunning || timerIsCountUpRef.current) return;
+
+    const mode = timerModeRef.current;
+
+    if (mode === 'emom') {
+      const nextRound = timerRoundRef.current + 1;
+      const total     = timerTotalRef.current;
+      if (total === 0 || nextRound <= total) {
+        playBeep('round');
+        setTimerRound(nextRound);
+        setTimerSeconds(60);
+        setTimerTarget(60);
+      } else {
+        playBeep('done');
+        setTimerRunning(false);
+      }
+
+    } else if (mode === 'custom_interval') {
+      const phase = timerPhaseRef.current;
+      playBeep('round');
+      if (phase === 'work') {
+        setTimerPhase('rest');
+        const rs = timerRestIntRef.current;
+        setTimerSeconds(rs);
+        setTimerTarget(rs);
+      } else {
+        const nextRound = timerRoundRef.current + 1;
+        const total     = timerTotalRef.current;
+        if (total === 0 || nextRound <= total) {
+          setTimerPhase('work');
+          setTimerRound(nextRound);
+          const ws = timerWorkRef.current;
+          setTimerSeconds(ws);
+          setTimerTarget(ws);
+        } else {
+          playBeep('done');
+          setTimerRunning(false);
+        }
+      }
+
+    } else if (mode === 'hold' && timerHasSidesRef.current && timerSideRef.current === 'left') {
+      // Auto-advance left → right
+      playBeep('round');
+      setTimerSide('right');
+      setTimerSeconds(timerTargetRef.current);
+      // keep timerRunning = true
+
+    } else {
+      // rest, amrap, for_time (user stops), hold (done)
       setTimerRunning(false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      playBeep('done');
     }
-  }, [timerSeconds]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerSeconds, timerRunning]);
 
   // ── Computed values ──────────────────────────────────────────────────────────
   const totalSets   = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
