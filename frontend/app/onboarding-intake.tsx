@@ -326,7 +326,12 @@ export default function OnboardingIntake() {
   const oFade         = useRef(new Animated.Value(0)).current;
   const oSlide        = useRef(new Animated.Value(20)).current;
 
-  useEffect(() => { animateIn(); }, []);
+  // Deterministic entrance animation: fires on mount (step=1) and on every
+  // step change. Replaces the old rAF+setTimeout chain that could leave
+  // inner views at opacity 0 if the callback was dropped (Android-common).
+  // animateIn only touches stable useRef values — safe to omit from deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { animateIn(); }, [step]);
 
   // Warm up the backend as soon as onboarding starts. The hosting proxy can
   // 404 on a cold-start, so we trigger a wake-up call now while the user
@@ -411,7 +416,7 @@ export default function OnboardingIntake() {
     greetFade.setValue(0); greetSlide.setValue(20);
     qFade.setValue(0);     qSlide.setValue(20);
     oFade.setValue(0);     oSlide.setValue(20);
-    containerFade.setValue(1);
+    // containerFade stays at 1 permanently — never set to 0
     Animated.stagger(120, [
       Animated.parallel([
         Animated.timing(greetFade,  { toValue: 1, duration: 350, useNativeDriver: true }),
@@ -429,14 +434,16 @@ export default function OnboardingIntake() {
   };
 
   const transition = (newStep: number) => {
-    Animated.timing(containerFade, { toValue: 0, duration: 140, useNativeDriver: true }).start(() => {
+    // Fade only the inner content out — the container (containerFade) stays at
+    // opacity 1 permanently, so the screen can NEVER go fully black even if an
+    // animation callback is dropped (common on Android).
+    Animated.parallel([
+      Animated.timing(greetFade, { toValue: 0, duration: 100, useNativeDriver: true }),
+      Animated.timing(qFade,     { toValue: 0, duration: 100, useNativeDriver: true }),
+      Animated.timing(oFade,     { toValue: 0, duration: 100, useNativeDriver: true }),
+    ]).start(() => {
       setStep(newStep);
-      // Delay animateIn to let React finish rendering the new step on Android
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          animateIn();
-        }, Platform.OS === 'android' ? 80 : 10);
-      });
+      // animateIn() is triggered deterministically by useEffect([step]) below.
     });
   };
 
