@@ -109,6 +109,8 @@ const STEP_META = [
   },
 ];
 
+const TOTAL_STEPS = STEP_META.length; // 13
+
 const GOALS = [
   { label: 'Strength',             icon: 'weight-lifter'    },
   { label: 'Hypertrophy',          icon: 'arm-flex-outline' },
@@ -554,9 +556,9 @@ export default function OnboardingIntake() {
       if (lifts.yoke)     currentLifts['yoke']     = parseFloat(lifts.yoke)     || 0;
 
       const cleanInjuries = injuries.includes('None') ? [] : injuries;
-      const bwNum         = parseFloat(bodyweight) || 200;
+      const bwNum         = parseFloat(bodyweight);
       const bw12wNum      = parseFloat(bw12WeekGoal) || 0;
-      const sleepNum      = parseFloat(selectedSleep) || 7;
+      const sleepNum      = parseFloat(selectedSleep);
       const cleanEquip    = specialtyEquipment.filter(e => e !== 'None of the above');
 
       console.log('[Onboarding] Step 1 — Saving profile locally...');
