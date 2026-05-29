@@ -1,24 +1,30 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView,
-  Platform, Animated, Easing, Image,
+  Platform, Animated, Easing, Image, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { COLORS } from '../src/constants/theme';
 import { setAuthToken, storeUser, AuthUser } from '../src/utils/auth';
 import { saveProfile } from '../src/utils/storage';
 
-// ── Design tokens ────────────────────────────────────────────────────────────
-const GOLD    = '#C9A84C';
-const BG      = '#0A0A0C';
-const SURFACE = '#111114';
-const BORDER  = '#1E1E22';
-const WHITE   = '#E8E8E6';
-const MUTED   = '#6B6B70';
-const RED     = '#FF4D4D';
+// ── Design tokens — all sourced from theme.ts (no file-local hex) ─────────────
+const GOLD    = COLORS.accent;
+const BG      = COLORS.primary;
+const SURFACE = COLORS.card;
+const BORDER  = COLORS.border;
+const WHITE   = COLORS.text.primary;
+const MUTED   = COLORS.text.muted;
+const RED     = COLORS.status.error;
+
+// Required for Google sign-in redirect handling
+WebBrowser.maybeCompleteAuthSession();
 
 // ── API base ─────────────────────────────────────────────────────────────────
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? '';
@@ -88,8 +94,63 @@ export default function AuthScreen() {
   const [showPw, setShowPw]   = useState(false);
   const [loading, setLoading] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const slideAnim = useRef(new Animated.Value(0)).current;
+
+  // ── C.2 — Google Sign-In ──────────────────────────────────────────────────
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID,
+    iosClientId:     process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS,
+    webClientId:     process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB,
+  });
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const idToken = (response as any).authentication?.idToken ?? response.params?.id_token;
+      if (idToken) handleGoogleCallback(idToken);
+    }
+  }, [response]);
+
+  async function handleGoogleSignIn() {
+    if (!request) {
+      Alert.alert(
+        'Google Sign-In',
+        'Google Sign-In is not configured yet. Please use email to continue.',
+        [
+          { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+    setGoogleLoading(true);
+    try {
+      await promptAsync();
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
+
+  async function handleGoogleCallback(idToken: string) {
+    setGoogleLoading(true);
+    setError(null);
+    try {
+      const result = await authFetch('/social', { provider: 'google', token: idToken });
+      await handleAuthSuccess(result);
+    } catch (e: any) {
+      Alert.alert(
+        'Google Sign-In',
+        e.message || 'Google sign-in failed. Please try again or use email.',
+        [
+          { text: 'Try Email', onPress: () => slideIn('register'), style: 'default' },
+          { text: 'OK', style: 'cancel' },
+        ],
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
 
   const slideIn = (toMode: 'login' | 'register') => {
     Animated.sequence([
@@ -118,8 +179,8 @@ export default function AuthScreen() {
       const available = await AppleAuthentication.isAvailableAsync();
       if (!available) {
         Alert.alert(
-          'Apple Sign-In',
-          'Apple Sign-In requires a standalone build. Please use email for now.',
+          'Apple Sign-In Unavailable',
+          'Apple Sign-In requires iOS 13 or later on a physical device. Please use email to create your account.',
           [
             { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
             { text: 'Cancel', style: 'cancel' },
@@ -160,10 +221,10 @@ export default function AuthScreen() {
       // Any other error (e.g., no Apple ID configured, network timeout) → friendly alert
       Alert.alert(
         'Apple Sign-In',
-        'Apple Sign-In requires a standalone build. Please use email for now.',
+        'There was an issue completing Apple Sign-In. Please try again or use email instead.',
         [
-          { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'Try Again', style: 'default' },
+          { text: 'Use Email', onPress: () => slideIn('register') },
         ],
       );
     } finally {
@@ -234,20 +295,15 @@ export default function AuthScreen() {
             />
           )}
 
-          {/* Google — "Coming soon" */}
+          {/* Google — C.2 wired (needs EXPO_PUBLIC_GOOGLE_CLIENT_ID_* in .env to activate) */}
           <SocialButton
             icon="google"
             label="Continue with Google"
             color="#4285F4"
-            onPress={() => comingSoon('Google')}
-          />
-
-          {/* Facebook — "Coming soon" */}
-          <SocialButton
-            icon="facebook"
-            label="Continue with Facebook"
-            color="#1877F2"
-            onPress={() => comingSoon('Facebook')}
+            onPress={handleGoogleSignIn}
+            showBadge={!request}
+            loading={googleLoading}
+            disabled={googleLoading}
           />
         </View>
 
@@ -271,9 +327,17 @@ export default function AuthScreen() {
           </Text>
         </TouchableOpacity>
 
-        <Text style={[s.legalText, { marginBottom: insets.bottom + 16 }]}>
-          By continuing, you agree to our Terms of Service and Privacy Policy.
-        </Text>
+        <View style={[s.legalWrap, { marginBottom: insets.bottom + 16 }]}>
+          <Text style={s.legalText}>By continuing, you agree to our </Text>
+          <TouchableOpacity onPress={() => Linking.openURL('https://theprogram.app/terms')}>
+            <Text style={s.legalLink}>Terms of Service</Text>
+          </TouchableOpacity>
+          <Text style={s.legalText}> and </Text>
+          <TouchableOpacity onPress={() => Linking.openURL('https://theprogram.app/privacy')}>
+            <Text style={s.legalLink}>Privacy Policy</Text>
+          </TouchableOpacity>
+          <Text style={s.legalText}>.</Text>
+        </View>
       </View>
     );
   }
@@ -452,7 +516,9 @@ const s = StyleSheet.create({
   // Links
   loginLink:     { alignItems: 'center', paddingVertical: 8 },
   loginLinkText: { fontSize: 14, color: MUTED },
-  legalText:     { fontSize: 11, color: MUTED + '99', textAlign: 'center', paddingHorizontal: 40, marginTop: 'auto', paddingTop: 24 },
+  legalWrap:     { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', paddingHorizontal: 32, marginTop: 'auto', paddingTop: 20 },
+  legalText:     { fontSize: 11, color: MUTED + '99' },
+  legalLink:     { fontSize: 11, color: GOLD, textDecorationLine: 'underline' },
 
   // Email form
   formContainer: { flexGrow: 1, paddingHorizontal: 24 },

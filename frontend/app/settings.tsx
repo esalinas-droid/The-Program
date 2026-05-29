@@ -11,7 +11,7 @@ import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
 import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
 import { AthleteProfile } from '../src/types';
-import { clearAuth, getStoredUser } from '../src/utils/auth';
+import { clearAuth, getStoredUser, getAuthToken } from '../src/utils/auth';
 import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -347,6 +347,35 @@ export default function SettingsScreen() {
           router.replace('/auth');
         }},
       ]
+    );
+  }
+
+  // C.3 — Delete account (App Store compliance)
+  function confirmDeleteAccount() {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all training data — plans, logs, PRs, and coach history. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Permanently',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const token = await getAuthToken();
+              const res = await fetch(
+                `${process.env.EXPO_PUBLIC_BACKEND_URL ?? ''}/api/auth/delete-account`,
+                { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+              );
+              if (!res.ok) throw new Error('Deletion failed. Please try again.');
+              await clearAuth();
+              router.replace('/auth');
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Could not delete account. Please try again.');
+            }
+          },
+        },
+      ],
     );
   }
 
@@ -697,6 +726,21 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="logout" size={16} color="#EF5350" />
             </View>
             <Text style={s.signOutText}>Sign out</Text>
+          </TouchableOpacity>
+
+          {/* C.3 — Delete Account (App Store compliance) */}
+          <TouchableOpacity
+            style={[s.accountRow, { marginTop: 2 }]}
+            onPress={confirmDeleteAccount}
+            activeOpacity={0.7}
+          >
+            <View style={[s.accountIconWrap, { backgroundColor: '#EF535008' }]}>
+              <MaterialCommunityIcons name="account-remove-outline" size={16} color="#EF5350" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.signOutText, { color: '#EF5350' }]}>Delete account</Text>
+              <Text style={[s.accountRowDesc, { color: COLORS.text.muted, marginTop: 2 }]}>Permanently delete all your data</Text>
+            </View>
           </TouchableOpacity>
         </View>
 

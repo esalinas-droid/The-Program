@@ -446,6 +446,38 @@ async def logout():
     return {"success": True, "message": "Token cleared on client."}
 
 
+@auth_router.delete("/delete-account")
+async def delete_account(authorization: Optional[str] = Header(None)):
+    """
+    C.3 — App Store compliance: account deletion endpoint.
+    Permanently wipes the authenticated user's record from every collection.
+    Requires: Authorization: Bearer {JWT}
+    """
+    user = await get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    user_id = user.get("userId") or user.get("id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Could not determine user ID.")
+
+    # Purge every collection that holds user data
+    await db.users.delete_one({"userId": user_id})
+    await db.profiles.delete_one({"userId": user_id})
+    await db.saved_plans.delete_many({"userId": user_id})
+    await db.session_logs.delete_many({"userId": user_id})
+    await db.exercise_logs.delete_many({"userId": user_id})
+    await db.prs.delete_many({"userId": user_id})
+    await db.body_metrics.delete_many({"userId": user_id})
+    await db.pain_reports.delete_many({"userId": user_id})
+    await db.coach_messages.delete_many({"userId": user_id})
+    await db.coach_context.delete_many({"userId": user_id})
+    await db.uploaded_docs.delete_many({"userId": user_id})
+    await db.readiness.delete_many({"userId": user_id})
+
+    logger.info(f"[DELETE ACCOUNT] All data purged for userId={user_id}")
+    return {"success": True, "message": "Account and all associated data permanently deleted."}
+
+
 # ── Admin Endpoints ────────────────────────────────────────────────────────────
 
 @admin_router.get("/users")
