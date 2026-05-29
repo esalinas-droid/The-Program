@@ -136,9 +136,10 @@ const BASE_LIFT_FIELDS = [
 ] as const;
 
 const STRONGMAN_LIFT_FIELDS = [
-  { key: 'log',      label: 'Log Clean & Press'   },
-  { key: 'axle',     label: 'Axle Clean & Press'  },
-  { key: 'yoke',     label: 'Yoke (per 40 ft)'    },
+  { key: 'log_press',    label: 'Log Press'             },
+  { key: 'yoke_walk',    label: 'Yoke Walk (per 40 ft)' },
+  { key: 'atlas_stone',  label: 'Atlas Stone (to 48")' },
+  { key: 'farmer_walk',  label: "Farmer's Walk (per 50 ft)" },
 ] as const;
 
 const TRAINING_DAYS = [
@@ -285,7 +286,7 @@ export default function OnboardingIntake() {
   // Step 3 — Lifts
   const [lifts, setLifts] = useState<Record<string, string>>({
     squat: '', bench: '', deadlift: '', ohp: '',
-    log: '', axle: '', yoke: '',
+    log_press: '', yoke_walk: '', atlas_stone: '', farmer_walk: '',
   });
   const [liftUnit, setLiftUnit] = useState<'lbs' | 'kg'>('lbs');
 
@@ -939,7 +940,7 @@ export default function OnboardingIntake() {
           <>
             <View style={s.liftDivider}>
               <View style={s.liftDividerLine} />
-              <Text style={s.liftDividerText}>Strongman Events</Text>
+              <Text style={s.liftDividerText}>STRONGMAN EVENTS — OPTIONAL</Text>
               <View style={s.liftDividerLine} />
             </View>
             {STRONGMAN_LIFT_FIELDS.map(({ key, label }) => (
