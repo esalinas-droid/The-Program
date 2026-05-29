@@ -29,7 +29,10 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.emergent.host"
+        "EXPO_PUBLIC_BACKEND_URL": "https://the-program-app.emergent.host",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS":     "$EAS_SECRET_GOOGLE_CLIENT_ID_IOS",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID": "$EAS_SECRET_GOOGLE_CLIENT_ID_ANDROID",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB":     "$EAS_SECRET_GOOGLE_CLIENT_ID_WEB"
       }
     }
   },
