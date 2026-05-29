@@ -122,10 +122,10 @@ const GOALS = [
 ];
 
 const EXPERIENCE = [
-  { label: 'Beginner',     detail: 'Less than 1 year — learning the patterns' },
-  { label: 'Intermediate', detail: '1–3 years — building consistent strength'  },
-  { label: 'Advanced',     detail: '3–7 years — optimizing every variable'     },
-  { label: 'Elite',        detail: '7+ years — competing or ready to'          },
+  { label: 'Beginner',     detail: 'Less than 1 year — learning the patterns'          },
+  { label: 'Intermediate', detail: '1–3 years — building consistent strength'           },
+  { label: 'Advanced',     detail: '3+ years — optimizing every variable'               },
+  { label: 'Elite',        detail: 'Competing in strength sports (or training to)'      },
 ];
 
 const BASE_LIFT_FIELDS = [
