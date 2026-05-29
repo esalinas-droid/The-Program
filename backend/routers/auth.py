@@ -454,12 +454,9 @@ async def delete_account(authorization: Optional[str] = Header(None)):
     Permanently wipes the authenticated user's record from every collection.
     Requires: Authorization: Bearer {JWT}
     """
-    user = await get_current_user(authorization)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    user_id = user.get("userId") or user.get("id")
+    user_id = await get_current_user(authorization)
     if not user_id:
-        raise HTTPException(status_code=400, detail="Could not determine user ID.")
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
     # Purge every collection that holds user data
     await db.users.delete_one({"userId": user_id})

@@ -14,7 +14,7 @@
 # Main and testing agents must follow this exact format to maintain testing data. 
 # The testing data must be entered in yaml format Below is the data structure:
 # 
-## user_problem_statement: "ONBOARDING + AUTH COMPLETE - Full 13-step onboarding visual restyle (A.2-A.15) with photo grid assets, live delta chip, body map, strongman events. Auth restyle (C.1), Google Sign-In wired with real OAuth IDs (C.2), App Store compliance: tappable legal links + Delete Account (C.3)."
+## user_problem_statement: "COMPREHENSIVE SMOKE TEST — Full 13-step onboarding restyle (A.2-A.15), Auth (C.1-C.3), Settings Delete Account, and guardrail checks. Test all 4 categories: Onboarding, Auth, Settings/DeleteAccount, Guardrails."
 ## backend:
 ##   - task: "Task name"
 ##     implemented: true
