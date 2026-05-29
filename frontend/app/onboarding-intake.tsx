@@ -142,10 +142,11 @@ const STRONGMAN_LIFT_FIELDS = [
 ] as const;
 
 const TRAINING_DAYS = [
-  { days: 3, desc: '3 max effort sessions/week'     },
-  { days: 4, desc: 'Classic 4-day ME+DE split'      },
-  { days: 5, desc: 'High volume — 5th day GPP/events'  },
-  { days: 6, desc: 'Full frequency push'               },
+  { days: 2, desc: 'Minimum effective — full body'       },
+  { days: 3, desc: 'Three days — simple and powerful'    },
+  { days: 4, desc: 'Four days — upper / lower split'     },
+  { days: 5, desc: 'Five days — high volume approach'    },
+  { days: 6, desc: 'Six days — full frequency'           },
 ];
 
 const PRIMARY_WEAKNESSES = [
@@ -252,6 +253,7 @@ const GOAL_MAP: Record<string, string> = {
 };
 
 const DAY_MAP: Record<number, string[]> = {
+  2: ['monday', 'thursday'],
   3: ['monday', 'wednesday', 'friday'],
   4: ['monday', 'tuesday', 'thursday', 'friday'],
   5: ['monday', 'tuesday', 'thursday', 'friday', 'saturday'],
@@ -1022,6 +1024,7 @@ export default function OnboardingIntake() {
     setDays(n);
     // Apply smart defaults
     const defaults: Record<number, string[]> = {
+      2: ['monday', 'thursday'],
       3: ['monday', 'wednesday', 'friday'],
       4: ['monday', 'tuesday', 'thursday', 'friday'],
       5: ['monday', 'tuesday', 'thursday', 'friday', 'saturday'],
