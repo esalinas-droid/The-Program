@@ -182,6 +182,8 @@ const SPECIALTY_EQUIPMENT = [
   { label: 'Farmer Handles',            key: 'farmer_handles'  },
   { label: 'Atlas Stones',              key: 'atlas_stones'    },
   { label: 'Sled / Push Sled',          key: 'sled'            },
+  { label: 'Kettlebells',               key: 'kettlebells'     },
+  { label: 'Sandbag',                   key: 'sandbag'         },
   { label: 'GHR Machine',              key: 'ghr'             },
   { label: 'Reverse Hyper',             key: 'reverse_hyper'   },
   { label: 'Belt Squat Machine',        key: 'belt_squat'      },

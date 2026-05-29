@@ -23,7 +23,7 @@ export const WEAKNESS_IMAGES: Record<string, any> = {
   'Mental / confidence under maximal':   require('../../assets/onboarding/weaknesses/mental-confidence.png'),
 };
 
-// ── Equipment photos  (8 items have photos; rest show text chips) ────────────
+// ── Equipment photos  (10 items have photos; rest show text chips) ───────────
 export const EQUIPMENT_IMAGES: Record<string, any> = {
   'Safety Squat Bar (SSB)': require('../../assets/onboarding/equipment/safety-squat-bar.png'),
   'Trap Bar / Hex Bar':     require('../../assets/onboarding/equipment/trap-bar.png'),
@@ -33,6 +33,8 @@ export const EQUIPMENT_IMAGES: Record<string, any> = {
   'Farmer Handles':         require('../../assets/onboarding/equipment/farmers-handles.png'),
   'Atlas Stones':           require('../../assets/onboarding/equipment/atlas-stones.png'),
   'Sled / Push Sled':       require('../../assets/onboarding/equipment/prowler-sled.png'),
+  'Kettlebells':            require('../../assets/onboarding/equipment/kettlebells.png'),
+  'Sandbag':                require('../../assets/onboarding/equipment/sandbag.png'),
 };
 
 // ── Anatomy body-map images  (used on injury step as a visual reference) ────
