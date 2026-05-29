@@ -968,49 +968,82 @@ export default function OnboardingIntake() {
   };
 
   // Step 4 — Bodyweight
-  const renderStep4 = () => (
-    <View>
-      <View style={s.bwRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.bwLabel}>Current weight</Text>
-          <View style={s.bwInputWrap}>
-            <TextInput
-              style={s.bwInput}
-              value={bodyweight}
-              onChangeText={v => setBodyweight(v.replace(/[^0-9.]/g, ''))}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              placeholderTextColor={COLORS.text.muted}
-              selectTextOnFocus
-            />
-            <Text style={s.bwUnit}>{liftUnit}</Text>
-          </View>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.bwLabel}>12-week goal (optional)</Text>
-          <View style={s.bwInputWrap}>
-            <TextInput
-              style={[s.bwInput, s.bwInputSecondary]}
-              value={bw12WeekGoal}
-              onChangeText={v => setBw12Week(v.replace(/[^0-9.]/g, ''))}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              placeholderTextColor={COLORS.text.muted}
-              selectTextOnFocus
-            />
-            <Text style={s.bwUnit}>{liftUnit}</Text>
-          </View>
-        </View>
-      </View>
+  const renderStep4 = () => {
+    // Compute pace label from (12-week goal − current)
+    const cur  = parseFloat(bodyweight);
+    const goal12 = parseFloat(bw12WeekGoal);
+    const hasBoth = cur > 0 && goal12 > 0;
+    let paceLabel = '';
+    let paceColor = COLORS.text.muted;
+    if (hasBoth) {
+      const delta = goal12 - cur;
+      const pct   = (delta / cur) * 100;
+      if (Math.abs(pct) <= 2)       { paceLabel = 'Maintain — recomp pace';      paceColor = '#4DCEA6'; }
+      else if (delta > 0 && pct <= 5)  { paceLabel = 'Lean gain pace';              paceColor = '#5B9BF5'; }
+      else if (delta > 0)              { paceLabel = 'Aggressive gain';             paceColor = COLORS.accent; }
+      else if (delta < 0 && pct >= -8) { paceLabel = 'Sustainable cut pace';        paceColor = '#5B9BF5'; }
+      else                             { paceLabel = 'Aggressive cut';              paceColor = '#FF6B6B'; }
+    }
 
-      <View style={s.bwNote}>
-        <MaterialCommunityIcons name="information-outline" size={13} color={COLORS.accent} />
-        <Text style={s.bwNoteText}>
-          Body weight is used to scale volume, track weekly compliance, and set safe loading zones for accessory work.
-        </Text>
+    return (
+      <View>
+        <View style={s.bwRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.bwLabel}>Current weight</Text>
+            <View style={s.bwInputWrap}>
+              <TextInput
+                style={s.bwInput}
+                value={bodyweight}
+                onChangeText={v => setBodyweight(v.replace(/[^0-9.]/g, ''))}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={COLORS.text.muted}
+                selectTextOnFocus
+              />
+              <Text style={s.bwUnit}>{liftUnit}</Text>
+            </View>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.bwLabel}>12-week goal (optional)</Text>
+            <View style={s.bwInputWrap}>
+              <TextInput
+                style={[s.bwInput, s.bwInputSecondary]}
+                value={bw12WeekGoal}
+                onChangeText={v => setBw12Week(v.replace(/[^0-9.]/g, ''))}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={COLORS.text.muted}
+                selectTextOnFocus
+              />
+              <Text style={s.bwUnit}>{liftUnit}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Live delta chip — appears when both values are entered */}
+        {hasBoth && paceLabel ? (
+          <View style={[s.paceDeltaChip, { borderColor: paceColor + '60', backgroundColor: paceColor + '12' }]}>
+            <MaterialCommunityIcons
+              name={goal12 > cur ? 'trending-up' : goal12 < cur ? 'trending-down' : 'swap-horizontal'}
+              size={14}
+              color={paceColor}
+            />
+            <Text style={[s.paceDeltaLabel, { color: paceColor }]}>{paceLabel}</Text>
+            <Text style={[s.paceDeltaDiff, { color: paceColor + 'CC' }]}>
+              {goal12 >= cur ? '+' : ''}{(goal12 - cur).toFixed(1)} {liftUnit}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={s.bwNote}>
+          <MaterialCommunityIcons name="information-outline" size={13} color={COLORS.accent} />
+          <Text style={s.bwNoteText}>
+            Body weight is used to scale volume, track weekly compliance, and set safe loading zones for accessory work.
+          </Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   // Step 5 — Training frequency + day picker
   const DAYS_OF_WEEK = [
@@ -2087,6 +2120,16 @@ const s = StyleSheet.create({
     fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.bold as any,
     letterSpacing: 1.2, textTransform: 'uppercase',
   },
+
+  // ── A.7 Pace delta chip ──────────────────────────────────────────────────────
+  paceDeltaChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    alignSelf: 'flex-start', marginVertical: SPACING.md,
+    borderWidth: 1.5, borderRadius: 20,
+    paddingHorizontal: SPACING.md, paddingVertical: 8,
+  },
+  paceDeltaLabel: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold as any },
+  paceDeltaDiff:  { fontSize: 11, fontWeight: FONTS.weights.semibold as any },
 
   // ── A.3 Name input ─────────────────────────────────────────────────────────
   nameInput: {
