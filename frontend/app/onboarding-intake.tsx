@@ -207,11 +207,11 @@ const INJURIES = [
 ];
 
 const SLEEP_OPTIONS = [
-  { label: '< 6 hrs',   value: '5',  detail: 'Severely under-recovered' },
-  { label: '6 – 7 hrs', value: '6',  detail: 'Below optimal'            },
-  { label: '7 – 8 hrs', value: '7',  detail: 'Good baseline'            },
-  { label: '8 – 9 hrs', value: '8',  detail: 'Optimal for athletes'     },
-  { label: '9+ hrs',    value: '9',  detail: 'Maximum recovery'         },
+  { label: '< 6 hrs',   value: '5', icon: 'weather-night',         detail: 'Severely limits recovery — high injury risk'   },
+  { label: '6–7 hrs',   value: '6', icon: 'weather-cloudy',        detail: 'Below optimal — recovery is compromised'        },
+  { label: '7–8 hrs',   value: '7', icon: 'weather-partly-cloudy', detail: 'Good baseline — most athletes adapt well here'  },
+  { label: '8–9 hrs',   value: '8', icon: 'weather-sunny',         detail: 'Optimal — best adaptation and performance'      },
+  { label: '9+ hrs',    value: '9', icon: 'star-circle-outline',   detail: 'Elite recovery — maximizes every training block'},
 ];
 
 const STRESS_LEVELS = [
@@ -1337,20 +1337,30 @@ export default function OnboardingIntake() {
   // Step 9 — Recovery profile
   const renderStep9 = () => (
     <View style={{ gap: SPACING.xl }}>
-      {/* Sleep */}
+      {/* Sleep — card layout matching Stress/Job sections */}
       <View>
-        <Text style={s.sectionLabel}>Average nightly sleep</Text>
-        <View style={s.sleepRow}>
-          {SLEEP_OPTIONS.map(({ label, value }) => {
+        <Text style={s.sectionLabel}>Sleep</Text>
+        <View style={{ gap: SPACING.sm }}>
+          {SLEEP_OPTIONS.map(({ label, value, icon, detail }) => {
             const active = selectedSleep === value;
             return (
               <TouchableOpacity
                 key={value}
-                style={[s.sleepChip, active && s.pillActive]}
+                style={[s.recoveryCard, active && s.recoveryCardActive]}
                 onPress={() => { haptic(); setSelectedSleep(value); }}
                 activeOpacity={0.8}
               >
-                <Text style={[s.sleepChipText, active && s.pillTextActive]}>{label}</Text>
+                <MaterialCommunityIcons
+                  name={icon as any} size={20}
+                  color={active ? COLORS.primary : COLORS.accent}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.recoveryCardLabel, active && s.pillTextActive]}>{label}</Text>
+                  <Text style={[s.recoveryCardDetail, active && s.recoveryCardDetailActive]}>{detail}</Text>
+                </View>
+                {active && (
+                  <MaterialCommunityIcons name="check-circle" size={18} color={COLORS.primary} />
+                )}
               </TouchableOpacity>
             );
           })}
@@ -1359,7 +1369,7 @@ export default function OnboardingIntake() {
 
       {/* Stress */}
       <View>
-        <Text style={s.sectionLabel}>Life stress level</Text>
+        <Text style={s.sectionLabel}>Stress</Text>
         <View style={{ gap: SPACING.sm }}>
           {STRESS_LEVELS.map(({ label, value, detail, icon }) => {
             const active = stressLevel === value;
@@ -1387,9 +1397,9 @@ export default function OnboardingIntake() {
         </View>
       </View>
 
-      {/* Occupation */}
+      {/* Job */}
       <View>
-        <Text style={s.sectionLabel}>Job / daily activity type</Text>
+        <Text style={s.sectionLabel}>Job</Text>
         <View style={{ gap: SPACING.sm }}>
           {OCCUPATION_TYPES.map(({ label, value, detail, icon }) => {
             const active = occupationType === value;
@@ -1499,22 +1509,36 @@ export default function OnboardingIntake() {
         </View>
       </View>
 
-      {/* Uploaded files list */}
+      {/* Uploaded files list with metadata chips */}
       {medicalFiles.length > 0 && (
         <View style={{ marginBottom: SPACING.md }}>
           <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 8 }}>UPLOADED ({medicalFiles.length})</Text>
-          {medicalFiles.map((f, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
-              <MaterialCommunityIcons name={f.type.includes('pdf') ? 'file-pdf-box' : 'image'} size={24} color="#FF6B6B" />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
-                <Text style={{ fontSize: 11, color: '#4DCEA6' }}>🔒 Encrypted</Text>
+          {medicalFiles.map((f, i) => {
+            const ext = f.name.split('.').pop()?.toUpperCase() ?? 'FILE';
+            const isImg = f.type.includes('image');
+            const isPdf = f.type.includes('pdf');
+            const iconName: any = isPdf ? 'file-pdf-box' : isImg ? 'image' : 'file-document-outline';
+            const typeChip = isPdf ? 'PDF' : isImg ? 'Scan / Photo' : 'Document';
+            return (
+              <View key={i} style={{ backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 7 }}>
+                  <MaterialCommunityIcons name={iconName} size={24} color="#FF6B6B" />
+                  <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
+                  <TouchableOpacity onPress={() => setMedicalFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                    <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
+                  </TouchableOpacity>
+                </View>
+                {/* Detected-metadata chips */}
+                <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                  {[typeChip, ext, '🔒 Encrypted', 'Flagged for AI review'].map(chip => (
+                    <View key={chip} style={{ backgroundColor: 'rgba(255,107,107,0.1)', borderWidth: 1, borderColor: 'rgba(255,107,107,0.25)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '600', color: '#FF6B6B' }}>{chip}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
-              <TouchableOpacity onPress={() => setMedicalFiles(prev => prev.filter((_, idx) => idx !== i))}>
-                <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
-              </TouchableOpacity>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
     </View>
@@ -1540,10 +1564,10 @@ export default function OnboardingIntake() {
             </View>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setProgramMode('skip')} style={{ backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="auto-fix" size={28} color={COLORS.accent} />
+            <MaterialCommunityIcons name="forward" size={28} color={COLORS.accent} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary }}>Start Fresh with AI</Text>
-              <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginTop: 2 }}>No existing program — build one from scratch</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: COLORS.text.primary }}>Skip</Text>
+              <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginTop: 2 }}>No existing program — I'll start fresh</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -1612,18 +1636,34 @@ export default function OnboardingIntake() {
           {programFiles.length > 0 && (
             <View style={{ marginBottom: SPACING.md }}>
               <Text style={{ fontSize: 10, fontWeight: '800', color: COLORS.text.muted, letterSpacing: 1.5, marginBottom: 8 }}>UPLOADED ({programFiles.length})</Text>
-              {programFiles.map((f, i) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
-                  <MaterialCommunityIcons name={f.type.includes('pdf') ? 'file-pdf-box' : f.type.includes('image') ? 'image' : 'file-excel-box'} size={24} color={COLORS.accent} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
-                    <Text style={{ fontSize: 11, color: '#4DCEA6' }}>Ready to analyze</Text>
+              {programFiles.map((f, i) => {
+                const ext = f.name.split('.').pop()?.toUpperCase() ?? 'FILE';
+                const isImg = f.type.includes('image');
+                const isPdf = f.type.includes('pdf');
+                const isXls = f.type.includes('excel') || f.type.includes('spreadsheet');
+                const iconName: any = isPdf ? 'file-pdf-box' : isImg ? 'image' : isXls ? 'file-excel-box' : 'file-document-outline';
+                const detectedType = isPdf ? 'PDF document' : isImg ? 'Photo / scan' : isXls ? 'Spreadsheet' : 'Text file';
+                const metaChips = [ext, detectedType, 'Will be parsed at build'];
+                return (
+                  <View key={i} style={{ backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 7 }}>
+                      <MaterialCommunityIcons name={iconName} size={24} color={COLORS.accent} />
+                      <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: COLORS.text.primary }} numberOfLines={1}>{f.name}</Text>
+                      <TouchableOpacity onPress={() => setProgramFiles(prev => prev.filter((_, idx) => idx !== i))}>
+                        <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
+                      </TouchableOpacity>
+                    </View>
+                    {/* Detected-metadata chips */}
+                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                      {metaChips.map(chip => (
+                        <View key={chip} style={{ backgroundColor: 'rgba(201,168,76,0.1)', borderWidth: 1, borderColor: 'rgba(201,168,76,0.25)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '600', color: COLORS.accent }}>{chip}</Text>
+                        </View>
+                      ))}
+                    </View>
                   </View>
-                  <TouchableOpacity onPress={() => setProgramFiles(prev => prev.filter((_, idx) => idx !== i))}>
-                    <MaterialCommunityIcons name="close-circle" size={20} color={COLORS.text.muted} />
-                  </TouchableOpacity>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
 
