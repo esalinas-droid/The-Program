@@ -29,7 +29,7 @@
           "Default"
         ]
       },
-      "buildNumber": "33"
+      "buildNumber": "35"
     },
     "android": {
       "adaptiveIcon": {
@@ -47,7 +47,7 @@
         "FOREGROUND_SERVICE",
         "WAKE_LOCK"
       ],
-      "versionCode": 33
+      "versionCode": 35
     },
     "web": {
       "bundler": "metro",
