@@ -3,8 +3,9 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert, Image,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Dimensions,
 } from 'react-native';
+import { WEAKNESS_IMAGES, EQUIPMENT_IMAGES, ANATOMY_IMAGES } from '../src/constants/onboardingAssets';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
@@ -302,6 +303,7 @@ export default function OnboardingIntake() {
 
   // Step 8 — Injuries
   const [injuries, setInjuries] = useState<string[]>([]);
+  const [bodyMapGender, setBodyMapGender] = useState<'male'|'female'>('male');
 
   // Step 11 — Recovery profile (sleep / stress / occupation)
   const [selectedSleep,    setSelectedSleep]   = useState('');
@@ -817,21 +819,11 @@ export default function OnboardingIntake() {
 
   // ── Step renderers ─────────────────────────────────────────────────────────
 
-  // Name step
+  // A.3 — Name step
   const renderNameStep = () => (
     <View style={{ paddingHorizontal: 4 }}>
       <TextInput
-        style={{
-          backgroundColor: '#1A1A1E',
-          borderWidth: 1.5,
-          borderColor: userName.trim().length >= 2 ? COLORS.accent : COLORS.border,
-          borderRadius: RADIUS.lg,
-          padding: SPACING.lg,
-          fontSize: 22,
-          fontWeight: '600' as any,
-          color: COLORS.text.primary,
-          textAlign: 'center',
-        }}
+        style={[s.nameInput, userName.trim().length >= 2 && s.nameInputActive]}
         value={userName}
         onChangeText={setUserName}
         placeholder="Your first name"
@@ -842,10 +834,11 @@ export default function OnboardingIntake() {
         returnKeyType="next"
         onSubmitEditing={() => { if (userName.trim().length >= 2) goNext(); }}
       />
+      <Text style={s.nameHint}>Just a first name is fine</Text>
     </View>
   );
 
-  // Step 1 — Goal
+  // A.4 — Goal
   const renderStep1 = () => (
     <View style={s.pillGrid}>
       {GOALS.map(({ label, icon }) => {
@@ -853,39 +846,49 @@ export default function OnboardingIntake() {
         return (
           <TouchableOpacity
             key={label}
-            style={[s.goalPill, active && s.pillActive]}
+            style={[s.goalPill, active && s.goalPillActive]}
             onPress={() => { haptic(); setGoal(label); }}
             activeOpacity={0.8}
           >
-            <MaterialCommunityIcons name={icon as any} size={22} color={active ? COLORS.primary : COLORS.accent} />
+            <View style={[s.goalIconRing, active && s.goalIconRingActive]}>
+              <MaterialCommunityIcons name={icon as any} size={26} color={active ? COLORS.primary : COLORS.accent} />
+            </View>
             <Text style={[s.goalPillText, active && s.pillTextActive]}>{label}</Text>
+            {active && (
+              <View style={s.goalCheck}>
+                <MaterialCommunityIcons name="check" size={11} color={COLORS.primary} />
+              </View>
+            )}
           </TouchableOpacity>
         );
       })}
     </View>
   );
 
-  // Step 2 — Experience
+  // A.5 — Experience
   const renderStep2 = () => (
     <View style={s.expList}>
-      {EXPERIENCE.map(({ label, detail }) => {
+      {EXPERIENCE.map(({ label, detail }, idx) => {
         const active = experience === label;
+        const tiers = ['#555', '#888', COLORS.accent, '#FFD700'];
         return (
           <TouchableOpacity
             key={label}
-            style={[s.expPill, active && s.pillActive]}
+            style={[s.expPill, active && s.expPillActive]}
             onPress={() => { haptic(); setExperience(label); }}
             activeOpacity={0.8}
           >
+            <View style={[s.expTierBar, { backgroundColor: tiers[idx] }]} />
             <View style={s.expLeft}>
               <Text style={[s.expLabel, active && s.pillTextActive]}>{label}</Text>
               <Text style={[s.expDetail, active && s.expDetailActive]}>{detail}</Text>
             </View>
-            {active && (
-              <View style={s.checkCircle}>
-                <MaterialCommunityIcons name="check" size={14} color={COLORS.primary} />
-              </View>
-            )}
+            <View style={[s.expCheckWrap, active && s.expCheckWrapActive]}>
+              {active
+                ? <MaterialCommunityIcons name="check" size={14} color={COLORS.primary} />
+                : <Text style={s.expBadge}>{idx + 1}</Text>
+              }
+            </View>
           </TouchableOpacity>
         );
       })}
@@ -1109,91 +1112,186 @@ export default function OnboardingIntake() {
     </View>
   );
 
-  // Step 6 — Primary weaknesses
+  // A.9 — Primary weaknesses — PHOTO GRID
   const renderStep6 = () => (
     <View>
-      <View style={s.chipWrap}>
+      <Text style={s.photoGridHint}>Select all that apply — your coach targets these directly</Text>
+      <View style={s.photoGrid}>
         {PRIMARY_WEAKNESSES.map(({ label }) => {
           const active = primaryWeaknesses.includes(label);
+          const img    = WEAKNESS_IMAGES[label];
           return (
             <TouchableOpacity
               key={label}
-              style={[s.chip, active && s.pillActive]}
+              style={[s.photoCard, active && s.photoCardActive]}
               onPress={() => toggleWeakness(label)}
-              activeOpacity={0.8}
+              activeOpacity={0.82}
             >
-              {active && (
-                <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} style={{ marginRight: 4 }} />
+              {img && (
+                <View style={s.photoCardImgWrap}>
+                  <Image source={img} style={s.photoCardImg} resizeMode="cover" />
+                  {active && <View style={s.photoCardOverlay} />}
+                  {active && (
+                    <View style={s.photoCardCheckBadge}>
+                      <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} />
+                    </View>
+                  )}
+                </View>
               )}
-              <Text style={[s.chipText, active && s.pillTextActive]}>{label}</Text>
+              <View style={s.photoCardFooter}>
+                <Text style={[s.photoCardLabel, active && s.photoCardLabelActive]} numberOfLines={2}>
+                  {label}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
       </View>
+      {primaryWeaknesses.length > 0 && (
+        <View style={s.selectionPill}>
+          <MaterialCommunityIcons name="check-circle" size={13} color={COLORS.accent} />
+          <Text style={s.selectionPillTxt}>{primaryWeaknesses.length} selected</Text>
+        </View>
+      )}
     </View>
   );
 
-  // Step 7 — Specialty equipment
-  const renderStep7 = () => (
-    <View style={s.chipWrap}>
-      {SPECIALTY_EQUIPMENT.map(({ label }) => {
-        const active  = specialtyEquipment.includes(label);
-        const isNone  = label === 'None of the above';
-        return (
-          <TouchableOpacity
-            key={label}
-            style={[
-              s.chip,
-              active && s.pillActive,
-              isNone && s.noneChip,
-              active && isNone && s.noneChipActive,
-            ]}
-            onPress={() => toggleEquipment(label)}
-            activeOpacity={0.8}
-          >
-            {active && (
-              <MaterialCommunityIcons
-                name="check"
-                size={12}
-                color={isNone ? COLORS.status.success : COLORS.primary}
-                style={{ marginRight: 4 }}
-              />
-            )}
-            <Text style={[s.chipText, active && s.pillTextActive, active && isNone && s.noneChipText]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
+  // A.10 — Specialty equipment — PHOTO GRID + text chips
+  const renderStep7 = () => {
+    const withPhoto = SPECIALTY_EQUIPMENT.filter(({ label }) => !!EQUIPMENT_IMAGES[label]);
+    const noPhoto   = SPECIALTY_EQUIPMENT.filter(({ label }) => !EQUIPMENT_IMAGES[label]);
+    return (
+      <View>
+        {/* Photo grid for items with photos */}
+        <View style={s.photoGrid}>
+          {withPhoto.map(({ label }) => {
+            const active = specialtyEquipment.includes(label);
+            const img    = EQUIPMENT_IMAGES[label];
+            return (
+              <TouchableOpacity
+                key={label}
+                style={[s.photoCard, active && s.photoCardActive]}
+                onPress={() => toggleEquipment(label)}
+                activeOpacity={0.82}
+              >
+                <View style={s.photoCardImgWrap}>
+                  <Image source={img} style={s.photoCardImg} resizeMode="cover" />
+                  {active && <View style={s.photoCardOverlay} />}
+                  {active && (
+                    <View style={s.photoCardCheckBadge}>
+                      <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} />
+                    </View>
+                  )}
+                </View>
+                <View style={s.photoCardFooter}>
+                  <Text style={[s.photoCardLabel, active && s.photoCardLabelActive]} numberOfLines={2}>
+                    {label}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-  // Step 8 — Injuries
+        {/* Text chips for items without photos */}
+        {noPhoto.length > 0 && (
+          <>
+            <Text style={s.equipTextHeader}>Other equipment</Text>
+            <View style={s.chipWrap}>
+              {noPhoto.map(({ label }) => {
+                const active = specialtyEquipment.includes(label);
+                const isNone = label === 'None of the above';
+                return (
+                  <TouchableOpacity
+                    key={label}
+                    style={[s.chip, active && s.pillActive, isNone && s.noneChip, active && isNone && s.noneChipActive]}
+                    onPress={() => toggleEquipment(label)}
+                    activeOpacity={0.8}
+                  >
+                    {active && (
+                      <MaterialCommunityIcons
+                        name="check" size={12}
+                        color={isNone ? COLORS.status.success : COLORS.primary}
+                        style={{ marginRight: 4 }}
+                      />
+                    )}
+                    <Text style={[s.chipText, active && s.pillTextActive, active && isNone && s.noneChipText]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+
+        {specialtyEquipment.filter(e => e !== 'None of the above').length > 0 && (
+          <View style={s.selectionPill}>
+            <MaterialCommunityIcons name="check-circle" size={13} color={COLORS.accent} />
+            <Text style={s.selectionPillTxt}>{specialtyEquipment.filter(e => e !== 'None of the above').length} selected</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // A.11 — Injuries — BODY MAP reference + chips
   const renderStep8 = () => (
-    <View style={s.chipWrap}>
-      {INJURIES.map(item => {
-        const active = injuries.includes(item);
-        const isNone = item === 'None';
-        return (
-          <TouchableOpacity
-            key={item}
-            style={[s.chip, active && s.pillActive, isNone && s.noneChip, active && isNone && s.noneChipActive]}
-            onPress={() => toggleInjury(item)}
-            activeOpacity={0.8}
-          >
-            {active && (
+    <View>
+      {/* Body-map reference: gender toggle + anatomy images */}
+      <View style={s.bodyMapSection}>
+        <View style={s.bodyMapGenderToggle}>
+          {(['male', 'female'] as const).map(g => (
+            <TouchableOpacity
+              key={g}
+              style={[s.bodyMapGenderBtn, bodyMapGender === g && s.bodyMapGenderBtnActive]}
+              onPress={() => setBodyMapGender(g)}
+              activeOpacity={0.8}
+            >
               <MaterialCommunityIcons
-                name="check" size={12}
-                color={isNone ? COLORS.status.success : COLORS.primary}
-                style={{ marginRight: 4 }}
+                name={g === 'male' ? 'gender-male' : 'gender-female'}
+                size={15}
+                color={bodyMapGender === g ? COLORS.primary : COLORS.text.muted}
               />
-            )}
-            <Text style={[s.chipText, active && s.pillTextActive, active && isNone && s.noneChipText]}>
-              {item}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
+              <Text style={[s.bodyMapGenderTxt, bodyMapGender === g && s.bodyMapGenderTxtActive]}>
+                {g === 'male' ? 'Male' : 'Female'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <View style={s.bodyMapImages}>
+          <Image source={ANATOMY_IMAGES[bodyMapGender].front} style={s.bodyMapImg} resizeMode="contain" />
+          <Image source={ANATOMY_IMAGES[bodyMapGender].back}  style={s.bodyMapImg} resizeMode="contain" />
+        </View>
+        <Text style={s.bodyMapCaption}>Visual reference — select all current limitations below</Text>
+      </View>
+
+      {/* Injury chips */}
+      <View style={s.chipWrap}>
+        {INJURIES.map(item => {
+          const active = injuries.includes(item);
+          const isNone = item === 'None';
+          return (
+            <TouchableOpacity
+              key={item}
+              style={[s.chip, active && s.pillActive, isNone && s.noneChip, active && isNone && s.noneChipActive]}
+              onPress={() => toggleInjury(item)}
+              activeOpacity={0.8}
+            >
+              {active && (
+                <MaterialCommunityIcons
+                  name="check" size={12}
+                  color={isNone ? COLORS.status.success : COLORS.primary}
+                  style={{ marginRight: 4 }}
+                />
+              )}
+              <Text style={[s.chipText, active && s.pillTextActive, active && isNone && s.noneChipText]}>
+                {item}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 
@@ -1775,7 +1873,11 @@ export default function OnboardingIntake() {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-const BG = '#0A0A0C';
+const BG      = '#0A0A0C';
+const SCREEN_W = Dimensions.get('window').width;
+// Photo card dimensions — responsive 2-column grid
+const CARD_W   = Math.floor((SCREEN_W - 48) / 2); // 24px side padding each
+const PHOTO_H  = Math.min(128, Math.floor(CARD_W * 0.76));
 
 const s = StyleSheet.create({
   safe:          { flex: 1, backgroundColor: BG },
@@ -1981,4 +2083,117 @@ const s = StyleSheet.create({
     fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.bold as any,
     letterSpacing: 1.2, textTransform: 'uppercase',
   },
+
+  // ── A.3 Name input ─────────────────────────────────────────────────────────
+  nameInput: {
+    backgroundColor: '#1A1A1E', borderWidth: 1.5, borderColor: COLORS.border,
+    borderRadius: RADIUS.xl, paddingVertical: SPACING.lg, paddingHorizontal: SPACING.xl,
+    fontSize: 28, fontWeight: '700' as any, color: COLORS.text.primary, textAlign: 'center',
+  },
+  nameInputActive: { borderColor: COLORS.accent, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 4 },
+  nameHint: { textAlign: 'center', fontSize: FONTS.sizes.sm, color: COLORS.text.muted, marginTop: SPACING.sm },
+
+  // ── A.4 Goal cards ─────────────────────────────────────────────────────────
+  goalPillActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  goalIconRing: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: 'rgba(201,168,76,0.08)', justifyContent: 'center', alignItems: 'center',
+    marginBottom: SPACING.xs,
+  },
+  goalIconRingActive: { backgroundColor: 'rgba(13,13,13,0.18)' },
+  goalCheck: {
+    position: 'absolute', top: 10, right: 10,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center',
+  },
+
+  // ── A.5 Experience cards ────────────────────────────────────────────────────
+  expPillActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  expTierBar: { width: 3, alignSelf: 'stretch', borderRadius: 2, marginRight: 2 },
+  expCheckWrap: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: '#252528', justifyContent: 'center', alignItems: 'center',
+  },
+  expCheckWrapActive: { backgroundColor: 'rgba(0,0,0,0.22)' },
+  expBadge: { fontSize: 12, fontWeight: FONTS.weights.heavy as any, color: COLORS.text.muted },
+
+  // ── A.9/A.10 Photo grid ──────────────────────────────────────────────────────
+  photoGridHint: {
+    fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginBottom: SPACING.md,
+    lineHeight: 18,
+  },
+  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  photoCard: {
+    width: CARD_W,
+    backgroundColor: '#161618',
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#2A2A2E',
+  },
+  photoCardActive: {
+    borderColor: COLORS.accent,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  photoCardImgWrap: { width: '100%', height: PHOTO_H, backgroundColor: '#0D0D0D' },
+  photoCardImg:     { width: '100%', height: '100%' },
+  photoCardOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(201,168,76,0.22)',
+  },
+  photoCardCheckBadge: {
+    position: 'absolute', top: 7, right: 7,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  photoCardFooter: {
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  photoCardLabel: {
+    fontSize: 11, fontWeight: FONTS.weights.semibold as any,
+    color: COLORS.text.secondary, lineHeight: 15,
+  },
+  photoCardLabelActive: { color: COLORS.accent },
+  equipTextHeader: {
+    fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold as any, color: COLORS.accent,
+    letterSpacing: 1.5, textTransform: 'uppercase',
+    marginTop: SPACING.xl, marginBottom: SPACING.sm,
+  },
+  selectionPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    alignSelf: 'flex-start',
+    marginTop: SPACING.lg,
+    backgroundColor: 'rgba(201,168,76,0.08)',
+    borderRadius: 20, paddingHorizontal: SPACING.md, paddingVertical: 7,
+    borderWidth: 1, borderColor: 'rgba(201,168,76,0.2)',
+  },
+  selectionPillTxt: { fontSize: FONTS.sizes.sm, color: COLORS.accent, fontWeight: FONTS.weights.bold as any },
+
+  // ── A.11 Body map ───────────────────────────────────────────────────────────
+  bodyMapSection: {
+    backgroundColor: '#111113', borderRadius: 18, padding: SPACING.lg,
+    marginBottom: SPACING.lg, borderWidth: 1, borderColor: '#2A2A2E', alignItems: 'center',
+  },
+  bodyMapGenderToggle: {
+    flexDirection: 'row', backgroundColor: '#0D0D0D', borderRadius: 10,
+    padding: 3, marginBottom: SPACING.md, borderWidth: 1, borderColor: '#1E1E22',
+  },
+  bodyMapGenderBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: SPACING.lg, paddingVertical: 8, borderRadius: 8,
+  },
+  bodyMapGenderBtnActive: { backgroundColor: COLORS.accent },
+  bodyMapGenderTxt: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold as any, color: COLORS.text.muted },
+  bodyMapGenderTxtActive: { color: COLORS.primary },
+  bodyMapImages: { flexDirection: 'row', gap: SPACING.lg, justifyContent: 'center', marginBottom: SPACING.sm },
+  bodyMapImg: { width: (SCREEN_W - 96) / 2, height: 170 },
+  bodyMapCaption: { fontSize: 10, color: COLORS.text.muted, textAlign: 'center', marginTop: 2 },
 });
