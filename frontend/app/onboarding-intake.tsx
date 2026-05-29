@@ -17,9 +17,16 @@ import { programApi, profileApi, uploadApi, planApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { getStoredUser, getAuthToken, storeUser } from '../src/utils/auth';
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
+type StepConfig = {
+  id:       number;
+  key:      string;
+  title:    string;
+  validate: () => boolean;
+  render:   () => React.JSX.Element | null;
+};
 
-const TOTAL_STEPS = 13;
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const STEP_META = [
   {
