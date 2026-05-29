@@ -81,7 +81,8 @@
           "cameraPermission": "Allow The Program to take photos of your workout program and medical documents.",
           "photosPermission": "Allow The Program to access your photos for uploading workout programs and medical documents."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
