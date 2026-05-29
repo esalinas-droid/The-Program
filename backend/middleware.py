@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 load_dotenv(Path(__file__).parent / '.env')
+load_dotenv(Path(__file__).parent / '.env.local', override=True)  # secrets override — gitignored
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,66 @@
+{
+  "summary": "Full verification of onboarding restyle (A.2-A.15) and auth update (C.1-C.3). One bug found: Google button shows 'Soon' badge on auth screen (showBadge prop missing). All other checks passed via code review and Playwright.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AuthScreen — SocialButton (Google)",
+        "issue": "Google 'Continue with Google' button shows 'Soon' badge. The SocialButton at lines 293-300 in auth.tsx does NOT pass showBadge={false}. SocialButton default is showBadge=true, so the badge renders. Apple button correctly passes showBadge={false}, Google does not.",
+        "testID": "N/A",
+        "priority": "HIGH",
+        "fix": "Add showBadge={false} to the Google SocialButton (auth.tsx ~line 298)"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_70.json"],
+  "action_items": [
+    "FIX: Add showBadge={false} to the Google SocialButton in auth.tsx (around line 298). Current: missing prop → defaults to true → 'Soon' badge shows. Expected: No badge since Google sign-in is wired (C.2).",
+    "No other action items — all other checks passed."
+  ],
+  "critical_code_review_comments": [
+    "PASSED: auth.tsx has no file-local hex constants (no '= #' assignments) — all colors sourced from COLORS tokens",
+    "PASSED: auth.tsx has exactly 3 KeyboardAvoidingView references (import, open, close)",
+    "PASSED: onboarding-intake.tsx has exactly 3 KeyboardAvoidingView references (import, open, close) at lines 6, 1841, 1949",
+    "PASSED: containerFade initialized once at line 337 as useRef(new Animated.Value(1)).current, only READ at line 1892, never set/written after init",
+    "BUG: Google SocialButton missing showBadge={false} — 'Soon' badge renders despite Google OAuth being wired (C.2)"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (1/1 — DELETE /api/auth/delete-account returns 401 for invalid token)",
+    "frontend": "93% (14/15 checks passed; 1 bug: Google Soon badge)"
+  },
+  "onboarding_verification": {
+    "step1_name": "PASS — renders correctly, 13 dots visible, '1 of 13' shown",
+    "step4_strongman_events": "PASS — STRONGMAN EVENTS — OPTIONAL section present with log_press, yoke_walk, atlas_stone, farmer_walk fields when goal=Strongman",
+    "step5_pace_chip": "PASS — pace chip appears when both current weight and 12-week goal entered",
+    "step6_two_day_card": "PASS — '2 days/week — Minimum effective — full body' card present",
+    "step7_weaknesses_photo_grid": "PASS (code confirmed) — renderStep6() uses s.photoGrid with WEAKNESS_IMAGES for photo card layout",
+    "step8_equipment_photo_grid": "PASS (code confirmed) — renderStep7() uses photo grid with EQUIPMENT_IMAGES",
+    "step9_injuries_body_map": "PASS (code confirmed) — renderStep8() has male/female toggle + ANATOMY_IMAGES front/back images",
+    "step11_recovery_card_layout": "PASS (code confirmed) — renderStep9() uses s.recoveryCard for Sleep, Stress, and Job sections",
+    "total_steps": 13
+  },
+  "auth_verification": {
+    "facebook_absent": "PASS — no Facebook button found",
+    "google_present": "PASS — Google button present",
+    "google_soon_badge": "FAIL — 'Soon' badge visible on Google button (showBadge={false} missing)",
+    "apple_button": "INFO — Apple button absent on web (expected: Platform.OS === 'ios' guard)",
+    "terms_link_tappable": "PASS — Terms of Service is a TouchableOpacity with Linking.openURL",
+    "privacy_link_tappable": "PASS — Privacy Policy is a TouchableOpacity with Linking.openURL"
+  },
+  "settings_verification": {
+    "delete_account_row": "PASS — 'Delete account' row present below 'Sign out' in ACCOUNT section",
+    "delete_endpoint_401": "PASS — DELETE /api/auth/delete-account returns HTTP 401 for invalid token"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Only one bug found: Google button in auth.tsx (~line 293-300) is missing showBadge={false}. After E1 fixes this, recheck the auth screen to verify the 'Soon' badge no longer appears on the Google button.",
+  "rca_of_issue": "auth.tsx SocialButton component accepts showBadge prop defaulting to true. Apple button explicitly passes showBadge={false}. Google button (lines 293-300) omits this prop so badge renders. Fix: add showBadge={false} to the Google SocialButton."
+}

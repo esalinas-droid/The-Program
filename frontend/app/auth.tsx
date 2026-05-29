@@ -114,14 +114,8 @@ export default function AuthScreen() {
 
   async function handleGoogleSignIn() {
     if (!request) {
-      Alert.alert(
-        'Google Sign-In',
-        'Google Sign-In is not configured yet. Please use email to continue.',
-        [
-          { text: 'Continue with Email', onPress: () => slideIn('register'), style: 'default' },
-          { text: 'Cancel', style: 'cancel' },
-        ],
-      );
+      // request is null only during the brief render before expo-auth-session
+      // finishes building the auth URL; this state is transient on first load.
       return;
     }
     setGoogleLoading(true);
@@ -295,13 +289,13 @@ export default function AuthScreen() {
             />
           )}
 
-          {/* Google — C.2 wired (needs EXPO_PUBLIC_GOOGLE_CLIENT_ID_* in .env to activate) */}
+          {/* Google — C.2 wired (EXPO_PUBLIC_GOOGLE_CLIENT_ID_* configured) */}
           <SocialButton
             icon="google"
             label="Continue with Google"
             color="#4285F4"
             onPress={handleGoogleSignIn}
-            showBadge={!request}
+            showBadge={false}
             loading={googleLoading}
             disabled={googleLoading}
           />

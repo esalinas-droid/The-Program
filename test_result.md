@@ -14,7 +14,7 @@
 # Main and testing agents must follow this exact format to maintain testing data. 
 # The testing data must be entered in yaml format Below is the data structure:
 # 
-## user_problem_statement: SYNC FIXES - Today page logged set values now restore on re-focus. Pull-to-refresh fixed. Progress page sync verified (all tabs use useFocusEffect to reload). Three bugs fixed: (1) setValues for logged sets now restored from backend log data in both re-sync and full-rebuild branches, (2) pull-to-refresh now triggers real data reload via loadKey state, (3) setRefreshing(false) now properly called after load completes.
+## user_problem_statement: "ONBOARDING + AUTH COMPLETE - Full 13-step onboarding visual restyle (A.2-A.15) with photo grid assets, live delta chip, body map, strongman events. Auth restyle (C.1), Google Sign-In wired with real OAuth IDs (C.2), App Store compliance: tappable legal links + Delete Account (C.3)."
 ## backend:
 ##   - task: "Task name"
 ##     implemented: true

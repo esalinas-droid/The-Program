@@ -396,3 +396,6 @@ credentials.json
 .env
 .env.*
 *.env
+# Explicit secret-override files — must never be committed
+backend/.env.local
+frontend/.env.local

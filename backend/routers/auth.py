@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 load_dotenv(Path(__file__).parent.parent / '.env')
+load_dotenv(Path(__file__).parent.parent / '.env.local', override=True)  # secrets override — gitignored
 
 from database import db
 from middleware import create_jwt, decode_jwt, get_current_user, DEFAULT_USER
