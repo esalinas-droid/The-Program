@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../src/constants/theme';
 
 // Ensure navigation state initializes for all tabs when accessed directly via URL
@@ -8,6 +9,13 @@ export const unstable_settings = {
 };
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  // Android: add bottom inset so tab bar clears the system nav bar.
+  // iOS:  SafeAreaView already handles this; adding insets.bottom is safe
+  //       because on iOS it equals the home-indicator height, which is correct.
+  const TAB_BAR_BASE_HEIGHT = 60;
+  const tabBarHeight = TAB_BAR_BASE_HEIGHT + insets.bottom;
+
   return (
     <Tabs
       screenOptions={{
@@ -17,8 +25,8 @@ export default function TabLayout() {
           backgroundColor: COLORS.secondary,
           borderTopColor: COLORS.border,
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 8,
+          height: tabBarHeight,
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
         },
         tabBarActiveTintColor: COLORS.accent,
         tabBarInactiveTintColor: COLORS.text.muted,
