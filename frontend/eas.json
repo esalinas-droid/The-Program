@@ -34,6 +34,12 @@
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID": "$EAS_SECRET_GOOGLE_CLIENT_ID_ANDROID",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB":     "$EAS_SECRET_GOOGLE_CLIENT_ID_WEB"
       }
+    },
+    "production-play": {
+      "extends": "production",
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {
