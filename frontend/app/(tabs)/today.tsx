@@ -35,7 +35,7 @@ const RED  = '#EF5350';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SetType     = 'warmup' | 'ramp' | 'work';
-type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown';
+type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown' | 'gpp';
 
 // ── Phase 5: Structured warm-up/cooldown drills ──────────────────────────────
 type WarmupDrill = {
@@ -53,7 +53,10 @@ interface ExSet {
   reps: string;
   label: string;
   /** P1: derived at warm-up load time; P2 will replace with a stored field */
-  fieldShape?: 'reps' | 'timed' | 'loaded';
+  fieldShape?: 'reps' | 'timed' | 'loaded' | 'load_time_distance';
+  /** P2a: for load_time_distance shape — which sub-fields are active.
+   *  Default (undefined) = all three. ['time','distance'] = row erg (no load). */
+  conditioningFields?: ('load' | 'time' | 'distance')[];
 }
 interface Exercise {
   id: string;
@@ -208,6 +211,7 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
         : ex.category === 'prehab' ? 'prehab'
         : ex.category === 'warmup' ? 'warmup'
         : ex.category === 'cooldown' ? 'cooldown'
+        : ex.category === 'gpp' ? 'gpp'
         : 'accessory') as ExCategory,
       prescription: ex.prescription || '',
       lastSession: ex.lastPerformance || ex.recentBest || '—',
@@ -417,6 +421,7 @@ function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: s
     prehab:       { bg: TEAL + '25',              text: TEAL,                  label: 'Injury Prevention' },
     warmup:       { bg: '#4DCEA620',              text: '#4DCEA6',             label: 'Warm Up' },
     cooldown:     { bg: '#5B9CF520',              text: '#5B9CF5',             label: 'Cooldown' },
+    gpp:          { bg: '#FFA72625',              text: '#FFA726',             label: 'Conditioning' },
   } as Record<ExCategory, { bg: string; text: string; label: string }>)[cat] || { bg: COLORS.surfaceHighlight, text: COLORS.text.secondary, label: cat };
 }
 
@@ -429,6 +434,7 @@ const REST_CONFIG: Record<ExCategory, { options: number[]; default: number; colo
   prehab:       { options: [30, 45, 60],         default: 45,  color: '#4DCEA6' },
   warmup:       { options: [30, 45, 60],         default: 30,  color: '#4DCEA6' },
   cooldown:     { options: [30, 45, 60],         default: 45,  color: '#5B9CF5' },
+  gpp:          { options: [60, 120, 180, 300],  default: 120, color: '#FFA726' },
 };
 
 function formatTime(seconds: number): string {
@@ -1654,7 +1660,8 @@ const wd = StyleSheet.create({
 
 
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
-  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed, fieldShape }: {
+  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed, fieldShape,
+  timeElapsed, distance, onTimeElapsedChange, onDistanceChange, conditioningFields }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
@@ -1671,15 +1678,24 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   adjustActive?: boolean;
   isActive?: boolean;
   isTimed?: boolean;
-  /** P1: explicit field shape; overrides isTimed when present. Defaults to 'loaded'. */
-  fieldShape?: 'reps' | 'timed' | 'loaded';
+  /** P1/P2a: explicit field shape; overrides isTimed when present. Defaults to 'loaded'. */
+  fieldShape?: 'reps' | 'timed' | 'loaded' | 'load_time_distance';
+  /** P2a: conditioning sub-field values */
+  timeElapsed?: string;
+  distance?: string;
+  onTimeElapsedChange?: (v: string) => void;
+  onDistanceChange?: (v: string) => void;
+  /** P2a: active conditioning sub-fields. undefined = all three. */
+  conditioningFields?: ('load' | 'time' | 'distance')[];
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
 
   // Resolve effective shape: explicit fieldShape > isTimed legacy flag > loaded default
-  const effectiveShape: 'reps' | 'timed' | 'loaded' =
+  const effectiveShape: 'reps' | 'timed' | 'loaded' | 'load_time_distance' =
     fieldShape ?? (isTimed ? 'timed' : 'loaded');
+  // Active conditioning sub-fields (default = all three)
+  const activeCondFields = conditioningFields ?? ['load', 'time', 'distance'] as ('load' | 'time' | 'distance')[];
 
   // ── REMOVE MODE ──
   if (removeMode) {
@@ -1801,6 +1817,84 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
         />
         {!logged ? (
           <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
+            <Text style={sr.logBtnText}>LOG</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={sr.doneWrap}>
+            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ── CONDITIONING SET (load + time + distance, load-first, sub-fields auto-hidden) ──
+  if (effectiveShape === 'load_time_distance') {
+    const ORANGE = '#FFA726';
+    const showLoad = activeCondFields.includes('load');
+    const showTime = activeCondFields.includes('time');
+    const showDist = activeCondFields.includes('distance');
+    return (
+      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive, { flexWrap: 'wrap', height: 'auto', minHeight: 48, paddingVertical: 6 }]}>
+        {/* Set circle */}
+        <View style={[sr.circle, { borderColor: logged ? TEAL : ORANGE, backgroundColor: (logged ? TEAL : ORANGE) + '20' }]}>
+          {logged
+            ? <MaterialCommunityIcons name="check" size={11} color={TEAL} />
+            : <Text style={[sr.circleNum, { color: ORANGE }]}>{setNum}</Text>
+          }
+        </View>
+        <Text style={[sr.typeTag, { color: ORANGE + '80' }]}>{typeTag}</Text>
+
+        {/* LOAD field (lbs/kg) */}
+        {showLoad && (
+          <TextInput
+            style={[sr.input, logged && sr.inputLogged, { flex: 1.2, minWidth: 52 }]}
+            value={weight}
+            onChangeText={onWeightChange}
+            keyboardType="numeric"
+            editable={!logged}
+            placeholder="Load"
+            placeholderTextColor={COLORS.text.muted}
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        )}
+        {showLoad && showTime && <Text style={[sr.sep, { color: ORANGE + '60' }]}>·</Text>}
+
+        {/* TIME field (elapsed seconds) */}
+        {showTime && (
+          <TextInput
+            style={[sr.input, logged && sr.inputLogged, { flex: 1.4, minWidth: 54 }]}
+            value={timeElapsed ?? ''}
+            onChangeText={onTimeElapsedChange}
+            keyboardType="numeric"
+            editable={!logged}
+            placeholder="sec"
+            placeholderTextColor={COLORS.text.muted}
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        )}
+        {showTime && showDist && <Text style={[sr.sep, { color: ORANGE + '60' }]}>·</Text>}
+
+        {/* DISTANCE field (ft/m) */}
+        {showDist && (
+          <TextInput
+            style={[sr.input, logged && sr.inputLogged, { flex: 1.4, minWidth: 48 }]}
+            value={distance ?? ''}
+            onChangeText={onDistanceChange}
+            keyboardType="numeric"
+            editable={!logged}
+            placeholder="dist"
+            placeholderTextColor={COLORS.text.muted}
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        )}
+
+        {/* LOG / Done */}
+        {!logged ? (
+          <TouchableOpacity onPress={onLog} style={[sr.logBtn, { backgroundColor: ORANGE }]} activeOpacity={0.8}>
             <Text style={sr.logBtnText}>LOG</Text>
           </TouchableOpacity>
         ) : (
@@ -1938,7 +2032,7 @@ function ExerciseCard({
   onAddSet: (exerciseId: string) => void;
   swap?: SwapInfo;
   setValues: Record<string, { weight: string; reps: string }>;
-  onSetValueChange: (setId: string, field: 'weight' | 'reps', value: string) => void;
+  onSetValueChange: (setId: string, field: 'weight' | 'reps' | 'timeElapsed' | 'distance', value: string) => void;
   inRemoveMode: boolean;
   inEditMode: boolean;
   onRemoveSet: (setId: string) => void;
@@ -2305,7 +2399,7 @@ function ExerciseCard({
               const isActive = set.id === activeSetId;
               const isTimed  = isTimedEx;
               // P1: per-set fieldShape overrides prescription-based isTimed
-              const effectiveFieldShape: 'reps' | 'timed' | 'loaded' | undefined =
+              const effectiveFieldShape: 'reps' | 'timed' | 'loaded' | 'load_time_distance' | undefined =
                 set.fieldShape ?? (isTimed ? 'timed' : undefined);
               return (
                 <SetRow
@@ -2327,6 +2421,11 @@ function ExerciseCard({
                   isActive={isActive}
                   isTimed={isTimed}
                   fieldShape={effectiveFieldShape}
+                  timeElapsed={setValues[set.id]?.timeElapsed ?? ''}
+                  distance={setValues[set.id]?.distance ?? ''}
+                  onTimeElapsedChange={(v) => onSetValueChange(set.id, 'timeElapsed', v)}
+                  onDistanceChange={(v) => onSetValueChange(set.id, 'distance', v)}
+                  conditioningFields={set.conditioningFields}
                 />
               );
             })}
@@ -2559,7 +2658,7 @@ export default function TodayScreen() {
 
   // Exercise interaction
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
-  const [setValues, setSetValues]     = useState<Record<string, { weight: string; reps: string }>>({});
+  const [setValues, setSetValues]     = useState<Record<string, { weight: string; reps: string; timeElapsed?: string; distance?: string }>>({});
   const [efforts, setEfforts]         = useState<Record<string, number>>({});
 
   // ── Phase 6: per-exercise notes + off-row effort ─────────────────────────
@@ -3690,21 +3789,52 @@ export default function TodayScreen() {
         const exForSet  = exercises.find(e => e.sets.some(s => s.id === setId));
         const setIdx    = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
         logName = exForSet?.name ?? exerciseName;
-        const result = await logApi.create({
-          date: todayStr,
-          week: week || 1,
-          day: dayOfWeek,
+
+        // P2a: detect conditioning sets — route through structured fields, skip e1RM
+        const isConditioning = set.fieldShape === 'load_time_distance' || exForSet?.category === 'gpp';
+
+        const result = await logApi.create(isConditioning ? {
+          // ── CONDITIONING payload ─────────────────────────────────────────────
+          date:     todayStr,
+          week:     week || 1,
+          day:      dayOfWeek,
           sessionType: sessionType || 'Training',
           exercise: logName,
-          sets: 1,
+          sets:     1,
+          weight:   0,                               // no e1rm weight
+          reps:     0,
+          rpe:      7,
+          pain:     0,
+          completed: 'yes',
+          setIndex: setIdx >= 0 ? setIdx : undefined,
+          notes:    notesByExercise[exForSet?.id ?? ''] || undefined,
+          category: 'gpp',                           // tells backend: skip e1RM
+          prescriptionType: 'distance',              // secondary e1RM guard
+          // Structured conditioning fields (undefined = sub-field not tracked → null in DB)
+          load:        (parseFloat(currentVals?.weight  ?? '') || undefined),
+          elapsedTime: (parseFloat(currentVals?.timeElapsed ?? '') || undefined),
+          distance:    (parseFloat(currentVals?.distance    ?? '') || undefined),
+          unit:        'ft',
+        } : {
+          // ── STRENGTH / WARMUP / COOLDOWN payload (unchanged from before P2a) ──
+          date:     todayStr,
+          week:     week || 1,
+          day:      dayOfWeek,
+          sessionType: sessionType || 'Training',
+          exercise: logName,
+          sets:     1,
           weight,
-          reps: parseInt(reps) || 1,
-          rpe: 7,
-          pain: 0,
+          reps:     parseInt(reps) || 1,
+          rpe:      7,
+          pain:     0,
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
           // ── Phase 6: pass per-exercise note to coach context ──────────
-          notes: notesByExercise[exForSet?.id ?? ''] || undefined,
+          notes:    notesByExercise[exForSet?.id ?? ''] || undefined,
+          category: exForSet?.category,
+          prescriptionType: set.fieldShape === 'timed' ? 'timed'
+            : set.fieldShape === 'reps' ? 'reps'
+            : undefined,
         });
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
@@ -3752,13 +3882,16 @@ export default function TodayScreen() {
     }
   };
 
-  const handleSetValueChange = (setId: string, field: 'weight' | 'reps', value: string) => {
+  const handleSetValueChange = (setId: string, field: 'weight' | 'reps' | 'timeElapsed' | 'distance', value: string) => {
     userEditedSets.current.add(setId); // Fix: track user-edited sets to protect from auto-adjust
     setSetValues(prev => ({
       ...prev,
       [setId]: { ...(prev[setId] || { weight: '', reps: '' }), [field]: value },
     }));
   };
+
+  // Also widen the ExerciseCard prop type to accept conditioning fields:
+  type SetValueField = 'weight' | 'reps' | 'timeElapsed' | 'distance';
 
   // ── Phase 6: effort selection → PATCH endpoint + repsInTank→RPE mapping ───
   // Null = timed out / skipped (coach sees null, NOT confusion with 0=max effort)
@@ -4585,7 +4718,7 @@ export default function TodayScreen() {
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
         {/* ── MAIN/SUPPLEMENTAL/ACCESSORY/PREHAB EXERCISE CARDS ── */}
-        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown').map(ex => {
+        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown' && ex.category !== 'gpp').map(ex => {
           const fullIdx = exercises.findIndex(e => e.id === ex.id);
           return (
           <ExerciseCard
@@ -4636,6 +4769,59 @@ export default function TodayScreen() {
           />
           );
         })}
+
+        {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ──────── */}
+        {exercises.filter(ex => ex.category === 'gpp').length > 0 && (
+          <>
+            <Text style={s.sectionLabel}>CONDITIONING</Text>
+            {exercises.filter(ex => ex.category === 'gpp').map(ex => {
+              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+              return (
+                <ExerciseCard
+                  key={ex.id}
+                  exercise={ex}
+                  expanded={expanded.has(ex.id)}
+                  loggedSets={loggedSets}
+                  onToggle={() => handleToggleExpand(ex.id)}
+                  onLog={handleLog}
+                  onAdjust={openAdjust}
+                  onReportPain={openPainModal}
+                  onAddSet={handleAddSet}
+                  swap={swaps[ex.id]}
+                  setValues={setValues}
+                  onSetValueChange={handleSetValueChange}
+                  effort={efforts[ex.id]}
+                  onEffortChange={(v) => handleEffortChange(ex.id, v)}
+                  inRemoveMode={removeModeExId === ex.id}
+                  inEditMode={editModeExId === ex.id}
+                  onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
+                  onEditSave={(setId) => handleEditSave(ex.id, setId)}
+                  onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                  onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                  onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                  adjustActive={false}
+                  previousData={previousData}
+                  prExercises={prExercises}
+                  restConfig={{
+                    selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['gpp'].default,
+                    onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                    onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                  }}
+                  onKebab={() => setKebabMenuExId(ex.id)}
+                  onMoveUp={() => handleDirectOrder(ex.id, 'up')}
+                  onMoveDown={() => handleDirectOrder(ex.id, 'down')}
+                  canMoveUp={fullIdx > 0}
+                  canMoveDown={fullIdx < exercises.length - 1}
+                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                  exerciseNote={notesByExercise[ex.id] ?? ''}
+                  onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                  pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
+                  onEffortSelect={handleEffortSelect}
+                />
+              );
+            })}
+          </>
+        )}
 
         {/* ── COOLDOWN SECTION (C4: unified exercises array, category=cooldown) ── */}
         {exercises.filter(ex => ex.category === 'cooldown').length > 0 && (

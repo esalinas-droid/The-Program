@@ -231,6 +231,10 @@ class WorkoutLogEntry(BaseDocument):
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
     # ── Phase 6: per-set effort signal ──────────────────────────────────────────
     reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
+    # ── P2a: conditioning structured fields ──────────────────────────────────────
+    load: Optional[float] = None            # carry/drag/sled weight — distinct from `weight` (e1rm driver)
+    elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration)
+    category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -259,6 +263,10 @@ class WorkoutLogCreate(BaseModel):
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
     # ── Phase 6: per-set effort signal ──────────────────────────────────────────
     reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
+    # ── P2a: conditioning structured fields ──────────────────────────────────────
+    load: Optional[float] = None            # carry/drag/sled weight — distinct from `weight` (e1rm driver)
+    elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration which is prescribed)
+    category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
 
 class CheckIn(BaseDocument):
     week: int
@@ -689,7 +697,7 @@ async def update_exercise_category_in_plan(
     proposedPlan in documents collection is NOT modified — only saved_plans is updated.
     """
     new_category = (body.get("category") or "").lower()
-    valid_cats = {"main", "supplemental", "accessory", "prehab", "warmup", "cooldown"}
+    valid_cats = {"main", "supplemental", "accessory", "prehab", "warmup", "cooldown", "gpp"}
     if new_category not in valid_cats:
         raise HTTPException(status_code=400, detail=f"category must be one of {sorted(valid_cats)}")
 
@@ -1554,7 +1562,13 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
 
 @api_router.post("/log")
 async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
-    e1rm = epley_e1rm(entry.weight, entry.reps)
+    # P2a: skip e1RM for conditioning (prescriptionType is the reliable signal;
+    # category='gpp' is the fallback for any conditioning set without prescriptionType).
+    is_conditioning = (
+        entry.prescriptionType in {"distance", "timed", "calories", "height"}
+        or entry.category == "gpp"
+    )
+    e1rm = 0.0 if is_conditioning else epley_e1rm(entry.weight, entry.reps)
     log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
     # Stamp planId from the user's currently active plan (None in free mode)
     try:
