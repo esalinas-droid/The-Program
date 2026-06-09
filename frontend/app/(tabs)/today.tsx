@@ -52,6 +52,8 @@ interface ExSet {
   weight: number;
   reps: string;
   label: string;
+  /** P1: derived at warm-up load time; P2 will replace with a stored field */
+  fieldShape?: 'reps' | 'timed' | 'loaded';
 }
 interface Exercise {
   id: string;
@@ -262,6 +264,45 @@ const GENERIC_WARMUP_NAMES = new Set([
 ]);
 function isGenericWarmupName(name: string): boolean {
   return GENERIC_WARMUP_NAMES.has(name.toLowerCase().trim());
+}
+
+// ── P1: Field-shape helpers ───────────────────────────────────────────────────
+/** Derive the input shape for a warm-up/cooldown drill from existing metadata.
+ *  P2 replaces this with a stored `fieldShape` field on the set. */
+function deriveFieldShape(
+  prescriptionType: 'reps' | 'timed',
+  weight = 0
+): 'reps' | 'timed' | 'loaded' {
+  if (prescriptionType === 'timed') return 'timed';
+  if (weight > 0) return 'loaded';
+  return 'reps';
+}
+
+/** Convert WarmupDrill[] (warmupApi format) → Exercise[] (unified exercises format).
+ *  Each drill gets one default set with the derived fieldShape applied. */
+function convertWarmupDrillsToExercises(drills: WarmupDrill[]): Exercise[] {
+  return drills.map((drill, i) => {
+    const shape = deriveFieldShape(drill.prescriptionType, 0);
+    return {
+      id: `warmup-api-${i}`,
+      name: drill.name,
+      category: 'warmup' as ExCategory,
+      prescription: drill.scheme || '',
+      lastSession: '—',
+      cues: [],
+      notes: '',
+      sets: [
+        {
+          id: `warmup-api-${i}-s0`,
+          type: 'work' as SetType,
+          weight: 0,
+          reps: drill.scheme || '',
+          label: 'Work',
+          fieldShape: shape,
+        },
+      ],
+    };
+  });
 }
 
 const BLOCK_LABELS: Record<number, string> = {
@@ -836,7 +877,7 @@ function AdjustModal({ visible, exerciseKey, exerciseName, onClose, onConfirm }:
                   <MaterialCommunityIcons name={REASON_ICONS[selectedReason] as any} size={13} color={COLORS.accent} />
                   <Text style={m.reasonChipText}>{selectedReason}</Text>
                 </View>
-                <Text style={m.prompt}>Your coach's picks:</Text>
+                <Text style={m.prompt}>Your coach&apos;s picks:</Text>
                 <View style={m.altList}>
                   {alternatives.map((alt, i) => {
                     const isSel = selectedAlt?.name === alt.name;
@@ -1531,7 +1572,7 @@ function WarmupDrillsCard({
       {!collapsed && isGeneric && (
         <View style={wd.genericBanner}>
           <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#FF9800" />
-          <Text style={wd.genericText}>Showing generic drills — programme didn't load</Text>
+          <Text style={wd.genericText}>Showing generic drills — programme didn&apos;t load</Text>
           <TouchableOpacity onPress={onReload} style={wd.reloadBtn} activeOpacity={0.75}>
             <MaterialCommunityIcons name="refresh" size={14} color={COLORS.accent} />
             <Text style={wd.reloadText}>Reload</Text>
@@ -1613,7 +1654,7 @@ const wd = StyleSheet.create({
 
 
 function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
-  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed }: {
+  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed, fieldShape }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
@@ -1630,9 +1671,15 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   adjustActive?: boolean;
   isActive?: boolean;
   isTimed?: boolean;
+  /** P1: explicit field shape; overrides isTimed when present. Defaults to 'loaded'. */
+  fieldShape?: 'reps' | 'timed' | 'loaded';
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
+
+  // Resolve effective shape: explicit fieldShape > isTimed legacy flag > loaded default
+  const effectiveShape: 'reps' | 'timed' | 'loaded' =
+    fieldShape ?? (isTimed ? 'timed' : 'loaded');
 
   // ── REMOVE MODE ──
   if (removeMode) {
@@ -1698,7 +1745,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   }
 
   // ── TIMED SET (duration field only) ──
-  if (isTimed) {
+  if (effectiveShape === 'timed') {
     return (
       <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
         <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
@@ -1731,6 +1778,41 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
     );
   }
 
+  // ── REPS-ONLY SET (no weight column — hip circles, leg swings, etc.) ──
+  if (effectiveShape === 'reps') {
+    return (
+      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
+        <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
+          {logged
+            ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
+            : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
+          }
+        </View>
+        <Text style={sr.typeTag}>{typeTag}</Text>
+        <TextInput
+          style={[sr.input, sr.repsOnlyInput, logged && sr.inputLogged]}
+          value={reps}
+          onChangeText={onRepsChange}
+          editable={!logged}
+          placeholder="reps"
+          placeholderTextColor={COLORS.text.muted}
+          selectTextOnFocus
+          returnKeyType="done"
+        />
+        {!logged ? (
+          <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
+            <Text style={sr.logBtnText}>LOG</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={sr.doneWrap}>
+            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ── LOADED SET (weight × reps — default for all main lifts) ──
   return (
     <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
       {/* Set circle */}
@@ -1817,6 +1899,8 @@ const sr = StyleSheet.create({
   inputLogged: { color: TEAL, borderColor: TEAL + '35', backgroundColor: TEAL + '08' },
   // Timed input: single wider field
   timedInput:  { flex: 2.5, minWidth: 0 },
+  // Reps-only input: wider than standard reps since there is no weight column
+  repsOnlyInput: { flex: 2.5, minWidth: 0 },
   sep:       { fontSize: 14, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
   logBtn:    { backgroundColor: COLORS.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, minWidth: 52, alignItems: 'center' },
   logBtnText:{ color: COLORS.primary, fontSize: 11, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
@@ -2220,6 +2304,9 @@ function ExerciseCard({
             {exercise.sets.map((set, idx) => {
               const isActive = set.id === activeSetId;
               const isTimed  = isTimedEx;
+              // P1: per-set fieldShape overrides prescription-based isTimed
+              const effectiveFieldShape: 'reps' | 'timed' | 'loaded' | undefined =
+                set.fieldShape ?? (isTimed ? 'timed' : undefined);
               return (
                 <SetRow
                   key={set.id}
@@ -2239,6 +2326,7 @@ function ExerciseCard({
                   adjustActive={adjustActive}
                   isActive={isActive}
                   isTimed={isTimed}
+                  fieldShape={effectiveFieldShape}
                 />
               );
             })}
@@ -3242,6 +3330,14 @@ export default function TodayScreen() {
           setWarmupTitle(wu.title || 'Warm-Up Drills');
           setWarmupFocus(wu.sessionFocus || 'upper');
           setWarmupDuration(wu.duration || '');
+          // P1: route warm-up drills into unified exercises array as category='warmup'
+          const warmupExs = convertWarmupDrillsToExercises(parsed);
+          if (warmupExs.length > 0) {
+            setExercises(prev => {
+              const withoutWarmupApi = prev.filter(e => !e.id.startsWith('warmup-api-'));
+              return [...warmupExs, ...withoutWarmupApi];
+            });
+          }
         } catch {
           // API failed (404 or network) → use hardcoded fallback, flag as NOT from API
           const fallback = WARMUP_STEPS.map(s => ({
@@ -3255,6 +3351,14 @@ export default function TodayScreen() {
           setWarmupTitle('Warm-Up Drills');
           setWarmupFocus('upper');
           setWarmupDuration('');
+          // P1: also route fallback drills into exercises
+          const fallbackExs = convertWarmupDrillsToExercises(fallback);
+          if (fallbackExs.length > 0) {
+            setExercises(prev => {
+              const withoutWarmupApi = prev.filter(e => !e.id.startsWith('warmup-api-'));
+              return [...fallbackExs, ...withoutWarmupApi];
+            });
+          }
         }
       };
       loadWarmupDrills();
@@ -3340,6 +3444,29 @@ export default function TodayScreen() {
   //    is memoised on [loadKey] and would see a stale null if we read the
   //    trainingMode state variable directly inside the callback. ───────────────
   useEffect(() => { trainingModeRef.current = trainingMode; }, [trainingMode]);
+
+  // ── Warm-up reload handler (lifted from WarmupDrillsCard inline prop) ────────
+  const handleWarmupReload = useCallback(() => {
+    setWarmupIsFromApi(false);
+    warmupApi.getToday().then(wu => {
+      const parsed = parseWarmupDrillsFromSteps(wu.steps || []);
+      const generic = parsed.length === 0 || parsed.every(d => isGenericWarmupName(d.name));
+      setWarmupDrills(parsed);
+      setWarmupIsFromApi(true);
+      setWarmupIsGeneric(generic);
+      setWarmupTitle(wu.title || 'Warm-Up Drills');
+      setWarmupFocus(wu.sessionFocus || 'upper');
+      setWarmupDuration(wu.duration || '');
+      // P1: also refresh exercises
+      const warmupExs = convertWarmupDrillsToExercises(parsed);
+      if (warmupExs.length > 0) {
+        setExercises(prev => {
+          const withoutWarmupApi = prev.filter(e => !e.id.startsWith('warmup-api-'));
+          return [...warmupExs, ...withoutWarmupApi];
+        });
+      }
+    }).catch(() => { /* stay on fallback */ });
+  }, []);
 
   // ── Readiness submit handler ─────────────────────────────────────────────────
   const handleReadinessSubmit = async (data: { sleepQuality: number; soreness: number; moodEnergy: number }) => {
@@ -3606,13 +3733,17 @@ export default function TodayScreen() {
       }
 
       // ── PR detection (runs only if POST succeeded; errors here are non-fatal) ──
+      // Skip PR detection for warmup/cooldown/prehab — they must not write to e1RM or PR board
       if (postSucceeded) {
         try {
-          const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
-          if (prData) {
-            setPrCelebration(prData);
-            setPrExercises(prev => new Set([...prev, logName]));
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          const exCat = exForSet?.category;
+          if (exCat !== 'warmup' && exCat !== 'cooldown' && exCat !== 'prehab') {
+            const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
+            if (prData) {
+              setPrCelebration(prData);
+              setPrExercises(prev => new Set([...prev, logName]));
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
           }
         } catch (prErr) {
           console.warn('[Today] PR detection failed (non-fatal):', prErr);
@@ -4362,8 +4493,72 @@ export default function TodayScreen() {
           </View>
         ) : null}
 
-        {/* ── PHASE 5: WARM-UP DRILLS CARD ─────────────────────────────────── */}
-        {warmupDrills.length > 0 && (
+        {/* ── WARM-UP SECTION — P1: now rendered via ExerciseCard ──────────── */}
+        {exercises.filter(ex => ex.category === 'warmup').length > 0 && (
+          <>
+            {/* Guardrail banner — lifted from WarmupDrillsCard; shown when falling back to generic */}
+            {warmupIsGeneric && (
+              <View style={s.warmupGenericBanner}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#FF9800" />
+                <Text style={s.warmupGenericText}>Generic drills — programme didn&apos;t load</Text>
+                <TouchableOpacity onPress={handleWarmupReload} style={s.warmupReloadBtn} activeOpacity={0.75}>
+                  <MaterialCommunityIcons name="refresh" size={13} color={COLORS.accent} />
+                  <Text style={s.warmupReloadText}>Reload</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={s.sectionLabel}>WARM-UP</Text>
+            {exercises.filter(ex => ex.category === 'warmup').map(ex => {
+              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+              return (
+                <ExerciseCard
+                  key={ex.id}
+                  exercise={ex}
+                  expanded={expanded.has(ex.id)}
+                  loggedSets={loggedSets}
+                  onToggle={() => handleToggleExpand(ex.id)}
+                  onLog={handleLog}
+                  onAdjust={openAdjust}
+                  onReportPain={openPainModal}
+                  onAddSet={handleAddSet}
+                  swap={swaps[ex.id]}
+                  setValues={setValues}
+                  onSetValueChange={handleSetValueChange}
+                  effort={efforts[ex.id]}
+                  onEffortChange={(v) => handleEffortChange(ex.id, v)}
+                  inRemoveMode={removeModeExId === ex.id}
+                  inEditMode={editModeExId === ex.id}
+                  onRemoveSet={(setId) => handleRemoveSet(ex.id, setId)}
+                  onEditSave={(setId) => handleEditSave(ex.id, setId)}
+                  onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                  onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                  onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                  adjustActive={false}
+                  previousData={previousData}
+                  prExercises={prExercises}
+                  restConfig={{
+                    selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['warmup'].default,
+                    onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                    onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                  }}
+                  onKebab={() => setKebabMenuExId(ex.id)}
+                  onMoveUp={() => handleDirectOrder(ex.id, 'up')}
+                  onMoveDown={() => handleDirectOrder(ex.id, 'down')}
+                  canMoveUp={fullIdx > 0}
+                  canMoveDown={fullIdx < exercises.length - 1}
+                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                  exerciseNote={notesByExercise[ex.id] ?? ''}
+                  onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                  pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
+                  onEffortSelect={handleEffortSelect}
+                />
+              );
+            })}
+          </>
+        )}
+
+        {/* ── PHASE 5: WARM-UP DRILLS CARD — P1: retired from render; definition kept for rollback */}
+        {/* {warmupDrills.length > 0 && (
           <WarmupDrillsCard
             drills={warmupDrills}
             isFromApi={warmupIsFromApi}
@@ -4371,20 +4566,7 @@ export default function TodayScreen() {
             sessionFocus={warmupFocus}
             duration={warmupDuration}
             isGeneric={warmupIsGeneric}
-            onReload={() => {
-              // Re-trigger API load — sets isFromApi signal correctly
-              setWarmupIsFromApi(false);
-              warmupApi.getToday().then(wu => {
-                const parsed = parseWarmupDrillsFromSteps(wu.steps || []);
-                const generic = parsed.length === 0 || parsed.every(d => isGenericWarmupName(d.name));
-                setWarmupDrills(parsed);
-                setWarmupIsFromApi(true);
-                setWarmupIsGeneric(generic);
-                setWarmupTitle(wu.title || 'Warm-Up Drills');
-                setWarmupFocus(wu.sessionFocus || 'upper');
-                setWarmupDuration(wu.duration || '');
-              }).catch(() => { /* stay on fallback */ });
-            }}
+            onReload={handleWarmupReload}
             onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
             onStartHold={(secs) => {
               setTimerMode('hold');
@@ -4397,7 +4579,7 @@ export default function TodayScreen() {
               setTimerRunning(true);
             }}
           />
-        )}
+        )} */}
 
         {/* ── EXERCISES LABEL ── */}
         <Text style={s.sectionLabel}>EXERCISES</Text>
@@ -4628,7 +4810,7 @@ export default function TodayScreen() {
                     {name}
                   </Text>
                   <Text style={{ fontSize: 13, color: COLORS.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
-                    This will remove the exercise from today's session and all future sessions of this type.
+                    This will remove the exercise from today&apos;s session and all future sessions of this type.
                   </Text>
                   <TouchableOpacity
                     style={{ paddingVertical: 14, backgroundColor: RED, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
@@ -5259,6 +5441,11 @@ const s = StyleSheet.create({
 
   // Exercises section label
   sectionLabel:  { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 2, paddingHorizontal: SPACING.lg, marginTop: SPACING.md, marginBottom: SPACING.sm },
+  // P1: warm-up guardrail banner (shown when falling back to generic drills)
+  warmupGenericBanner: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.lg, marginBottom: SPACING.xs, backgroundColor: '#FF980018', borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 6 },
+  warmupGenericText:   { flex: 1, fontSize: FONTS.sizes.xs, color: '#FF9800' },
+  warmupReloadBtn:     { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  warmupReloadText:    { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
 
   // Bottom bar
   bottomBar:     { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, gap: SPACING.md },
