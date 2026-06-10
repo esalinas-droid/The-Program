@@ -3283,6 +3283,10 @@ export default function TodayScreen() {
                     recoveredValues[s.id] = {
                       weight: String(logEntry.weight ?? 0),
                       reps:   String(logEntry.reps   ?? 1),
+                      ...(logEntry.rpe         != null && logEntry.rpe > 0 ? { rpe: String(logEntry.rpe) } : {}),
+                      ...(logEntry.elapsedTime != null ? { timeElapsed: String(logEntry.elapsedTime) } : {}),
+                      ...(logEntry.distance    != null ? { distance: String(logEntry.distance) } : {}),
+                      ...(logEntry.calories    != null ? { calories: String(logEntry.calories) } : {}),
                     };
                   }
                 }
@@ -3300,6 +3304,10 @@ export default function TodayScreen() {
                   recoveredValues[ex.sets[i].id] = {
                     weight: String(sorted[i].weight ?? 0),
                     reps:   String(sorted[i].reps   ?? 1),
+                    ...(sorted[i].rpe         != null && sorted[i].rpe > 0 ? { rpe: String(sorted[i].rpe) } : {}),
+                    ...(sorted[i].elapsedTime != null ? { timeElapsed: String(sorted[i].elapsedTime) } : {}),
+                    ...(sorted[i].distance    != null ? { distance: String(sorted[i].distance) } : {}),
+                    ...(sorted[i].calories    != null ? { calories: String(sorted[i].calories) } : {}),
                   };
                 }
               }
@@ -3484,6 +3492,10 @@ export default function TodayScreen() {
                       recoveredValues[s.id] = {
                         weight: String(logEntry.weight ?? 0),
                         reps:   String(logEntry.reps   ?? 1),
+                        ...(logEntry.rpe         != null && logEntry.rpe > 0 ? { rpe: String(logEntry.rpe) } : {}),
+                        ...(logEntry.elapsedTime != null ? { timeElapsed: String(logEntry.elapsedTime) } : {}),
+                        ...(logEntry.distance    != null ? { distance: String(logEntry.distance) } : {}),
+                        ...(logEntry.calories    != null ? { calories: String(logEntry.calories) } : {}),
                       };
                     }
                   }
@@ -3500,6 +3512,10 @@ export default function TodayScreen() {
                     recoveredValues[ex.sets[i].id] = {
                       weight: String(sorted[i].weight ?? 0),
                       reps:   String(sorted[i].reps   ?? 1),
+                      ...(sorted[i].rpe         != null && sorted[i].rpe > 0 ? { rpe: String(sorted[i].rpe) } : {}),
+                      ...(sorted[i].elapsedTime != null ? { timeElapsed: String(sorted[i].elapsedTime) } : {}),
+                      ...(sorted[i].distance    != null ? { distance: String(sorted[i].distance) } : {}),
+                      ...(sorted[i].calories    != null ? { calories: String(sorted[i].calories) } : {}),
                     };
                   }
                 }
