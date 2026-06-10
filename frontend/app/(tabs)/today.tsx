@@ -3957,7 +3957,8 @@ export default function TodayScreen() {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
           // ── Phase 6: trigger off-row effort prompt (8s auto-dismiss → null) ──
-          if (exForSet?.id) {
+          // P2b: skip prompt when exercise has an explicit RPE field — effort already captured
+          if (exForSet?.id && !hasRpe) {
             if (pendingEffortTimer.current) clearTimeout(pendingEffortTimer.current);
             setPendingEffort({ exerciseId: exForSet.id, logEntryId: entryId });
             pendingEffortTimer.current = setTimeout(() => {
