@@ -73,8 +73,9 @@ function fieldValueKey(f: FieldSpec): 'weight' | 'reps' | 'rpe' | 'timeElapsed' 
     default:         return 'reps';
   }
 }
-function fieldKeyboardType(f: FieldSpec): 'numeric' | 'default' {
-  return f.type === 'rpe' ? 'default' : 'numeric';
+function fieldKeyboardType(_f: FieldSpec): 'numeric' | 'default' {
+  // All current field types (weight, reps, rpe, time, distance, calories) are numeric
+  return 'numeric';
 }
 function fieldPlaceholder(f: FieldSpec): string {
   switch (f.type) {
@@ -290,13 +291,25 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
         cues: ex.cues || [],
         notes: ex.notes || '',
         fields,
-        sets: (ex.targetSets || []).map((s: any, si: number) => ({
-          id: `${ex.sessionExerciseId || idx}-s${si}`,
-          type: (s.setType === 'warmup' ? 'warmup' : 'work') as SetType,
-          weight: parseFloat(s.targetLoad) || 0,
-          reps: s.targetReps || '3',
-          label: s.setType === 'warmup' ? 'Warm-Up' : 'Work',
-        })),
+        sets: (() => {
+          const builtSets = (ex.targetSets || []).map((s: any, si: number) => ({
+            id: `${ex.sessionExerciseId || idx}-s${si}`,
+            type: (s.setType === 'warmup' ? 'warmup' : 'work') as SetType,
+            weight: parseFloat(s.targetLoad) || 0,
+            reps: s.targetReps || '3',
+            label: s.setType === 'warmup' ? 'Warm-Up' : 'Work',
+          }));
+          // BUG 3 fix: cooldown (and any category) may have no targetSets — synthesise one
+          // so every exercise has at least one loggable row with an input box
+          if (builtSets.length > 0) return builtSets;
+          return [{
+            id: `${ex.sessionExerciseId || idx}-s0`,
+            type: 'work' as SetType,
+            weight: 0,
+            reps: ex.prescription?.match(/\d+/)?.[0] || '',
+            label: 'Work',
+          }];
+        })(),
       };
     });
 }
@@ -3873,10 +3886,14 @@ export default function TodayScreen() {
     if (exerciseName) {
       let postSucceeded = false;
       let logName = exerciseName;
+      // Hoist these so PR detection (outside try) can read them
+      let payloadWeight = 0;
+      let payloadReps   = 0;
+      let exForSet: typeof exercises[0] | undefined;
       try {
         const todayStr  = getLocalDateString();
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-        const exForSet  = exercises.find(e => e.sets.some(s => s.id === setId));
+        exForSet  = exercises.find(e => e.sets.some(s => s.id === setId));
         const setIdx    = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
         logName = exForSet?.name ?? exerciseName;
 
@@ -3887,12 +3904,14 @@ export default function TodayScreen() {
         const hasTime   = exFields.some(f => f.type === 'time');
         const hasDist   = exFields.some(f => f.type === 'distance');
         const hasCal    = exFields.some(f => f.type === 'calories');
+        // BUG 1 fix: read RPE from field value if RPE field is present
+        const hasRpe    = exFields.some(f => f.type === 'rpe');
 
         // P2b: send 0 for absent fields so backend e1RM guard works correctly
-        const payloadWeight = hasWeight
+        payloadWeight = hasWeight
           ? (parseFloat((currentVals as any)?.weight ?? '') || (set?.weight || 0))
           : 0;
-        const payloadReps = hasReps
+        payloadReps = hasReps
           ? (parseInt((currentVals as any)?.reps ?? '') || 0)
           : 0;
         const payloadElapsedTime = hasTime
@@ -3904,6 +3923,10 @@ export default function TodayScreen() {
         const payloadCalories = hasCal
           ? (parseFloat((currentVals as any)?.calories ?? '') || undefined)
           : undefined;
+        // BUG 1 fix: use entered RPE value; fall back to 7 if field present but blank; 7 if no RPE field
+        const payloadRpe = hasRpe
+          ? (parseFloat((currentVals as any)?.rpe ?? '') || 7)
+          : 7;
 
         // Derive prescriptionType for analytics (informational — not used for e1RM)
         const prescriptionType = hasTime && !hasReps ? 'timed'
@@ -3919,7 +3942,7 @@ export default function TodayScreen() {
           sets:     1,
           weight:   payloadWeight,
           reps:     payloadReps,
-          rpe:      7,
+          rpe:      payloadRpe,
           pain:     0,
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
