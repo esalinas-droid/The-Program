@@ -2855,6 +2855,8 @@ export default function TodayScreen() {
   const [customRestVisible, setCustomRestVisible]         = useState(false);
   const initialLoadDone   = useRef(false);
   const exercisesRef      = useRef<Exercise[]>([]);
+  // P2b: ref mirror of setValues so handleLog always reads latest keystrokes (stale closure fix)
+  const setValuesRef      = useRef<Record<string, SetValueMap>>({});
   const lastLoadDate      = useRef('');
 
   // ── Phase 5: Warmup drills state ──────────────────────────────────────────
@@ -3661,6 +3663,8 @@ export default function TodayScreen() {
 
   // ── Keep exercisesRef in sync with latest exercises state ────────────────────
   useEffect(() => { exercisesRef.current = exercises; }, [exercises]);
+  // ── Keep setValuesRef in sync (stale closure fix for handleLog / handleEditSave) ─
+  useEffect(() => { setValuesRef.current = setValues; }, [setValues]);
   // ── Keep trainingModeRef in sync — needed because useFocusEffect callback
   //    is memoised on [loadKey] and would see a stale null if we read the
   //    trainingMode state variable directly inside the callback. ───────────────
@@ -3906,7 +3910,8 @@ export default function TodayScreen() {
     }
 
     // Use edited input values if available, fall back to set defaults
-    const currentVals = setValues[setId];
+    // Read from ref so latest keystrokes are always captured regardless of React commit timing
+    const currentVals = setValuesRef.current[setId] ?? setValues[setId];
 
     if (exerciseName) {
       let postSucceeded = false;
@@ -4161,7 +4166,7 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const ex = exercises.find(e => e.id === exId);
     if (!ex) return;
-    const vals    = setValues[setId];
+    const vals    = setValuesRef.current[setId] ?? setValues[setId];
     const weight  = parseFloat(vals?.weight || '0') || 0;
     const reps    = parseInt(vals?.reps || '1') || 1;
     const setIdx  = ex.sets.findIndex(s => s.id === setId);
