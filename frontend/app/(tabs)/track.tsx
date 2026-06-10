@@ -54,7 +54,7 @@ function mapSessionLabel(raw: string): string {
   const MAP: Record<string, string> = {
     'Max Effort Upper': 'Heavy Upper', 'Max Effort Lower': 'Heavy Lower',
     'Dynamic Effort Upper': 'Speed Upper', 'Dynamic Effort Lower': 'Speed Lower',
-    'GPP': 'Recovery', 'GPP / Recovery': 'Recovery',
+    'GPP': 'Conditioning', 'GPP / Recovery': 'Conditioning',
     'ME Upper': 'Heavy Upper', 'ME Lower': 'Heavy Lower',
     'DE Upper': 'Speed Upper', 'DE Lower': 'Speed Lower',
     'Max Effort': 'Heavy', 'Dynamic Effort': 'Speed',
