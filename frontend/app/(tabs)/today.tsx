@@ -2769,6 +2769,8 @@ export default function TodayScreen() {
   const [repsInTank,       setRepsInTank]        = useState<Record<string, number | null>>({});   // key=logEntryId, null=skipped/timeout
   const [pendingEffort,    setPendingEffort]     = useState<{ exerciseId: string; logEntryId: string } | null>(null);
   const pendingEffortTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // P2b fix B1: deferred auto-advance — set when last set logged without RPE field
+  const pendingAdvance = useRef<{ currentExId: string; nextEx: Exercise; nextRestDur: number } | null>(null);
   const [expanded, setExpanded]       = useState<Set<string>>(() => {
     // Default expand the first exercise based on local data
     const s = getTodaySession(week || 1);
@@ -2875,10 +2877,11 @@ export default function TodayScreen() {
   const [loadKey, setLoadKey] = useState(0);
 
   // ── AsyncStorage keys for persisting today's set values & logged state ───────
-  const SET_VALUES_KEY    = 'today_set_values';
-  const LOGGED_SETS_KEY   = 'today_logged_sets';
-  const ADDED_SETS_KEY    = 'today_added_sets';   // Added sets survive tab switches
-  const FINISHED_DATE_KEY = 'today_finished_date'; // Persists SESSION COMPLETE button state
+  const SET_VALUES_KEY      = 'today_set_values';
+  const LOGGED_SETS_KEY     = 'today_logged_sets';
+  const ADDED_SETS_KEY      = 'today_added_sets';
+  const FINISHED_DATE_KEY   = 'today_finished_date';
+  const FIELD_OVERRIDES_KEY = 'today_field_overrides'; // P2b: "just today" field choices
 
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
@@ -3108,7 +3111,7 @@ export default function TodayScreen() {
         if (!dateValid) {
           // No valid same-day session data — wipe all related keys to avoid
           // leaking yesterday's weights/reps into today's UI.
-          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]);
+          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, FIELD_OVERRIDES_KEY]);
           setSetValues({});
         } else {
           // Same-day data — restore both setValues and loggedSets.
@@ -3389,10 +3392,24 @@ export default function TodayScreen() {
           session?.session?.sessionType  // pass session type so DE days get 'Dynamic Effort' badge
         );
         if (apiExs.length > 0) {
+          // A1 fix: apply any "Just today" field overrides before building set rows
+          let apiExsBase = apiExs;
+          try {
+            const raw = await AsyncStorage.getItem(FIELD_OVERRIDES_KEY);
+            if (raw) {
+              const overrides = JSON.parse(raw);
+              const today = getLocalDateString();
+              apiExsBase = apiExs.map((ex: any) => {
+                const ov = overrides[ex.id];
+                return (ov && ov.date === today) ? { ...ex, fields: ov.fields } : ex;
+              });
+            }
+          } catch { /* non-fatal */ }
+
           // Fix: Read ADDED_SETS_KEY inline to avoid race with mount useEffect
           // (On real Expo Go devices, AsyncStorage reads can take 20-100ms each,
           //  causing pendingAddedSets to still be null when this merge runs)
-          let exsWithAdded = apiExs;
+          let exsWithAdded = apiExsBase;
           try {
             const todayStr2 = getLocalDateString();
             const savedAdded = await AsyncStorage.getItem(ADDED_SETS_KEY);
@@ -3863,19 +3880,24 @@ export default function TodayScreen() {
         );
         if (nextEx) {
           const nextRestDur = exerciseRestDurations[nextEx.id] ?? REST_CONFIG[nextEx.category].default;
-          // Short delay so user can see the "logged" check before card collapses
-          setTimeout(() => {
-            setExpanded(prev => {
-              const next = new Set(prev);
-              next.delete(currentEx.id);
-              next.add(nextEx.id);
-              return next;
-            });
-            setTimerSeconds(nextRestDur);
-            setTimerTarget(nextRestDur);
-            setTimerExerciseName(nextEx.name);
-            setTimerRunning(true);
-          }, 600);
+          if (hasRpe) {
+            // RPE field present → no effort prompt → advance immediately as before
+            setTimeout(() => {
+              setExpanded(prev => {
+                const next = new Set(prev);
+                next.delete(currentEx.id);
+                next.add(nextEx.id);
+                return next;
+              });
+              setTimerSeconds(nextRestDur);
+              setTimerTarget(nextRestDur);
+              setTimerExerciseName(nextEx.name);
+              setTimerRunning(true);
+            }, 600);
+          } else {
+            // B1 fix: effort prompt will appear → defer advance until prompt is answered/skipped
+            pendingAdvance.current = { currentExId: currentEx.id, nextEx, nextRestDur };
+          }
         }
       }
     }
@@ -3956,14 +3978,12 @@ export default function TodayScreen() {
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
           setLogEntryIds(prev => ({ ...prev, [setId]: entryId }));
-          // ── Phase 6: trigger off-row effort prompt (8s auto-dismiss → null) ──
+          // ── Phase 6: trigger off-row effort prompt ──────────────────────────
           // P2b: skip prompt when exercise has an explicit RPE field — effort already captured
           if (exForSet?.id && !hasRpe) {
             if (pendingEffortTimer.current) clearTimeout(pendingEffortTimer.current);
             setPendingEffort({ exerciseId: exForSet.id, logEntryId: entryId });
-            pendingEffortTimer.current = setTimeout(() => {
-              setPendingEffort(null);
-            }, 8000);
+            // B2 fix: no auto-dismiss timer — prompt persists until user answers or taps skip
           }
           // Persistence is handled by the dedicated loggedSets useEffect above
         }
@@ -4018,6 +4038,17 @@ export default function TodayScreen() {
       } catch (err) {
         console.warn('[Today] Failed to persist exercise fields:', err);
       }
+    } else {
+      // A1 fix: 'today' scope — persist locally so it survives tab switches and reloads
+      try {
+        const today = getLocalDateString();
+        const raw = await AsyncStorage.getItem(FIELD_OVERRIDES_KEY);
+        const overrides = raw ? JSON.parse(raw) : {};
+        overrides[exercise.id] = { fields: newFields, date: today };
+        await AsyncStorage.setItem(FIELD_OVERRIDES_KEY, JSON.stringify(overrides));
+      } catch (err) {
+        console.warn('[Today] local field override save failed:', err);
+      }
     }
   };
 
@@ -4032,6 +4063,24 @@ export default function TodayScreen() {
     // Clear the pending prompt immediately (null = didn't answer; value = answered)
     if (pendingEffortTimer.current) clearTimeout(pendingEffortTimer.current);
     setPendingEffort(null);
+
+    // B1 fix: execute deferred auto-advance now that the prompt is answered/skipped
+    if (pendingAdvance.current) {
+      const { currentExId, nextEx: pa_nextEx, nextRestDur: pa_nextRest } = pendingAdvance.current;
+      pendingAdvance.current = null;
+      setTimeout(() => {
+        setExpanded(prev => {
+          const next = new Set(prev);
+          next.delete(currentExId);
+          next.add(pa_nextEx.id);
+          return next;
+        });
+        setTimerSeconds(pa_nextRest);
+        setTimerTarget(pa_nextRest);
+        setTimerExerciseName(pa_nextEx.name);
+        setTimerRunning(true);
+      }, 300); // brief delay so dismissal animation plays first
+    }
 
     // Store locally (for session avgRPE) and PATCH to DB (for coach context)
     setRepsInTank(prev => ({ ...prev, [logEntryId]: repsInTankValue }));
