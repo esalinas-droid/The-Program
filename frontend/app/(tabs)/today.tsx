@@ -3861,6 +3861,9 @@ export default function TodayScreen() {
       ? (exerciseRestDurations[exForSet.id] ?? REST_CONFIG[exForSet.category].default)
       : 120;
     const logName = exForSet?.name ?? exerciseName ?? '';
+    // Hoist hasRpe above auto-advance so both blocks can reference it
+    const exFieldsForLog = exForSet?.fields ?? [{ type: 'weight' }, { type: 'reps' }];
+    const hasRpe = exFieldsForLog.some(f => f.type === 'rpe');
 
     // Start count-DOWN timer from rest duration
     setTimerSeconds(restDuration);
@@ -3926,8 +3929,7 @@ export default function TodayScreen() {
         const hasTime   = exFields.some(f => f.type === 'time');
         const hasDist   = exFields.some(f => f.type === 'distance');
         const hasCal    = exFields.some(f => f.type === 'calories');
-        // BUG 1 fix: read RPE from field value if RPE field is present
-        const hasRpe    = exFields.some(f => f.type === 'rpe');
+        // hasRpe is hoisted above the auto-advance block — reuse it here
 
         // P2b: send 0 for absent fields so backend e1RM guard works correctly
         payloadWeight = hasWeight

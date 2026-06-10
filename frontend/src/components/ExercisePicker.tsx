@@ -374,8 +374,8 @@ export default function ExercisePicker({
             {filteredMain.length > 0 && (
               <View style={p.section}>
                 <SectionHeader label="MAIN LIFTS" count={filteredMain.length} />
-                {filteredMain.map((name) => (
-                  <ExRow key={name} name={name} onPress={() => pick(name, 'main')} />
+                {filteredMain.map((name, i) => (
+                  <ExRow key={`main-${name}-${i}`} name={name} onPress={() => pick(name, 'main')} />
                 ))}
               </View>
             )}
@@ -384,8 +384,8 @@ export default function ExercisePicker({
             {filteredSuppl.length > 0 && (
               <View style={p.section}>
                 <SectionHeader label="SUPPLEMENTAL" count={filteredSuppl.length} />
-                {filteredSuppl.map((name) => (
-                  <ExRow key={name} name={name} onPress={() => pick(name, 'supplemental')} />
+                {filteredSuppl.map((name, i) => (
+                  <ExRow key={`supplemental-${name}-${i}`} name={name} onPress={() => pick(name, 'supplemental')} />
                 ))}
               </View>
             )}
@@ -394,8 +394,8 @@ export default function ExercisePicker({
             {filteredAccess.length > 0 && (
               <View style={p.section}>
                 <SectionHeader label="ACCESSORIES" count={filteredAccess.length} />
-                {filteredAccess.map((name) => (
-                  <ExRow key={name} name={name} onPress={() => pick(name, 'accessory')} />
+                {filteredAccess.map((name, i) => (
+                  <ExRow key={`accessory-${name}-${i}`} name={name} onPress={() => pick(name, 'accessory')} />
                 ))}
               </View>
             )}
@@ -404,8 +404,8 @@ export default function ExercisePicker({
             {filteredPrehab.length > 0 && (
               <View style={p.section}>
                 <SectionHeader label="PREHAB / INJURY PREVENTION" count={filteredPrehab.length} />
-                {filteredPrehab.map((name) => (
-                  <ExRow key={name} name={name} onPress={() => pick(name, 'prehab')} />
+                {filteredPrehab.map((name, i) => (
+                  <ExRow key={`prehab-${name}-${i}`} name={name} onPress={() => pick(name, 'prehab')} />
                 ))}
               </View>
             )}
