@@ -88,6 +88,12 @@ function fieldPlaceholder(f: FieldSpec): string {
   }
 }
 
+// ── P2b: setValues map type (all possible field keys) ────────────────────────
+type SetValueMap = {
+  weight: string; reps: string;
+  timeElapsed?: string; distance?: string; calories?: string; rpe?: string;
+};
+
 // ── Phase 5: Structured warm-up/cooldown drills ──────────────────────────────
 type WarmupDrill = {
   name: string;
@@ -131,6 +137,7 @@ const EXERCISES: Exercise[] = [
     lastSession: '—',
     cues: [],
     notes: '',
+    fields: [{ type: 'weight' }, { type: 'reps' }],
     sets: [
       { id: 'fb-w-1', type: 'warmup', weight: 0, reps: '5', label: 'Warm-Up' },
       { id: 'fb-w-2', type: 'warmup', weight: 0, reps: '3', label: 'Warm-Up' },
@@ -146,6 +153,7 @@ const EXERCISES: Exercise[] = [
     lastSession: '—',
     cues: [],
     notes: '',
+    fields: [{ type: 'weight' }, { type: 'reps' }],
     sets: [
       { id: 'fbs-w-1', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
       { id: 'fbs-w-2', type: 'work', weight: 0, reps: '6-8', label: 'Work' },
@@ -161,6 +169,7 @@ const EXERCISES: Exercise[] = [
     lastSession: '—',
     cues: [],
     notes: '',
+    fields: [{ type: 'weight' }, { type: 'reps' }],
     sets: [
       { id: 'fba-w-1', type: 'work', weight: 0, reps: '10-12', label: 'Work' },
       { id: 'fba-w-2', type: 'work', weight: 0, reps: '10-12', label: 'Work' },
@@ -194,6 +203,7 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
       lastSession: '—',
       cues: [],
       notes: session.coachingNotes || '',
+      fields: [{ type: 'weight' }, { type: 'reps' }],
       sets: Array.from({ length: setCount }, (_, i) => ({
         id: `local-main-s${i}`,
         type: 'work' as SetType,
@@ -213,6 +223,7 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
       category: 'supplemental' as ExCategory,
       prescription: `${m[2]}×${m[3]}`,
       lastSession: '—', cues: [], notes: '',
+      fields: [{ type: 'weight' }, { type: 'reps' }],
       sets: Array.from({ length: parseInt(m[2]) }, (_, i) => ({
         id: `local-sup-${idx}-s${i}`, type: 'work' as SetType, weight: 0, reps: m[3], label: 'Work',
       })),
@@ -228,6 +239,7 @@ function buildTodayExercisesFromLocal(session: ProgramSession | null): Exercise[
       category: 'accessory' as ExCategory,
       prescription: `${m[2]}×${m[3]}`,
       lastSession: '—', cues: [], notes: '',
+      fields: [{ type: 'weight' }, { type: 'reps' }],
       sets: Array.from({ length: parseInt(m[2]) }, (_, i) => ({
         id: `local-acc-${idx}-s${i}`, type: 'work' as SetType, weight: 0, reps: m[3], label: 'Work',
       })),
@@ -247,34 +259,46 @@ function buildTodayExercisesFromApi(apiExercises: any[], sessionType?: string): 
 
   return apiExercises
     .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
-    .map((ex: any, idx: number) => ({
-      id: ex.sessionExerciseId || `api-ex-${idx}`,
-      name: (() => {
-        const n = ex.name;
-        const valid = n && typeof n === 'string' && n.trim().length >= 2 && /[a-zA-Z]/.test(n);
-        if (!valid) console.log('[Today] Invalid exercise name from API:', JSON.stringify(n), 'category:', ex.category);
-        return valid ? n.trim() : 'Exercise';
-      })(),
-      category: (ex.category === 'main'
+    .map((ex: any, idx: number) => {
+      const mappedCategory = (ex.category === 'main'
         ? (isDynamic ? 'speed' : 'primary')
         : ex.category === 'supplemental' ? 'supplemental'
         : ex.category === 'prehab' ? 'prehab'
         : ex.category === 'warmup' ? 'warmup'
         : ex.category === 'cooldown' ? 'cooldown'
         : ex.category === 'gpp' ? 'gpp'
-        : 'accessory') as ExCategory,
-      prescription: ex.prescription || '',
-      lastSession: ex.lastPerformance || ex.recentBest || '—',
-      cues: ex.cues || [],
-      notes: ex.notes || '',
-      sets: (ex.targetSets || []).map((s: any, si: number) => ({
-        id: `${ex.sessionExerciseId || idx}-s${si}`,
-        type: (s.setType === 'warmup' ? 'warmup' : 'work') as SetType,
-        weight: parseFloat(s.targetLoad) || 0,
-        reps: s.targetReps || '3',
-        label: s.setType === 'warmup' ? 'Warm-Up' : 'Work',
-      })),
-    }));
+        : 'accessory') as ExCategory;
+
+      // P2b: use stored fields[] first; fall back to defaultFields derivation
+      const storedFields: FieldSpec[] | null = Array.isArray(ex.fields) && ex.fields.length > 0
+        ? ex.fields as FieldSpec[]
+        : null;
+      const derivedFields = defaultFields(mappedCategory, ex.prescriptionType);
+      const fields: FieldSpec[] = storedFields ?? derivedFields;
+
+      return {
+        id: ex.sessionExerciseId || `api-ex-${idx}`,
+        name: (() => {
+          const n = ex.name;
+          const valid = n && typeof n === 'string' && n.trim().length >= 2 && /[a-zA-Z]/.test(n);
+          if (!valid) console.log('[Today] Invalid exercise name from API:', JSON.stringify(n), 'category:', ex.category);
+          return valid ? n.trim() : 'Exercise';
+        })(),
+        category: mappedCategory,
+        prescription: ex.prescription || '',
+        lastSession: ex.lastPerformance || ex.recentBest || '—',
+        cues: ex.cues || [],
+        notes: ex.notes || '',
+        fields,
+        sets: (ex.targetSets || []).map((s: any, si: number) => ({
+          id: `${ex.sessionExerciseId || idx}-s${si}`,
+          type: (s.setType === 'warmup' ? 'warmup' : 'work') as SetType,
+          weight: parseFloat(s.targetLoad) || 0,
+          reps: s.targetReps || '3',
+          label: s.setType === 'warmup' ? 'Warm-Up' : 'Work',
+        })),
+      };
+    });
 }
 
 const WARMUP_STEPS = [
@@ -320,23 +344,16 @@ function isGenericWarmupName(name: string): boolean {
   return GENERIC_WARMUP_NAMES.has(name.toLowerCase().trim());
 }
 
-// ── P1: Field-shape helpers ───────────────────────────────────────────────────
-/** Derive the input shape for a warm-up/cooldown drill from existing metadata.
- *  P2 replaces this with a stored `fieldShape` field on the set. */
-function deriveFieldShape(
-  prescriptionType: 'reps' | 'timed',
-  weight = 0
-): 'reps' | 'timed' | 'loaded' {
-  if (prescriptionType === 'timed') return 'timed';
-  if (weight > 0) return 'loaded';
-  return 'reps';
-}
+// ── P1 helper removed in P2b: fieldShape now lives on Exercise.fields ─────────
+// (deriveFieldShape was here — deleted)
 
 /** Convert WarmupDrill[] (warmupApi format) → Exercise[] (unified exercises format).
- *  Each drill gets one default set with the derived fieldShape applied. */
+ *  Each drill gets one default set driven by the P2b fields model. */
 function convertWarmupDrillsToExercises(drills: WarmupDrill[]): Exercise[] {
   return drills.map((drill, i) => {
-    const shape = deriveFieldShape(drill.prescriptionType, 0);
+    const fields: FieldSpec[] = drill.prescriptionType === 'timed'
+      ? [{ type: 'time' }]
+      : [{ type: 'reps' }];
     return {
       id: `warmup-api-${i}`,
       name: drill.name,
@@ -345,6 +362,7 @@ function convertWarmupDrillsToExercises(drills: WarmupDrill[]): Exercise[] {
       lastSession: '—',
       cues: [],
       notes: '',
+      fields,
       sets: [
         {
           id: `warmup-api-${i}-s0`,
@@ -352,7 +370,6 @@ function convertWarmupDrillsToExercises(drills: WarmupDrill[]): Exercise[] {
           weight: 0,
           reps: drill.scheme || '',
           label: 'Work',
-          fieldShape: shape,
         },
       ],
     };
@@ -1709,16 +1726,16 @@ const wd = StyleSheet.create({
 });
 
 
-function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChange, onLog, isLast,
-  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, isTimed, fieldShape,
-  timeElapsed, distance, onTimeElapsedChange, onDistanceChange, conditioningFields }: {
+function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, isLast,
+  removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, units = 'lbs' }: {
   set: ExSet;
   setNum: number;
   logged: boolean;
-  weight: string;
-  reps: string;
-  onWeightChange: (v: string) => void;
-  onRepsChange: (v: string) => void;
+  /** P2b: ordered ≤2 typed fields; 0 fields = completion-only */
+  fields: FieldSpec[];
+  /** P2b: all editable values for this set, keyed by fieldValueKey */
+  setValues: SetValueMap;
+  onValueChange: (key: keyof SetValueMap, value: string) => void;
   onLog: () => void;
   isLast?: boolean;
   removeMode?: boolean;
@@ -1727,25 +1744,13 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
   onEditSave?: () => void;
   adjustActive?: boolean;
   isActive?: boolean;
-  isTimed?: boolean;
-  /** P1/P2a: explicit field shape; overrides isTimed when present. Defaults to 'loaded'. */
-  fieldShape?: 'reps' | 'timed' | 'loaded' | 'load_time_distance';
-  /** P2a: conditioning sub-field values */
-  timeElapsed?: string;
-  distance?: string;
-  onTimeElapsedChange?: (v: string) => void;
-  onDistanceChange?: (v: string) => void;
-  /** P2a: active conditioning sub-fields. undefined = all three. */
-  conditioningFields?: ('load' | 'time' | 'distance')[];
+  units?: 'lbs' | 'kgs';
 }) {
   const circleColor = getSetCircleColor(set.type, logged);
   const typeTag = set.type === 'warmup' ? 'WU' : set.type === 'ramp' ? 'RM' : 'W';
-
-  // Resolve effective shape: explicit fieldShape > isTimed legacy flag > loaded default
-  const effectiveShape: 'reps' | 'timed' | 'loaded' | 'load_time_distance' =
-    fieldShape ?? (isTimed ? 'timed' : 'loaded');
-  // Active conditioning sub-fields (default = all three)
-  const activeCondFields = conditioningFields ?? ['load', 'time', 'distance'] as ('load' | 'time' | 'distance')[];
+  const ORANGE = '#FFA726';
+  const isGPP = fields.some(f => f.type === 'time') && fields.some(f => f.type === 'weight');
+  const activeCircle = isGPP ? ORANGE : circleColor;
 
   // ── REMOVE MODE ──
   if (removeMode) {
@@ -1759,13 +1764,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
           <MaterialCommunityIcons name="close" size={11} color={RED} />
         </View>
         <Text style={[sr.typeTag, { color: RED + '70' }]}>{typeTag}</Text>
-        <View style={[sr.input, { borderColor: RED + '30', justifyContent: 'center' }]}>
-          <Text style={{ color: RED, textAlign: 'center', fontSize: 13, fontWeight: '600' }}>{weight || '—'}</Text>
-        </View>
-        <Text style={[sr.sep, { color: RED }]}>×</Text>
-        <View style={[sr.input, sr.repsInput, { borderColor: RED + '30', justifyContent: 'center' }]}>
-          <Text style={{ color: RED, textAlign: 'center', fontSize: 13, fontWeight: '600' }}>{reps || '—'}</Text>
-        </View>
+        <View style={{ flex: 1 }} />
         <View style={sr.doneWrap}>
           <Text style={{ color: RED, fontSize: 9, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>{'TAP TO\nDELETE'}</Text>
         </View>
@@ -1775,34 +1774,41 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
 
   // ── EDIT MODE (logged set becomes editable) ──
   if (editMode && logged) {
+    const f0 = fields[0];
+    const f1 = fields[1];
     return (
       <View style={[sr.row, !isLast && sr.rowBorder]}>
         <View style={[sr.circle, { borderColor: BLUE, backgroundColor: BLUE + '20' }]}>
           <MaterialCommunityIcons name="pencil" size={11} color={BLUE} />
         </View>
         <Text style={sr.typeTag}>{typeTag}</Text>
-        <TextInput
-          style={[sr.input, { borderColor: BLUE + '40', color: BLUE }]}
-          value={weight}
-          onChangeText={onWeightChange}
-          keyboardType="numeric"
-          editable
-          selectTextOnFocus
-          returnKeyType="done"
-          placeholder="lbs"
-          placeholderTextColor={COLORS.text.muted}
-        />
-        <Text style={sr.sep}>×</Text>
-        <TextInput
-          style={[sr.input, sr.repsInput, { borderColor: BLUE + '40', color: BLUE }]}
-          value={reps}
-          onChangeText={onRepsChange}
-          editable
-          selectTextOnFocus
-          returnKeyType="done"
-          placeholder="reps"
-          placeholderTextColor={COLORS.text.muted}
-        />
+        {f0 ? (
+          <TextInput
+            style={[sr.input, { borderColor: BLUE + '40', color: BLUE }]}
+            value={setValues[fieldValueKey(f0)] ?? ''}
+            onChangeText={v => onValueChange(fieldValueKey(f0), v)}
+            keyboardType={fieldKeyboardType(f0)}
+            editable
+            selectTextOnFocus
+            returnKeyType="done"
+            placeholder={fieldPlaceholder(f0)}
+            placeholderTextColor={COLORS.text.muted}
+          />
+        ) : null}
+        {f0 && f1 ? <Text style={sr.sep}>×</Text> : null}
+        {f1 ? (
+          <TextInput
+            style={[sr.input, sr.repsInput, { borderColor: BLUE + '40', color: BLUE }]}
+            value={setValues[fieldValueKey(f1)] ?? ''}
+            onChangeText={v => onValueChange(fieldValueKey(f1), v)}
+            keyboardType={fieldKeyboardType(f1)}
+            editable
+            selectTextOnFocus
+            returnKeyType="done"
+            placeholder={fieldPlaceholder(f1)}
+            placeholderTextColor={COLORS.text.muted}
+          />
+        ) : null}
         <TouchableOpacity onPress={onEditSave} style={[sr.logBtn, { backgroundColor: BLUE }]} activeOpacity={0.8}>
           <Text style={sr.logBtnText}>SAVE</Text>
         </TouchableOpacity>
@@ -1810,214 +1816,86 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
     );
   }
 
-  // ── TIMED SET (duration field only) ──
-  if (effectiveShape === 'timed') {
-    return (
-      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
-        <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
-          {logged
-            ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
-            : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
-          }
-        </View>
-        <Text style={sr.typeTag}>{typeTag}</Text>
-        <TextInput
-          style={[sr.input, sr.timedInput, logged && sr.inputLogged]}
-          value={weight}
-          onChangeText={onWeightChange}
-          editable={!logged}
-          placeholder="e.g. 45 sec"
-          placeholderTextColor={COLORS.text.muted}
-          selectTextOnFocus
-          returnKeyType="done"
-        />
-        {!logged ? (
-          <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
-            <Text style={sr.logBtnText}>LOG</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={sr.doneWrap}>
-            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
-          </View>
-        )}
-      </View>
-    );
-  }
-
-  // ── REPS-ONLY SET (no weight column — hip circles, leg swings, etc.) ──
-  if (effectiveShape === 'reps') {
-    return (
-      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
-        <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
-          {logged
-            ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
-            : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
-          }
-        </View>
-        <Text style={sr.typeTag}>{typeTag}</Text>
-        <TextInput
-          style={[sr.input, sr.repsOnlyInput, logged && sr.inputLogged]}
-          value={reps}
-          onChangeText={onRepsChange}
-          editable={!logged}
-          placeholder="reps"
-          placeholderTextColor={COLORS.text.muted}
-          selectTextOnFocus
-          returnKeyType="done"
-        />
-        {!logged ? (
-          <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
-            <Text style={sr.logBtnText}>LOG</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={sr.doneWrap}>
-            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
-          </View>
-        )}
-      </View>
-    );
-  }
-
-  // ── CONDITIONING SET (load + time + distance, load-first, sub-fields auto-hidden) ──
-  if (effectiveShape === 'load_time_distance') {
-    const ORANGE = '#FFA726';
-    const showLoad = activeCondFields.includes('load');
-    const showTime = activeCondFields.includes('time');
-    const showDist = activeCondFields.includes('distance');
-    return (
-      <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive, { flexWrap: 'wrap', height: 'auto', minHeight: 48, paddingVertical: 6 }]}>
-        {/* Set circle */}
-        <View style={[sr.circle, { borderColor: logged ? TEAL : ORANGE, backgroundColor: (logged ? TEAL : ORANGE) + '20' }]}>
-          {logged
-            ? <MaterialCommunityIcons name="check" size={11} color={TEAL} />
-            : <Text style={[sr.circleNum, { color: ORANGE }]}>{setNum}</Text>
-          }
-        </View>
-        <Text style={[sr.typeTag, { color: ORANGE + '80' }]}>{typeTag}</Text>
-
-        {/* LOAD field (lbs/kg) */}
-        {showLoad && (
-          <TextInput
-            style={[sr.input, logged && sr.inputLogged, { flex: 1.2, minWidth: 52 }]}
-            value={weight}
-            onChangeText={onWeightChange}
-            keyboardType="numeric"
-            editable={!logged}
-            placeholder="Load"
-            placeholderTextColor={COLORS.text.muted}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
-        )}
-        {showLoad && showTime && <Text style={[sr.sep, { color: ORANGE + '60' }]}>·</Text>}
-
-        {/* TIME field (elapsed seconds) */}
-        {showTime && (
-          <TextInput
-            style={[sr.input, logged && sr.inputLogged, { flex: 1.4, minWidth: 54 }]}
-            value={timeElapsed ?? ''}
-            onChangeText={onTimeElapsedChange}
-            keyboardType="numeric"
-            editable={!logged}
-            placeholder="sec"
-            placeholderTextColor={COLORS.text.muted}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
-        )}
-        {showTime && showDist && <Text style={[sr.sep, { color: ORANGE + '60' }]}>·</Text>}
-
-        {/* DISTANCE field (ft/m) */}
-        {showDist && (
-          <TextInput
-            style={[sr.input, logged && sr.inputLogged, { flex: 1.4, minWidth: 48 }]}
-            value={distance ?? ''}
-            onChangeText={onDistanceChange}
-            keyboardType="numeric"
-            editable={!logged}
-            placeholder="dist"
-            placeholderTextColor={COLORS.text.muted}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
-        )}
-
-        {/* LOG / Done */}
-        {!logged ? (
-          <TouchableOpacity onPress={onLog} style={[sr.logBtn, { backgroundColor: ORANGE }]} activeOpacity={0.8}>
-            <Text style={sr.logBtnText}>LOG</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={sr.doneWrap}>
-            <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
-          </View>
-        )}
-      </View>
-    );
-  }
-
-  // ── LOADED SET (weight × reps — default for all main lifts) ──
+  // ── NORMAL MODE: 0, 1, or 2 fields ──
   return (
     <View style={[sr.row, !isLast && sr.rowBorder, logged && sr.rowLogged, isActive && !logged && sr.rowActive]}>
       {/* Set circle */}
-      <View style={[sr.circle, { borderColor: circleColor, backgroundColor: circleColor + '20' }]}>
+      <View style={[sr.circle, { borderColor: activeCircle, backgroundColor: activeCircle + '20' }]}>
         {logged
-          ? <MaterialCommunityIcons name="check" size={11} color={circleColor} />
-          : <Text style={[sr.circleNum, { color: circleColor }]}>{setNum}</Text>
+          ? <MaterialCommunityIcons name="check" size={11} color={TEAL} />
+          : <Text style={[sr.circleNum, { color: activeCircle }]}>{setNum}</Text>
         }
       </View>
+      <Text style={[sr.typeTag, isGPP && { color: ORANGE + '80' }]}>{typeTag}</Text>
 
-      {/* Set type tag */}
-      <Text style={sr.typeTag}>{typeTag}</Text>
-
-      {/* Weight input with optional strikethrough when load is adjusted */}
-      {adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
-        <View style={sr.weightCol}>
-          <Text style={sr.strikeWeight}>{set.weight}</Text>
-          <TextInput
-            style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
-            value={weight}
-            onChangeText={onWeightChange}
-            keyboardType="numeric"
-            editable={!logged}
-            placeholder="lbs"
-            placeholderTextColor={COLORS.text.muted}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
-        </View>
-      ) : (
+      {/* 0 fields: full-width DONE button */}
+      {fields.length === 0 ? null : fields.length === 1 ? (
+        /* 1 field: single wide input */
         <TextInput
-          style={[sr.input, logged && sr.inputLogged]}
-          value={weight}
-          onChangeText={onWeightChange}
-          keyboardType="numeric"
+          style={[sr.input, sr.repsOnlyInput, logged && sr.inputLogged, isGPP && { borderColor: ORANGE + '50' }]}
+          value={setValues[fieldValueKey(fields[0])] ?? ''}
+          onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+          keyboardType={fieldKeyboardType(fields[0])}
           editable={!logged}
-          placeholder="lbs"
+          placeholder={fieldPlaceholder(fields[0])}
           placeholderTextColor={COLORS.text.muted}
           selectTextOnFocus
           returnKeyType="done"
         />
+      ) : (
+        /* 2 fields */
+        <>
+          {fields[0].type === 'weight' && adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
+            <View style={sr.weightCol}>
+              <Text style={sr.strikeWeight}>{set.weight}</Text>
+              <TextInput
+                style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
+                value={setValues[fieldValueKey(fields[0])] ?? ''}
+                onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                keyboardType={fieldKeyboardType(fields[0])}
+                editable={!logged}
+                placeholder={fieldPlaceholder(fields[0])}
+                placeholderTextColor={COLORS.text.muted}
+                selectTextOnFocus
+                returnKeyType="next"
+              />
+            </View>
+          ) : (
+            <TextInput
+              style={[sr.input, logged && sr.inputLogged]}
+              value={setValues[fieldValueKey(fields[0])] ?? ''}
+              onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+              keyboardType={fieldKeyboardType(fields[0])}
+              editable={!logged}
+              placeholder={fieldPlaceholder(fields[0])}
+              placeholderTextColor={COLORS.text.muted}
+              selectTextOnFocus
+              returnKeyType="next"
+            />
+          )}
+          <Text style={[sr.sep, isGPP && { color: ORANGE + '60' }]}>×</Text>
+          <TextInput
+            style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
+            value={setValues[fieldValueKey(fields[1])] ?? ''}
+            onChangeText={v => onValueChange(fieldValueKey(fields[1]), v)}
+            keyboardType={fieldKeyboardType(fields[1])}
+            editable={!logged}
+            placeholder={fieldPlaceholder(fields[1])}
+            placeholderTextColor={COLORS.text.muted}
+            selectTextOnFocus
+            returnKeyType="done"
+          />
+        </>
       )}
-
-      <Text style={sr.sep}>×</Text>
-
-      {/* Reps input */}
-      <TextInput
-        style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
-        value={reps}
-        onChangeText={onRepsChange}
-        editable={!logged}
-        placeholder="reps"
-        placeholderTextColor={COLORS.text.muted}
-        selectTextOnFocus
-        returnKeyType="done"
-      />
 
       {/* LOG / Done */}
       {!logged ? (
-        <TouchableOpacity onPress={onLog} style={sr.logBtn} activeOpacity={0.8}>
-          <Text style={sr.logBtnText}>LOG</Text>
+        <TouchableOpacity
+          onPress={onLog}
+          style={[sr.logBtn, isGPP && { backgroundColor: ORANGE }, fields.length === 0 && { flex: 1 }]}
+          activeOpacity={0.8}
+        >
+          <Text style={sr.logBtnText}>{fields.length === 0 ? 'DONE' : 'LOG'}</Text>
         </TouchableOpacity>
       ) : (
         <View style={sr.doneWrap}>
@@ -2027,6 +1905,7 @@ function SetRow({ set, setNum, logged, weight, reps, onWeightChange, onRepsChang
     </View>
   );
 }
+
 const sr = StyleSheet.create({
   row:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 6, paddingHorizontal: 4, borderRadius: RADIUS.md },
   rowBorder:  { borderBottomWidth: 1, borderBottomColor: COLORS.border + '60' },
@@ -2071,6 +1950,7 @@ function ExerciseCard({
   restConfig, adjustActive, previousData, prExercises, onKebab,
   onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
   exerciseNote, onNoteChange, pendingEffortLogId, onEffortSelect,
+  profileUnits, onFieldsChange,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -2081,8 +1961,8 @@ function ExerciseCard({
   onReportPain: (exerciseName: string) => void;
   onAddSet: (exerciseId: string) => void;
   swap?: SwapInfo;
-  setValues: Record<string, { weight: string; reps: string }>;
-  onSetValueChange: (setId: string, field: 'weight' | 'reps' | 'timeElapsed' | 'distance', value: string) => void;
+  setValues: Record<string, SetValueMap>;
+  onSetValueChange: (setId: string, field: keyof SetValueMap, value: string) => void;
   inRemoveMode: boolean;
   inEditMode: boolean;
   onRemoveSet: (setId: string) => void;
@@ -2109,6 +1989,9 @@ function ExerciseCard({
   onNoteChange?: (note: string) => void;
   pendingEffortLogId?: string | null;
   onEffortSelect?: (repsInTank: number | null) => void;
+  // ── P2b ───────────────────────────────────────────────────────────────────
+  profileUnits?: 'lbs' | 'kgs';
+  onFieldsChange?: (newFields: FieldSpec[], scope: 'today' | 'everyTime') => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -2120,10 +2003,43 @@ function ExerciseCard({
   const displayName = nameIsValid ? rawName : getCategoryStyle(exercise.category).label;
   const progColor   = allDone ? TEAL : loggedCount > 0 ? COLORS.accent : COLORS.text.muted;
   const cardBorderColor = inRemoveMode ? RED + '40' : inEditMode ? BLUE + '40' : COLORS.border;
+  const units = profileUnits ?? 'lbs';
+
+  // ── P2b: field picker state ────────────────────────────────────────────────
+  const [pickingFieldIdx, setPickingFieldIdx] = React.useState<number | null>(null);
+  const [pendingFields, setPendingFields] = React.useState<FieldSpec[] | null>(null);
+
+  const handlePillPress = (idx: number) => { setPickingFieldIdx(idx); };
+
+  const handleFieldTypePick = (type: FieldType, unit?: string) => {
+    const current = exercise.fields ?? [];
+    let newFields: FieldSpec[];
+    if (type === 'empty') {
+      // Remove this field
+      newFields = current.filter((_, i) => i !== pickingFieldIdx);
+    } else if (pickingFieldIdx !== null && pickingFieldIdx < current.length) {
+      // Replace existing
+      newFields = current.map((f, i) => i === pickingFieldIdx ? { type, ...(unit ? { unit } : {}) } : f);
+    } else {
+      // Add new (+ button)
+      if (current.length >= 2) return; // cap
+      newFields = [...current, { type, ...(unit ? { unit } : {}) }];
+    }
+    setPendingFields(newFields);
+    setPickingFieldIdx(null);
+    Alert.alert(
+      'Apply field change to…',
+      undefined,
+      [
+        { text: 'Just Today', onPress: () => { onFieldsChange?.(newFields, 'today'); setPendingFields(null); } },
+        { text: 'Every Time This Exercise Appears', onPress: () => { onFieldsChange?.(newFields, 'everyTime'); setPendingFields(null); } },
+        { text: 'Cancel', style: 'cancel', onPress: () => setPendingFields(null) },
+      ]
+    );
+  };
 
   // ── Phase 1: Hero mode for Primary/Speed cards ────────────────────────────
   const heroMode      = (exercise.category === 'primary' || exercise.category === 'speed') && !inRemoveMode && !inEditMode;
-  const isTimedEx     = isTimedPrescription(exercise.prescription);
   const activeSetIdx  = exercise.sets.findIndex(s => !loggedSets.has(s.id));
   const activeSetId   = activeSetIdx >= 0 ? exercise.sets[activeSetIdx].id : null;
 
@@ -2272,48 +2188,61 @@ function ExerciseCard({
                     <Text style={ec.heroSetTotal}> of {total}</Text>
                   </View>
 
-                  {/* Inputs: timed → single duration field; standard → weight × reps */}
-                  {isTimedEx ? (
-                    <View style={ec.heroTimedRow}>
-                      <TextInput
-                        style={ec.heroTimedInput}
-                        value={setValues[exercise.sets[activeSetIdx].id]?.weight ?? ''}
-                        onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'weight', v)}
-                        placeholder="e.g. 45 sec"
-                        placeholderTextColor={COLORS.text.muted}
-                        editable={true}
-                        selectTextOnFocus
-                        returnKeyType="done"
-                      />
-                    </View>
-                  ) : (
-                    <View style={ec.heroInputRow}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <TextInput
-                          style={ec.heroInput}
-                          value={setValues[exercise.sets[activeSetIdx].id]?.weight ?? ''}
-                          onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'weight', v)}
-                          keyboardType="numeric"
-                          placeholder="lbs"
-                          placeholderTextColor={COLORS.text.muted}
-                          selectTextOnFocus
-                          returnKeyType="next"
-                        />
+                  {/* Inputs: driven by exercise.fields */}
+                  {(() => {
+                    const heroFields = exercise.fields ?? [{ type: 'weight' }, { type: 'reps' }];
+                    const setId = exercise.sets[activeSetIdx].id;
+                    const sv = setValues[setId] ?? { weight: '', reps: '' };
+                    if (heroFields.length === 0) {
+                      return null; // 0-field: LOG SET button handles completion below
+                    }
+                    if (heroFields.length === 1) {
+                      return (
+                        <View style={ec.heroTimedRow}>
+                          <TextInput
+                            style={ec.heroTimedInput}
+                            value={(sv as any)[fieldValueKey(heroFields[0])] ?? ''}
+                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[0]), v)}
+                            keyboardType={fieldKeyboardType(heroFields[0])}
+                            placeholder={fieldPlaceholder(heroFields[0])}
+                            placeholderTextColor={COLORS.text.muted}
+                            editable={true}
+                            selectTextOnFocus
+                            returnKeyType="done"
+                          />
+                        </View>
+                      );
+                    }
+                    return (
+                      <View style={ec.heroInputRow}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <TextInput
+                            style={ec.heroInput}
+                            value={(sv as any)[fieldValueKey(heroFields[0])] ?? ''}
+                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[0]), v)}
+                            keyboardType={fieldKeyboardType(heroFields[0])}
+                            placeholder={fieldPlaceholder(heroFields[0])}
+                            placeholderTextColor={COLORS.text.muted}
+                            selectTextOnFocus
+                            returnKeyType="next"
+                          />
+                        </View>
+                        <Text style={ec.heroSep}>×</Text>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <TextInput
+                            style={ec.heroInput}
+                            value={(sv as any)[fieldValueKey(heroFields[1])] ?? ''}
+                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[1]), v)}
+                            keyboardType={fieldKeyboardType(heroFields[1])}
+                            placeholder={fieldPlaceholder(heroFields[1])}
+                            placeholderTextColor={COLORS.text.muted}
+                            selectTextOnFocus
+                            returnKeyType="done"
+                          />
+                        </View>
                       </View>
-                      <Text style={ec.heroSep}>×</Text>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <TextInput
-                          style={ec.heroInput}
-                          value={setValues[exercise.sets[activeSetIdx].id]?.reps ?? ''}
-                          onChangeText={(v) => onSetValueChange(exercise.sets[activeSetIdx].id, 'reps', v)}
-                          placeholder="reps"
-                          placeholderTextColor={COLORS.text.muted}
-                          selectTextOnFocus
-                          returnKeyType="done"
-                        />
-                      </View>
-                    </View>
-                  )}
+                    );
+                  })()}
 
                   {/* LOG SET button */}
                   <TouchableOpacity
@@ -2438,29 +2367,56 @@ function ExerciseCard({
             </View>
           )}
 
-          {/* Sets label + divider */}
-          <View style={ec.setsHeader}>
-            <Text style={ec.setsLabel}>SETS</Text>
-          </View>
+          {/* ── P2b: Field header row (replaces "SETS" label) ──────────── */}
+          {(() => {
+            const exFields = exercise.fields ?? [];
+            return (
+              <View style={ec.fieldHeaderRow}>
+                {/* Left spacer to align with set circle + typeTag */}
+                <View style={{ width: 52 }} />
+                {exFields.map((f, idx) => (
+                  <React.Fragment key={idx}>
+                    {idx > 0 && <Text style={ec.fieldHeaderSep}>×</Text>}
+                    <TouchableOpacity
+                      style={[ec.fieldHeaderPill, f.type !== 'weight' && f.type !== 'reps' && { borderColor: '#FFA72640' }]}
+                      onPress={() => handlePillPress(idx)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[ec.fieldHeaderPillText, f.type !== 'weight' && f.type !== 'reps' && { color: '#FFA726' }]}>
+                        {fieldLabel(f, units)}
+                      </Text>
+                      <MaterialCommunityIcons name="chevron-down" size={9} color={COLORS.text.muted} />
+                    </TouchableOpacity>
+                  </React.Fragment>
+                ))}
+                {/* + ADD pill (hidden when 2 fields exist) */}
+                {exFields.length < 2 && (
+                  <TouchableOpacity
+                    style={ec.addFieldPill}
+                    onPress={() => handlePillPress(exFields.length)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons name="plus" size={10} color={COLORS.text.muted} />
+                    <Text style={ec.addFieldPillText}>ADD</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })()}
 
           {/* Set rows — active set (first unlogged) gets gold border */}
           <View>
             {exercise.sets.map((set, idx) => {
               const isActive = set.id === activeSetId;
-              const isTimed  = isTimedEx;
-              // P1: per-set fieldShape overrides prescription-based isTimed
-              const effectiveFieldShape: 'reps' | 'timed' | 'loaded' | 'load_time_distance' | undefined =
-                set.fieldShape ?? (isTimed ? 'timed' : undefined);
               return (
                 <SetRow
                   key={set.id}
                   set={set}
                   setNum={idx + 1}
                   logged={loggedSets.has(set.id)}
-                  weight={setValues[set.id]?.weight ?? ''}
-                  reps={setValues[set.id]?.reps ?? ''}
-                  onWeightChange={(v) => onSetValueChange(set.id, 'weight', v)}
-                  onRepsChange={(v) => onSetValueChange(set.id, 'reps', v)}
+                  fields={exercise.fields ?? []}
+                  setValues={setValues[set.id] ?? { weight: '', reps: '' }}
+                  onValueChange={(key, v) => onSetValueChange(set.id, key as keyof SetValueMap, v)}
                   onLog={() => onLog(set.id, displayName, set)}
                   isLast={idx === exercise.sets.length - 1}
                   removeMode={inRemoveMode}
@@ -2469,13 +2425,7 @@ function ExerciseCard({
                   onEditSave={() => onEditSave(set.id)}
                   adjustActive={adjustActive}
                   isActive={isActive}
-                  isTimed={isTimed}
-                  fieldShape={effectiveFieldShape}
-                  timeElapsed={setValues[set.id]?.timeElapsed ?? ''}
-                  distance={setValues[set.id]?.distance ?? ''}
-                  onTimeElapsedChange={(v) => onSetValueChange(set.id, 'timeElapsed', v)}
-                  onDistanceChange={(v) => onSetValueChange(set.id, 'distance', v)}
-                  conditioningFields={set.conditioningFields}
+                  units={units}
                 />
               );
             })}
@@ -2590,6 +2540,87 @@ function ExerciseCard({
           )}
         </>
       )}
+
+      {/* ── P2b: Field Type Picker bottom sheet ──────────────────────────── */}
+      <Modal
+        visible={pickingFieldIdx !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPickingFieldIdx(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          activeOpacity={1}
+          onPress={() => setPickingFieldIdx(null)}
+        />
+        <View style={{
+          backgroundColor: COLORS.surface,
+          borderTopLeftRadius: 20, borderTopRightRadius: 20,
+          paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, paddingBottom: 32,
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.lg }}>
+            <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.heavy, flex: 1 }}>
+              Choose Field Type
+            </Text>
+            <TouchableOpacity onPress={() => setPickingFieldIdx(null)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <MaterialCommunityIcons name="close" size={20} color={COLORS.text.muted} />
+            </TouchableOpacity>
+          </View>
+          {/* Grid of field options */}
+          {[
+            [
+              { label: 'Reps',    type: 'reps'     as FieldType, unit: undefined },
+              { label: 'Weight',  type: 'weight'   as FieldType, unit: undefined },
+              { label: 'RPE',     type: 'rpe'      as FieldType, unit: undefined },
+            ],
+            [
+              { label: 'Sec',     type: 'time'     as FieldType, unit: 'sec'  },
+              { label: 'Min',     type: 'time'     as FieldType, unit: 'min'  },
+              { label: 'Cal',     type: 'calories' as FieldType, unit: undefined },
+            ],
+            [
+              { label: 'Ft',      type: 'distance' as FieldType, unit: 'ft'  },
+              { label: 'M',       type: 'distance' as FieldType, unit: 'm'   },
+              { label: 'Yd',      type: 'distance' as FieldType, unit: 'yd'  },
+            ],
+            [
+              { label: 'Empty (–)', type: 'empty' as FieldType, unit: undefined },
+            ],
+          ].map((row, rowIdx) => (
+            <View key={rowIdx} style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+              {row.map((opt) => {
+                const isRemoveOpt = opt.type === 'empty';
+                return (
+                  <TouchableOpacity
+                    key={`${opt.type}-${opt.unit ?? ''}`}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      borderRadius: RADIUS.md,
+                      borderWidth: 1,
+                      alignItems: 'center',
+                      backgroundColor: isRemoveOpt ? '#EF535010' : COLORS.primary,
+                      borderColor: isRemoveOpt ? '#EF535040' : COLORS.border,
+                    }}
+                    onPress={() => { handleFieldTypePick(opt.type, opt.unit); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{
+                      fontSize: FONTS.sizes.sm,
+                      fontWeight: FONTS.weights.heavy,
+                      color: isRemoveOpt ? '#EF5350' : COLORS.text.primary,
+                      letterSpacing: 0.3,
+                    }}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2676,6 +2707,13 @@ const ec = StyleSheet.create({
   heroDot:        { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.border },
   heroDotLogged:  { backgroundColor: TEAL },
   heroDotActive:  { backgroundColor: COLORS.accent, transform: [{ scale: 1.3 }] },
+  // ── P2b: field-header row ──────────────────────────────────────────────────
+  fieldHeaderRow:      { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border + '40', marginBottom: 2 },
+  fieldHeaderSep:      { fontSize: 11, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
+  fieldHeaderPill:     { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 9, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.accent + '50', backgroundColor: COLORS.accent + '10' },
+  fieldHeaderPillText: { fontSize: 10, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 0.3 },
+  addFieldPill:        { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.primary },
+  addFieldPillText:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 0.5 },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -2693,6 +2731,8 @@ export default function TodayScreen() {
   // B1 fix: initialize as null; never default to 'program' to prevent UI flash
   const [trainingMode, setTrainingMode] = useState<'program' | 'free' | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // P2b: profile units for field-header labels
+  const [profileUnits, setProfileUnits] = useState<'lbs' | 'kgs'>('lbs');
 
   // Tracker mode: today's logged exercises
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
@@ -2708,7 +2748,7 @@ export default function TodayScreen() {
 
   // Exercise interaction
   const [loggedSets, setLoggedSets]   = useState<Set<string>>(new Set());
-  const [setValues, setSetValues]     = useState<Record<string, { weight: string; reps: string; timeElapsed?: string; distance?: string }>>({});
+  const [setValues, setSetValues]     = useState<Record<string, SetValueMap>>({});
   const [efforts, setEfforts]         = useState<Record<string, number>>({});
 
   // ── Phase 6: per-exercise notes + off-row effort ─────────────────────────
@@ -3295,6 +3335,8 @@ export default function TodayScreen() {
       const w    = prof?.currentWeek || 1;
       setWeek(w);
       setInjuryFlags(prof?.injuryFlags || []);
+      // P2b: wire profile units for field-header labels
+      setProfileUnits(prof?.units === 'kg' ? 'kgs' : 'lbs');
 
       // B1 fix: never fall back to 'program' while profile is loading.
       // Set the ACTUAL mode from profile, then mark profileLoaded.
@@ -3827,8 +3869,6 @@ export default function TodayScreen() {
 
     // Use edited input values if available, fall back to set defaults
     const currentVals = setValues[setId];
-    const weight = currentVals ? (parseFloat(currentVals.weight) || 0) : (set?.weight || 0);
-    const reps   = currentVals ? currentVals.reps : (set?.reps || '');
 
     if (exerciseName) {
       let postSucceeded = false;
@@ -3840,51 +3880,55 @@ export default function TodayScreen() {
         const setIdx    = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
         logName = exForSet?.name ?? exerciseName;
 
-        // P2a: detect conditioning sets — route through structured fields, skip e1RM
-        const isConditioning = set.fieldShape === 'load_time_distance' || exForSet?.category === 'gpp';
+        // P2b: unified payload — read from exercise.fields
+        const exFields = exForSet?.fields ?? [{ type: 'weight' }, { type: 'reps' }];
+        const hasWeight = exFields.some(f => f.type === 'weight');
+        const hasReps   = exFields.some(f => f.type === 'reps');
+        const hasTime   = exFields.some(f => f.type === 'time');
+        const hasDist   = exFields.some(f => f.type === 'distance');
+        const hasCal    = exFields.some(f => f.type === 'calories');
 
-        const result = await logApi.create(isConditioning ? {
-          // ── CONDITIONING payload ─────────────────────────────────────────────
+        // P2b: send 0 for absent fields so backend e1RM guard works correctly
+        const payloadWeight = hasWeight
+          ? (parseFloat((currentVals as any)?.weight ?? '') || (set?.weight || 0))
+          : 0;
+        const payloadReps = hasReps
+          ? (parseInt((currentVals as any)?.reps ?? '') || 0)
+          : 0;
+        const payloadElapsedTime = hasTime
+          ? (parseFloat((currentVals as any)?.timeElapsed ?? '') || undefined)
+          : undefined;
+        const payloadDistance = hasDist
+          ? (parseFloat((currentVals as any)?.distance ?? '') || undefined)
+          : undefined;
+        const payloadCalories = hasCal
+          ? (parseFloat((currentVals as any)?.calories ?? '') || undefined)
+          : undefined;
+
+        // Derive prescriptionType for analytics (informational — not used for e1RM)
+        const prescriptionType = hasTime && !hasReps ? 'timed'
+          : !hasWeight && hasReps ? 'reps'
+          : undefined;
+
+        const result = await logApi.create({
           date:     todayStr,
           week:     week || 1,
           day:      dayOfWeek,
           sessionType: sessionType || 'Training',
           exercise: logName,
           sets:     1,
-          weight:   0,                               // no e1rm weight
-          reps:     0,
+          weight:   payloadWeight,
+          reps:     payloadReps,
           rpe:      7,
           pain:     0,
           completed: 'yes',
           setIndex: setIdx >= 0 ? setIdx : undefined,
-          notes:    notesByExercise[exForSet?.id ?? ''] || undefined,
-          category: 'gpp',                           // tells backend: skip e1RM
-          prescriptionType: 'distance',              // secondary e1RM guard
-          // Structured conditioning fields (undefined = sub-field not tracked → null in DB)
-          load:        (parseFloat(currentVals?.weight  ?? '') || undefined),
-          elapsedTime: (parseFloat(currentVals?.timeElapsed ?? '') || undefined),
-          distance:    (parseFloat(currentVals?.distance    ?? '') || undefined),
-          unit:        'ft',
-        } : {
-          // ── STRENGTH / WARMUP / COOLDOWN payload (unchanged from before P2a) ──
-          date:     todayStr,
-          week:     week || 1,
-          day:      dayOfWeek,
-          sessionType: sessionType || 'Training',
-          exercise: logName,
-          sets:     1,
-          weight,
-          reps:     parseInt(reps) || 1,
-          rpe:      7,
-          pain:     0,
-          completed: 'yes',
-          setIndex: setIdx >= 0 ? setIdx : undefined,
-          // ── Phase 6: pass per-exercise note to coach context ──────────
           notes:    notesByExercise[exForSet?.id ?? ''] || undefined,
           category: exForSet?.category,
-          prescriptionType: set.fieldShape === 'timed' ? 'timed'
-            : set.fieldShape === 'reps' ? 'reps'
-            : undefined,
+          prescriptionType,
+          ...(payloadElapsedTime !== undefined && { elapsedTime: payloadElapsedTime }),
+          ...(payloadDistance !== undefined && { distance: payloadDistance }),
+          ...(payloadCalories !== undefined && { calories: payloadCalories }),
         });
         if (result?._id || result?.id) {
           const entryId = result._id || result.id;
@@ -3918,7 +3962,7 @@ export default function TodayScreen() {
         try {
           const exCat = exForSet?.category;
           if (exCat !== 'warmup' && exCat !== 'cooldown' && exCat !== 'prehab') {
-            const prData = await checkForPR(logName, weight, parseInt(reps) || 1);
+            const prData = await checkForPR(logName, payloadWeight, payloadReps);
             if (prData) {
               setPrCelebration(prData);
               setPrExercises(prev => new Set([...prev, logName]));
@@ -3932,7 +3976,7 @@ export default function TodayScreen() {
     }
   };
 
-  const handleSetValueChange = (setId: string, field: 'weight' | 'reps' | 'timeElapsed' | 'distance', value: string) => {
+  const handleSetValueChange = (setId: string, field: keyof SetValueMap, value: string) => {
     userEditedSets.current.add(setId); // Fix: track user-edited sets to protect from auto-adjust
     setSetValues(prev => ({
       ...prev,
@@ -3940,8 +3984,18 @@ export default function TodayScreen() {
     }));
   };
 
-  // Also widen the ExerciseCard prop type to accept conditioning fields:
-  type SetValueField = 'weight' | 'reps' | 'timeElapsed' | 'distance';
+  // ── P2b: handle fields change from ExerciseCard (scope: today or everyTime) ─
+  const handleFieldsChange = async (exercise: Exercise, newFields: FieldSpec[], scope: 'today' | 'everyTime') => {
+    // Always update local state immediately
+    setExercises(prev => prev.map(ex => ex.id === exercise.id ? { ...ex, fields: newFields } : ex));
+    if (scope === 'everyTime' && planId && sessionId && exercise.id) {
+      try {
+        await exerciseApi.updateExerciseFields(planId, sessionId, exercise.id, newFields);
+      } catch (err) {
+        console.warn('[Today] Failed to persist exercise fields:', err);
+      }
+    }
+  };
 
   // ── Phase 6: effort selection → PATCH endpoint + repsInTank→RPE mapping ───
   // Null = timed out / skipped (coach sees null, NOT confusion with 0=max effort)
@@ -4734,6 +4788,8 @@ export default function TodayScreen() {
                   onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
                   pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                   onEffortSelect={handleEffortSelect}
+                  profileUnits={profileUnits}
+                  onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
                 />
               );
             })}
@@ -4816,6 +4872,8 @@ export default function TodayScreen() {
             onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
             pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
             onEffortSelect={handleEffortSelect}
+            profileUnits={profileUnits}
+            onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
           />
           );
         })}
@@ -4867,6 +4925,8 @@ export default function TodayScreen() {
                   onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
                   pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                   onEffortSelect={handleEffortSelect}
+                  profileUnits={profileUnits}
+                  onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
                 />
               );
             })}
@@ -4920,6 +4980,8 @@ export default function TodayScreen() {
                 onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
                 pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                 onEffortSelect={handleEffortSelect}
+                profileUnits={profileUnits}
+                onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
               />
               );
             })}

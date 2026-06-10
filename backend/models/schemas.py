@@ -170,6 +170,8 @@ class SessionExercise(BaseModel):
     recentBest: str = ""
     adjustedFrom: Optional[str] = None
     adjustmentReason: Optional[str] = None
+    # P2b: ordered list of ≤2 typed field specs — e.g. [{"type":"weight"},{"type":"reps"}]
+    fields: Optional[List[dict]] = None
 
 
 # ─── Warmup Protocol ──────────────────────────────────────────────────────────

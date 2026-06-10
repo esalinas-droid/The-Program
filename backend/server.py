@@ -769,6 +769,76 @@ async def update_exercise_category_in_plan(
     return {"success": True, "updatedSessions": updated, "category": new_category}
 
 
+@api_router.patch("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}/fields")
+async def update_exercise_fields_in_plan(
+    program_id: str, session_id: str, exercise_id: str,
+    body: dict, userId: str = Depends(get_current_user)
+):
+    """P2b: Persist fields[] on exercise for current + all future occurrences of same session type.
+    Stores the full typed array so all field combinations (0-2 fields) survive round-trips.
+    """
+    new_fields = body.get("fields")
+    if not isinstance(new_fields, list):
+        raise HTTPException(status_code=400, detail="fields must be a list")
+    valid_types = {"reps", "weight", "rpe", "time", "distance", "calories", "empty"}
+    for f in new_fields:
+        if not isinstance(f, dict) or f.get("type") not in valid_types:
+            raise HTTPException(status_code=400, detail=f"Invalid field spec: {f}")
+    if len(new_fields) > 2:
+        raise HTTPException(status_code=400, detail="fields cap is 2")
+
+    plan_doc = await db.saved_plans.find_one({"planId": program_id, "userId": userId, "status": "active"})
+    if not plan_doc:
+        raise HTTPException(status_code=404, detail="Active plan not found.")
+
+    from models.schemas import AnnualPlan as _AP
+    plan_obj = _AP(**plan_doc)
+    plan_start = str(getattr(plan_obj, "planStartDate", None) or getattr(plan_obj, "startDate", None) or "")
+    current_week_num = _calculate_current_week(plan_start) if plan_start else 1
+
+    target_session_type, target_exercise_name = None, None
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                for session in (week.sessions or []):
+                    if session.sessionId == session_id:
+                        for ex in session.exercises:
+                            if ex.sessionExerciseId == exercise_id:
+                                target_session_type = session.sessionType
+                                target_exercise_name = ex.name
+                                break
+                        if target_exercise_name:
+                            break
+                if target_exercise_name:
+                    break
+            if target_exercise_name:
+                break
+        if target_exercise_name:
+            break
+
+    if not target_session_type or not target_exercise_name:
+        raise HTTPException(status_code=404, detail="Exercise not found in plan.")
+
+    updated = 0
+    for phase in plan_obj.phases:
+        for block in (phase.blocks or []):
+            for week in (block.weeks or []):
+                if week.weekNumber < current_week_num:
+                    continue
+                for session in (week.sessions or []):
+                    if str(session.sessionType) != str(target_session_type):
+                        continue
+                    for ex in session.exercises:
+                        if ex.name == target_exercise_name:
+                            ex.fields = new_fields
+                            updated += 1
+
+    await _save_plan_to_db(plan_obj, userId)
+    _prog_store["plans"].pop(userId, None)
+    logger.info(f"[ExFields] user={userId} exercise='{target_exercise_name}' fields={new_fields} in {updated} sessions")
+    return {"success": True, "updatedSessions": updated, "fields": new_fields}
+
+
 @api_router.patch("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}/order")
 async def reorder_exercise_in_plan(
     program_id: str, session_id: str, exercise_id: str,

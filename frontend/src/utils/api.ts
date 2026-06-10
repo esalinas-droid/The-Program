@@ -778,4 +778,12 @@ export const exerciseApi = {
     api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}`, {
       method: 'DELETE',
     }),
+  /** P2b: Persist full fields[] array to current + future sessions. */
+  updateExerciseFields: (
+    programId: string, sessionId: string, exerciseId: string,
+    fields: Array<{ type: string; unit?: string }>
+  ): Promise<{ success: boolean; updatedSessions: number; fields: Array<{ type: string; unit?: string }> }> =>
+    api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}/fields`, {
+      method: 'PATCH', body: JSON.stringify({ fields }),
+    }),
 };
