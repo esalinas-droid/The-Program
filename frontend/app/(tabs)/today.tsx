@@ -37,6 +37,57 @@ const RED  = '#EF5350';
 type SetType     = 'warmup' | 'ramp' | 'work';
 type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown' | 'gpp';
 
+// ── P2b: unified field model (replaces P1/P2a fieldShape + conditioningFields) ──
+type FieldType = 'reps' | 'weight' | 'rpe' | 'time' | 'distance' | 'calories' | 'empty';
+type FieldSpec = { type: FieldType; unit?: string };
+/** Return the default field list for an exercise based on its category.
+ *  P2b field picker lets users change this at will. */
+function defaultFields(cat: ExCategory, prescriptionType?: string): FieldSpec[] {
+  if (cat === 'gpp')                       return [{ type: 'weight' }, { type: 'time' }];
+  if (prescriptionType === 'timed')        return [{ type: 'time' }];
+  if (cat === 'warmup' || cat === 'cooldown') return [{ type: 'reps' }];
+  return [{ type: 'weight' }, { type: 'reps' }];     // strength default
+}
+/** Label shown on the header pill for a field type */
+function fieldLabel(f: FieldSpec, units: 'lbs' | 'kgs' = 'lbs'): string {
+  switch (f.type) {
+    case 'weight':   return units === 'kgs' ? 'Kg' : 'Lb';
+    case 'reps':     return 'Reps';
+    case 'rpe':      return 'RPE';
+    case 'time':     return f.unit === 'min' ? 'Min' : 'Sec';
+    case 'distance': return f.unit === 'm' ? 'M' : f.unit === 'yd' ? 'Yd' : 'Ft';
+    case 'calories': return 'Cal';
+    case 'empty':    return '—';
+    default:         return 'Field';
+  }
+}
+/** The setValues key that stores this field's typed value */
+function fieldValueKey(f: FieldSpec): 'weight' | 'reps' | 'rpe' | 'timeElapsed' | 'distance' | 'calories' {
+  switch (f.type) {
+    case 'weight':   return 'weight';
+    case 'reps':     return 'reps';
+    case 'rpe':      return 'rpe';
+    case 'time':     return 'timeElapsed';
+    case 'distance': return 'distance';
+    case 'calories': return 'calories';
+    default:         return 'reps';
+  }
+}
+function fieldKeyboardType(f: FieldSpec): 'numeric' | 'default' {
+  return f.type === 'rpe' ? 'default' : 'numeric';
+}
+function fieldPlaceholder(f: FieldSpec): string {
+  switch (f.type) {
+    case 'weight':   return 'lb';
+    case 'reps':     return 'reps';
+    case 'rpe':      return '1–10';
+    case 'time':     return 'sec';
+    case 'distance': return f.unit ?? 'ft';
+    case 'calories': return 'cal';
+    default:         return '';
+  }
+}
+
 // ── Phase 5: Structured warm-up/cooldown drills ──────────────────────────────
 type WarmupDrill = {
   name: string;
@@ -52,11 +103,7 @@ interface ExSet {
   weight: number;
   reps: string;
   label: string;
-  /** P1: derived at warm-up load time; P2 will replace with a stored field */
-  fieldShape?: 'reps' | 'timed' | 'loaded' | 'load_time_distance';
-  /** P2a: for load_time_distance shape — which sub-fields are active.
-   *  Default (undefined) = all three. ['time','distance'] = row erg (no load). */
-  conditioningFields?: ('load' | 'time' | 'distance')[];
+  // P1/P2a fieldShape and conditioningFields removed in P2b — shape now lives on Exercise.fields
 }
 interface Exercise {
   id: string;
@@ -67,6 +114,9 @@ interface Exercise {
   cues: string[];
   notes: string;
   sets: ExSet[];
+  /** P2b: ordered list of ≤2 typed fields driving SetRow inputs.
+   *  Set at load time from defaultFields(); changed by the picker. */
+  fields: FieldSpec[];
 }
 type SwapInfo = { original: string; replacement: string; reason: string };
 type SwapMap  = Record<string, SwapInfo>;

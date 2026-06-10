@@ -235,6 +235,8 @@ class WorkoutLogEntry(BaseDocument):
     load: Optional[float] = None            # carry/drag/sled weight — distinct from `weight` (e1rm driver)
     elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration)
     category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
+    # ── P2b: additional conditioning field ───────────────────────────────────────
+    calories: Optional[float] = None        # e.g. calories burned on rower/ski erg
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -263,10 +265,11 @@ class WorkoutLogCreate(BaseModel):
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
     # ── Phase 6: per-set effort signal ──────────────────────────────────────────
     reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
-    # ── P2a: conditioning structured fields ──────────────────────────────────────
+    # ── P2a/P2b: conditioning structured fields ───────────────────────────────────
     load: Optional[float] = None            # carry/drag/sled weight — distinct from `weight` (e1rm driver)
     elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration which is prescribed)
     category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
+    calories: Optional[float] = None        # rower/ski-erg calories
 
 class CheckIn(BaseDocument):
     week: int
@@ -321,6 +324,17 @@ def epley_e1rm(weight: float, reps: int) -> float:
     if reps <= 0 or weight <= 0: return 0.0
     if reps == 1: return weight
     return round(weight * (1 + reps / 30))
+
+def _e1rm_or_zero(weight, reps) -> float:
+    """P2b: simpler e1RM guard — only compute when BOTH weight AND reps are nonzero.
+    Conditioning (weight=0 or reps=0) automatically returns 0.0.
+    Replaces the P2a is_conditioning category/prescriptionType guard."""
+    try:
+        w = float(weight or 0)
+        r = int(reps or 0)
+    except (ValueError, TypeError):
+        return 0.0
+    return epley_e1rm(w, r)
 
 # ── Profile Endpoints ─────────────────────────────────────────────────────────
 @api_router.get("/profile")
@@ -1562,13 +1576,9 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
 
 @api_router.post("/log")
 async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
-    # P2a: skip e1RM for conditioning (prescriptionType is the reliable signal;
-    # category='gpp' is the fallback for any conditioning set without prescriptionType).
-    is_conditioning = (
-        entry.prescriptionType in {"distance", "timed", "calories", "height"}
-        or entry.category == "gpp"
-    )
-    e1rm = 0.0 if is_conditioning else epley_e1rm(entry.weight, entry.reps)
+    # P2b: simple weight-and-reps guard replaces P2a is_conditioning check.
+    # Any set where weight=0 or reps=0 (conditioning, warmup, reps-only) → e1rm=0.
+    e1rm = _e1rm_or_zero(entry.weight, entry.reps)
     log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
     # Stamp planId from the user's currently active plan (None in free mode)
     try:
@@ -1712,7 +1722,7 @@ async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get
         pass
     docs_to_insert = []
     for entry in body.entries:
-        e1rm = epley_e1rm(entry.weight, entry.reps)
+        e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
         log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
         if active_plan_id:
             log.planId = active_plan_id
@@ -1794,7 +1804,7 @@ async def update_session(
     # Build and insert replacement entries
     docs_to_insert = []
     for entry in body.new_entries:
-        e1rm = epley_e1rm(entry.weight, entry.reps)
+        e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
         log  = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
         docs_to_insert.append(log.to_mongo())
 
@@ -1951,7 +1961,7 @@ async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str =
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
     if not existing or existing.get("userId", "") not in (userId, ""):
         raise HTTPException(status_code=404, detail="Entry not found")
-    e1rm = epley_e1rm(entry.weight, entry.reps)
+    e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
     data = entry.model_dump()
     data["e1rm"] = e1rm
     data["userId"] = userId
