@@ -237,6 +237,8 @@ class WorkoutLogEntry(BaseDocument):
     category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
     # ── P2b: additional conditioning field ───────────────────────────────────────
     calories: Optional[float] = None        # e.g. calories burned on rower/ski erg
+    # ── P4: per-entry weight unit (lb/kg) — source of truth for e1RM + tonnage ──
+    weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -270,6 +272,8 @@ class WorkoutLogCreate(BaseModel):
     elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration which is prescribed)
     category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
     calories: Optional[float] = None        # rower/ski-erg calories
+    # ── P4: per-entry weight unit — source of truth for e1RM + tonnage ──────────
+    weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
 
 class CheckIn(BaseDocument):
     week: int
@@ -325,15 +329,18 @@ def epley_e1rm(weight: float, reps: int) -> float:
     if reps == 1: return weight
     return round(weight * (1 + reps / 30))
 
-def _e1rm_or_zero(weight, reps) -> float:
+def _e1rm_or_zero(weight, reps, weight_unit: str = "lbs") -> float:
     """P2b: simpler e1RM guard — only compute when BOTH weight AND reps are nonzero.
-    Conditioning (weight=0 or reps=0) automatically returns 0.0.
-    Replaces the P2a is_conditioning category/prescriptionType guard."""
+    P4: normalizes kg → lbs for consistent cross-unit e1RM comparison.
+    Conditioning (weight=0 or reps=0) automatically returns 0.0."""
     try:
         w = float(weight or 0)
         r = int(reps or 0)
     except (ValueError, TypeError):
         return 0.0
+    # Normalize kg → lbs so e1RM is always stored in a consistent unit (lbs)
+    if weight_unit and weight_unit.lower() in ("kg", "kgs"):
+        w = w * 2.20462
     return epley_e1rm(w, r)
 
 # ── Profile Endpoints ─────────────────────────────────────────────────────────
@@ -1647,8 +1654,9 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
 @api_router.post("/log")
 async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     # P2b: simple weight-and-reps guard replaces P2a is_conditioning check.
+    # P4: normalizes kg → lbs when weightUnit is 'kg'.
     # Any set where weight=0 or reps=0 (conditioning, warmup, reps-only) → e1rm=0.
-    e1rm = _e1rm_or_zero(entry.weight, entry.reps)
+    e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")
     log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
     # Stamp planId from the user's currently active plan (None in free mode)
     try:
@@ -1792,7 +1800,7 @@ async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get
         pass
     docs_to_insert = []
     for entry in body.entries:
-        e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
+        e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
         log = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
         if active_plan_id:
             log.planId = active_plan_id
@@ -1874,7 +1882,7 @@ async def update_session(
     # Build and insert replacement entries
     docs_to_insert = []
     for entry in body.new_entries:
-        e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
+        e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
         log  = WorkoutLogEntry(**entry.model_dump(), userId=userId, e1rm=e1rm)
         docs_to_insert.append(log.to_mongo())
 
@@ -2031,7 +2039,7 @@ async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str =
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
     if not existing or existing.get("userId", "") not in (userId, ""):
         raise HTTPException(status_code=404, detail="Entry not found")
-    e1rm = _e1rm_or_zero(entry.weight, entry.reps)  # P2b guard
+    e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
     data = entry.model_dump()
     data["e1rm"] = e1rm
     data["userId"] = userId
@@ -2223,12 +2231,13 @@ async def get_pr_history(exercise: str, userId: str = Depends(get_current_user))
     history = []
     for d in docs:
         history.append({
-            "date":   d.get("date"),
-            "week":   d.get("week"),
-            "weight": d.get("weight", 0),
-            "reps":   d.get("reps", 0),
-            "e1rm":   d.get("e1rm", 0),
-            "rpe":    d.get("rpe", 0)
+            "date":       d.get("date"),
+            "week":       d.get("week"),
+            "weight":     d.get("weight", 0),
+            "reps":       d.get("reps", 0),
+            "e1rm":       d.get("e1rm", 0),
+            "rpe":        d.get("rpe", 0),
+            "weightUnit": d.get("weightUnit"),   # P4: per-entry unit for normalized e1RM
         })
     return history
 
@@ -4796,7 +4805,16 @@ async def get_volume_trends(userId: str = Depends(get_current_user)):
             float(d.get("weight", 0) or 0) * int(d.get("reps", 0) or 0) * int(d.get("sets", 1) or 1)
             for d in docs
         )
-        result.append({"week": w, "sets": total_sets, "tonnage": round(tonnage), "isCurrent": w == current_week})
+        # P4: count distinct conditioning session dates for this week
+        cond_dates = set(
+            d.get("date") for d in docs
+            if d.get("category") == "gpp" and d.get("date")
+        )
+        result.append({
+            "week": w, "sets": total_sets, "tonnage": round(tonnage),
+            "conditioningSessions": len(cond_dates),
+            "isCurrent": w == current_week,
+        })
     return result
 
 
@@ -4876,9 +4894,96 @@ async def get_compliance_breakdown(userId: str = Depends(get_current_user)):
     ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 2 — BATCH 2  Intelligent Coaching Upgrades
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── P4: Conditioning analytics endpoints ─────────────────────────────────────
+
+@api_router.get("/analytics/conditioning-movements")
+async def get_conditioning_movements(userId: str = Depends(get_current_user)):
+    """Return all distinct GPP movements logged by this user with their primary field.
+    Primary field: 'time' if any entry has elapsedTime>0, 'distance' elif any has distance>0, else 'load'."""
+    docs = await db.log.find({**_user_or_orphan(userId), "category": "gpp"}).to_list(2000)
+    by_exercise: dict = {}
+    for d in docs:
+        ex = d.get("exercise", "")
+        if not ex:
+            continue
+        if ex not in by_exercise:
+            by_exercise[ex] = {"dates": set(), "has_time": False, "has_distance": False, "last_date": ""}
+        by_exercise[ex]["dates"].add(d.get("date", ""))
+        if d.get("elapsedTime", 0):
+            by_exercise[ex]["has_time"] = True
+        if d.get("distance", 0):
+            by_exercise[ex]["has_distance"] = True
+        dt = d.get("date", "")
+        if dt and dt > by_exercise[ex]["last_date"]:
+            by_exercise[ex]["last_date"] = dt
+
+    result = []
+    for ex, data in by_exercise.items():
+        if data["has_time"]:
+            primary_field = "time"
+        elif data["has_distance"]:
+            primary_field = "distance"
+        else:
+            primary_field = "load"
+        result.append({
+            "exercise":     ex,
+            "primaryField": primary_field,
+            "sessionCount": len(data["dates"]),
+            "lastDate":     data["last_date"] or None,
+        })
+    result.sort(key=lambda x: x["lastDate"] or "", reverse=True)
+    return result
+
+
+@api_router.get("/analytics/conditioning-history")
+async def get_conditioning_history(
+    exercise: str = Query(..., description="GPP exercise name"),
+    userId: str = Depends(get_current_user),
+):
+    """Return per-session conditioning history for one exercise.
+    One session = one calendar date; returns the BEST entry per date (min time / max distance / max weight).
+    Session number (1, 2, 3…) is the recommended X-axis label; date is available for tooltips."""
+    docs = await db.log.find({
+        **_user_or_orphan(userId),
+        "category":  "gpp",
+        "exercise":  exercise,
+    }).sort("date", 1).to_list(500)
+
+    if not docs:
+        return []
+
+    # Determine primary field from the full history
+    has_time = any(d.get("elapsedTime", 0) for d in docs)
+    has_dist = any(d.get("distance", 0)    for d in docs)
+
+    # Group entries by date
+    by_date: dict = {}
+    for d in docs:
+        date = d.get("date", "")
+        if date:
+            by_date.setdefault(date, []).append(d)
+
+    sessions = []
+    for date in sorted(by_date.keys()):
+        entries = by_date[date]
+        if has_time:
+            # Best = fastest time (lowest) > 0
+            timed = [e for e in entries if e.get("elapsedTime", 0) > 0]
+            best = min(timed, key=lambda e: e.get("elapsedTime", float("inf"))) if timed else entries[0]
+        elif has_dist:
+            best = max(entries, key=lambda e: e.get("distance") or 0)
+        else:
+            best = max(entries, key=lambda e: e.get("weight") or 0)
+
+        sessions.append({
+            "date":        date,
+            "elapsedTime": best.get("elapsedTime"),
+            "distance":    best.get("distance"),
+            "weight":      best.get("weight", 0) or 0,
+            "rpe":         best.get("rpe",    0) or 0,
+        })
+
+    return [{"sessionNumber": i + 1, **s} for i, s in enumerate(sessions)]
 
 # ─── Profile Reset (BUG 2C — clears stale data on re-onboarding) ──────────────
 @api_router.post("/profile/complete-tour")

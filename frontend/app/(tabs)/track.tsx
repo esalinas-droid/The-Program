@@ -17,6 +17,7 @@ const GOLD  = '#C9A84C';
 const TEAL  = '#4DCEA6';
 const RED   = '#E54D4D';
 const AMBER = '#F5A623';
+const ORANGE = '#FFA726';  // P4: conditioning orange
 const BG    = '#0A0A0C';
 const CARD  = '#111114';
 const BORDER = '#1E1E22';
@@ -271,6 +272,12 @@ export default function TrackScreen() {
   const [liftLoading,  setLiftLoading]  = useState(false);
   const [volumeData,   setVolumeData]   = useState<any[]>([]);
   const [volumeMode,   setVolumeMode]   = useState('sets');
+
+  // P4: conditioning progression state
+  const [condMovements,       setCondMovements]       = useState<any[]>([]);
+  const [selectedCondMovement, setSelectedCondMovement] = useState<string>('');
+  const [condHistory,         setCondHistory]         = useState<any[]>([]);
+  const [condLoading,         setCondLoading]         = useState(false);
   const [bwData,       setBwData]       = useState<any[]>([]);
   const [bwRange,      setBwRange]      = useState('30');
   const [painData,     setPainData]     = useState<any>(null);
@@ -346,6 +353,7 @@ export default function TrackScreen() {
       setLoading(false);
       runAnims();
       loadLift('Back Squat');
+      loadCondMovements(); // P4: conditioning progression data (non-blocking)
     }
   }
 
@@ -355,6 +363,40 @@ export default function TrackScreen() {
     const data = await prApi.getHistory(exercise).catch(() => []);
     setLiftHistory(data);
     setLiftLoading(false);
+  }
+
+  // P4: conditioning trend data loaders
+  async function loadCondHistory(exercise: string) {
+    setSelectedCondMovement(exercise);
+    setCondLoading(true);
+    try {
+      const data = await analyticsApi.conditioningHistory(exercise);
+      setCondHistory(Array.isArray(data) ? data : []);
+    } catch {
+      setCondHistory([]);
+    } finally {
+      setCondLoading(false);
+    }
+  }
+
+  async function loadCondMovements() {
+    try {
+      const data = await analyticsApi.conditioningMovements();
+      const movements = Array.isArray(data) ? data : [];
+      setCondMovements(movements);
+      if (movements.length > 0) {
+        const firstEx = movements[0].exercise;
+        setSelectedCondMovement(firstEx);
+        setCondLoading(true);
+        try {
+          const hist = await analyticsApi.conditioningHistory(firstEx);
+          setCondHistory(Array.isArray(hist) ? hist : []);
+        } catch { setCondHistory([]); }
+        setCondLoading(false);
+      }
+    } catch {
+      setCondMovements([]);
+    }
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -525,19 +567,118 @@ export default function TrackScreen() {
         title="Weekly Volume"
         right={
           <InlinePills
-            options={['sets', 'tonnage']}
+            options={['sets', 'tonnage', 'conditioning']}
             value={volumeMode}
             onSelect={setVolumeMode}
-            labels={{ sets: 'Sets', tonnage: 'Tonnage' }}
+            labels={{ sets: 'Sets', tonnage: 'Tonnage', conditioning: 'GPP' }}
           />
         }
       />
-      <BarChart
-        data={volumeData.map(d => ({ week: d.week, value: volumeMode === 'sets' ? d.sets : d.tonnage, isCurrent: d.isCurrent }))}
-        color={GOLD}
-      />
+      {volumeMode === 'conditioning' ? (
+        <BarChart
+          data={volumeData.map(d => ({
+            week: d.week,
+            value: d.conditioningSessions ?? 0,
+            isCurrent: d.isCurrent,
+          }))}
+          color={ORANGE}
+        />
+      ) : (
+        <BarChart
+          data={volumeData.map(d => ({
+            week: d.week,
+            value: volumeMode === 'sets' ? d.sets : d.tonnage,
+            isCurrent: d.isCurrent,
+          }))}
+          color={GOLD}
+        />
+      )}
     </View>
   );
+
+  // P4: Conditioning Trend Section — orange, session-numbered X-axis
+  const ConditioningTrendSection = ({ compact }: { compact?: boolean }) => {
+    if (condMovements.length === 0) return null;
+    const movData  = condMovements.find(m => m.exercise === selectedCondMovement);
+    const primField = movData?.primaryField || 'time';
+    const unitLabel = primField === 'time' ? 'sec' : primField === 'distance' ? 'm' : 'lbs';
+
+    const condChartData = condHistory
+      .map(d => {
+        let y = 0;
+        if      (primField === 'time')     y = d.elapsedTime || 0;
+        else if (primField === 'distance') y = d.distance    || 0;
+        else                               y = d.weight      || 0;
+        return { y, label: `#${d.sessionNumber}`, date: d.date as string };
+      })
+      .filter(d => d.y > 0);
+
+    const condBest = condChartData.length
+      ? (primField === 'time'
+          ? Math.min(...condChartData.map(d => d.y))
+          : condChartData[condChartData.length - 1].y)
+      : null;
+
+    const condTrend = condChartData.length >= 2
+      ? condChartData[condChartData.length - 1].y - condChartData[condChartData.length - 2].y
+      : null;
+    const trendGood = condTrend !== null
+      ? (primField === 'time' ? condTrend < 0 : condTrend > 0)
+      : false;
+
+    // Short label for movement pills (first word only to save space)
+    const movLabels = Object.fromEntries(
+      condMovements.map(m => [m.exercise, m.exercise.split(' ').slice(0, 2).join(' ')])
+    );
+
+    return (
+      <View style={[s.card, !compact && { marginBottom: SPACING.md }]}>
+        <SectionLbl
+          title="Conditioning"
+          right={
+            condMovements.length > 1 ? (
+              <InlinePills
+                options={condMovements.slice(0, 4).map(m => m.exercise)}
+                value={selectedCondMovement}
+                onSelect={loadCondHistory}
+                labels={movLabels}
+              />
+            ) : undefined
+          }
+        />
+        {!compact && condBest !== null && (
+          <View style={s.e1rmHeader}>
+            <View>
+              <Text style={[s.e1rmVal, { color: ORANGE }]}>
+                {condBest.toFixed(1)}{' '}
+                <Text style={s.e1rmUnit}>
+                  {unitLabel} {primField === 'time' ? 'best time' : primField === 'distance' ? 'best dist.' : 'best load'}
+                </Text>
+              </Text>
+            </View>
+            {condTrend !== null && (
+              <View style={[s.changePill, { backgroundColor: (trendGood ? TEAL : RED) + '20' }]}>
+                <MaterialCommunityIcons
+                  name={trendGood ? 'arrow-up' : 'arrow-down'}
+                  size={12}
+                  color={trendGood ? TEAL : RED}
+                />
+                <Text style={[s.changeTxt, { color: trendGood ? TEAL : RED }]}>
+                  {Math.abs(condTrend).toFixed(1)} {unitLabel}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+        {condLoading
+          ? <View style={{ height: compact ? 120 : 140, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator color={ORANGE} />
+            </View>
+          : <LineChart data={condChartData} color={ORANGE} height={compact ? 120 : 160} />
+        }
+      </View>
+    );
+  };
 
   const BlockProgressSection = ({ compact }: { compact?: boolean }) => (
     <View style={s.card}>
@@ -619,6 +760,13 @@ export default function TrackScreen() {
       <Animated.View style={[{ marginHorizontal: SPACING.lg, marginBottom: SPACING.md }, fade(5)]}>
         <VolumeTrendSection compact />
       </Animated.View>
+
+      {/* Conditioning trend (compact) — only shown if user has GPP sessions */}
+      {condMovements.length > 0 && (
+        <Animated.View style={[{ marginHorizontal: SPACING.lg, marginBottom: SPACING.md }, fade(5)]}>
+          <ConditioningTrendSection compact />
+        </Animated.View>
+      )}
 
       {/* Health & Body (2 compact side-by-side cards) */}
       <Animated.View style={[{ marginHorizontal: SPACING.lg, marginBottom: SPACING.md }, fade(6)]}>
@@ -855,17 +1003,31 @@ export default function TrackScreen() {
       </Animated.View>
 
       {/* Full Volume */}
-      <Animated.View style={[s.section, s.lastSection, fade(4)]}>
+      <Animated.View style={[s.section, condMovements.length === 0 && s.lastSection, fade(4)]}>
         <SectionHeader icon="chart-bar" title="Training Volume" subtitle="LAST 8 WEEKS" />
         <View style={{ flexDirection: 'row', gap: 6, marginBottom: SPACING.md }}>
-          {['sets', 'tonnage'].map(opt => (
+          {['sets', 'tonnage', 'conditioning'].map(opt => (
             <TouchableOpacity key={opt} style={[s.liftPill, volumeMode === opt && s.liftPillOn]} onPress={() => setVolumeMode(opt)}>
-              <Text style={[s.liftPillTxt, volumeMode === opt && s.liftPillTxtOn]}>{opt === 'sets' ? 'Total Sets' : 'Tonnage (lbs)'}</Text>
+              <Text style={[s.liftPillTxt, volumeMode === opt && s.liftPillTxtOn]}>
+                {opt === 'sets' ? 'Total Sets' : opt === 'tonnage' ? 'Tonnage (lbs)' : 'GPP Sessions'}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
-        <BarChart data={volumeData.map(d => ({ week: d.week, value: volumeMode === 'sets' ? d.sets : d.tonnage, isCurrent: d.isCurrent }))} color={GOLD} />
+        {volumeMode === 'conditioning' ? (
+          <BarChart data={volumeData.map(d => ({ week: d.week, value: d.conditioningSessions ?? 0, isCurrent: d.isCurrent }))} color={ORANGE} />
+        ) : (
+          <BarChart data={volumeData.map(d => ({ week: d.week, value: volumeMode === 'sets' ? d.sets : d.tonnage, isCurrent: d.isCurrent }))} color={GOLD} />
+        )}
       </Animated.View>
+
+      {/* Full Conditioning Trend — P4 */}
+      {condMovements.length > 0 && (
+        <Animated.View style={[s.section, s.lastSection, fade(5)]}>
+          <SectionHeader icon="timer-outline" title="Conditioning Trend" subtitle="GPP PROGRESSION" />
+          <ConditioningTrendSection />
+        </Animated.View>
+      )}
     </>
   );
 

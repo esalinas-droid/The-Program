@@ -15,7 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { getProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi, analyticsApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -93,6 +93,8 @@ function fieldPlaceholder(f: FieldSpec): string {
 type SetValueMap = {
   weight: string; reps: string;
   timeElapsed?: string; distance?: string; calories?: string; rpe?: string;
+  /** P4: per-set weight unit override ('lb' | 'kg'); undefined = use profile default */
+  weightUnit?: string;
 };
 
 // ── Phase 5: Structured warm-up/cooldown drills ──────────────────────────────
@@ -1858,11 +1860,76 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
       ) : (
         /* 2 fields */
         <>
-          {fields[0].type === 'weight' && adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
-            <View style={sr.weightCol}>
-              <Text style={sr.strikeWeight}>{set.weight}</Text>
+          {/* P4: weight field gets lb/kg toggle; other fields render as-is */}
+          {fields[0].type === 'weight' ? (
+            <View style={{ flex: 1, gap: 2 }}>
+              {adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
+                <View style={sr.weightCol}>
+                  <Text style={sr.strikeWeight}>{set.weight}</Text>
+                  <TextInput
+                    style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
+                    value={setValues[fieldValueKey(fields[0])] ?? ''}
+                    onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                    keyboardType={fieldKeyboardType(fields[0])}
+                    editable={!logged}
+                    placeholder={fieldPlaceholder(fields[0])}
+                    placeholderTextColor={COLORS.text.muted}
+                    selectTextOnFocus
+                    returnKeyType="next"
+                  />
+                </View>
+              ) : (
+                <TextInput
+                  style={[sr.input, logged && sr.inputLogged]}
+                  value={setValues[fieldValueKey(fields[0])] ?? ''}
+                  onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                  keyboardType={fieldKeyboardType(fields[0])}
+                  editable={!logged}
+                  placeholder={fieldPlaceholder(fields[0])}
+                  placeholderTextColor={COLORS.text.muted}
+                  selectTextOnFocus
+                  returnKeyType="next"
+                />
+              )}
+              {!logged && (
+                <View style={sr.unitToggleRow}>
+                  {(['lb', 'kg'] as const).map(u => {
+                    const effectiveUnit = (setValues.weightUnit as string) ?? (units === 'kgs' ? 'kg' : 'lb');
+                    const active = effectiveUnit === u;
+                    return (
+                      <TouchableOpacity
+                        key={u}
+                        style={[sr.unitBtn, active && sr.unitBtnActive]}
+                        onPress={() => onValueChange('weightUnit', u)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[sr.unitBtnTxt, active && sr.unitBtnTxtActive]}>{u}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : (
+            /* Non-weight field (time, distance, etc.) — no unit toggle */
+            adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
+              <View style={sr.weightCol}>
+                <Text style={sr.strikeWeight}>{set.weight}</Text>
+                <TextInput
+                  style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
+                  value={setValues[fieldValueKey(fields[0])] ?? ''}
+                  onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                  keyboardType={fieldKeyboardType(fields[0])}
+                  editable={!logged}
+                  placeholder={fieldPlaceholder(fields[0])}
+                  placeholderTextColor={COLORS.text.muted}
+                  selectTextOnFocus
+                  returnKeyType="next"
+                />
+              </View>
+            ) : (
               <TextInput
-                style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
+                style={[sr.input, logged && sr.inputLogged]}
                 value={setValues[fieldValueKey(fields[0])] ?? ''}
                 onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
                 keyboardType={fieldKeyboardType(fields[0])}
@@ -1872,19 +1939,7 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
                 selectTextOnFocus
                 returnKeyType="next"
               />
-            </View>
-          ) : (
-            <TextInput
-              style={[sr.input, logged && sr.inputLogged]}
-              value={setValues[fieldValueKey(fields[0])] ?? ''}
-              onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
-              keyboardType={fieldKeyboardType(fields[0])}
-              editable={!logged}
-              placeholder={fieldPlaceholder(fields[0])}
-              placeholderTextColor={COLORS.text.muted}
-              selectTextOnFocus
-              returnKeyType="next"
-            />
+            )
           )}
           <Text style={[sr.sep, isGPP && { color: ORANGE + '60' }]}>×</Text>
           <TextInput
@@ -1945,6 +2000,12 @@ const sr = StyleSheet.create({
   weightCol:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
   inputFull:    { alignSelf: 'stretch', flex: 0 },
   strikeWeight: { fontSize: 9, color: '#EF5350', textDecorationLine: 'line-through', fontWeight: '600', marginBottom: 2, textAlign: 'center' },
+  // P4: per-set weight unit toggle
+  unitToggleRow:    { flexDirection: 'row', gap: 3, justifyContent: 'center' },
+  unitBtn:          { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3, backgroundColor: '#1E1E22', borderWidth: 1, borderColor: 'transparent' },
+  unitBtnActive:    { borderColor: '#C9A84C60', backgroundColor: '#C9A84C20' },
+  unitBtnTxt:       { fontSize: 8, fontWeight: '700', color: '#555', letterSpacing: 0.3 },
+  unitBtnTxtActive: { color: '#C9A84C' },
 });
 
 // ── Detect timed prescription (e.g. "45 sec", "2 min hold") ─────────────────
@@ -2933,7 +2994,7 @@ export default function TodayScreen() {
   const [painAlert, setPainAlert]           = useState<string | null>(null);
 
   // ── Gamification state ───────────────────────────────────────────────────────
-  const [previousData, setPreviousData] = useState<Record<string, {weight: number; reps: number; date: string}[]>>({});
+  const [previousData, setPreviousData] = useState<Record<string, {weight: number; reps: number; date: string; weightUnit?: string}[]>>({});
   const [prCelebration, setPrCelebration] = useState<any>(null);
   const [prExercises, setPrExercises]     = useState<Set<string>>(new Set());
   const [showSessionComplete, setShowSessionComplete] = useState(false);
@@ -2954,7 +3015,7 @@ export default function TodayScreen() {
 
   // ── Previous workout data fetch ──────────────────────────────────────────────
   const fetchPreviousData = useCallback(async (exerciseNames: string[]) => {
-    const prevMap: Record<string, {weight: number; reps: number; date: string}[]> = {};
+    const prevMap: Record<string, {weight: number; reps: number; date: string; weightUnit?: string}[]> = {};
     const todayStr = getLocalDateString();
     for (const name of exerciseNames) {
       try {
@@ -2968,6 +3029,7 @@ export default function TodayScreen() {
             weight: parseFloat(e.weight) || 0,
             reps:   parseInt(String(e.reps)) || 0,
             date:   e.date,
+            weightUnit: e.weightUnit || undefined,   // P4: carry unit for normalized e1RM
           }));
         }
       } catch { /* Non-critical */ }
@@ -2976,16 +3038,23 @@ export default function TodayScreen() {
   }, []);
 
   // ── PR detection helper (async — fetches backend history as fallback) ─────────
-  const checkForPR = useCallback(async (exerciseName: string, weight: number, reps: number) => {
-    const e1rm = weight * (1 + reps / 30);
-    if (e1rm <= 0 || weight <= 0) return null;
+  // P4: unit normalization helper — always compare e1RM in lbs
+  const toLbs = (w: number, unit?: string | null): number =>
+    unit && unit.toLowerCase() === 'kg' ? w * 2.20462 : w;
+
+  const checkForPR = useCallback(async (exerciseName: string, weight: number, reps: number, weightUnit?: string) => {
+    // P4: normalize to lbs before e1RM so kg-logged entries don't read as lighter
+    const weightLbs = toLbs(weight, weightUnit);
+    const e1rm = weightLbs * (1 + reps / 30);
+    if (e1rm <= 0 || weightLbs <= 0) return null;
 
     let historicalBest = 0;
 
     // 1. Check previousData (prior days, from local state)
     const prevEntries = previousData[exerciseName] || [];
     const prevBestE1rm = prevEntries.reduce((mx, s) => {
-      const prev = s.weight * (1 + s.reps / 30);
+      const wLbs = toLbs(s.weight, s.weightUnit);    // P4: normalize stored unit
+      const prev = wLbs * (1 + s.reps / 30);
       return prev > mx ? prev : mx;
     }, 0);
     historicalBest = Math.max(historicalBest, prevBestE1rm);
@@ -2995,11 +3064,12 @@ export default function TodayScreen() {
     if (ex) {
       for (const s of ex.sets) {
         if (loggedSets.has(s.id)) {
-          const sv = setValues[s.id];
+          const sv = setValuesRef.current[s.id] ?? setValues[s.id];
           if (sv) {
             const w = parseFloat(sv.weight) || 0;
             const r = parseInt(sv.reps) || 0;
-            const se1rm = w * (1 + r / 30);
+            const wLbs = toLbs(w, sv.weightUnit);    // P4: normalize
+            const se1rm = wLbs * (1 + r / 30);
             if (se1rm > historicalBest) historicalBest = se1rm;
           }
         }
@@ -3012,7 +3082,8 @@ export default function TodayScreen() {
         const history = await prApi.getHistory(exerciseName);
         const entries = Array.isArray(history) ? history : (history?.history || []);
         for (const h of entries) {
-          const he1rm = h.e1rm || (h.weight && h.reps ? h.weight * (1 + h.reps / 30) : 0);
+          const hWLbs = toLbs(h.weight || 0, h.weightUnit);   // P4: normalize
+          const he1rm = h.e1rm || (hWLbs && h.reps ? hWLbs * (1 + h.reps / 30) : 0);
           if (he1rm > historicalBest) historicalBest = he1rm;
         }
       } catch {} // Non-critical — skip if no history
@@ -3023,13 +3094,121 @@ export default function TodayScreen() {
       return {
         exercise: exerciseName,
         weight,
+        weightUnit,
         reps,
-        e1rm: Math.round(e1rm),
+        e1rm:         Math.round(e1rm),
         previousBest: Math.round(historicalBest),
       };
     }
     return null;
   }, [previousData, exercises, loggedSets, setValues]);
+
+  // ── P4: Conditioning PR detection ─────────────────────────────────────────────
+  // Bucket comparisons: time PR requires same distance; distance PR requires same-or-higher load.
+  const checkForConditioningPR = useCallback(async (
+    exerciseName: string,
+    elapsedTime: number | undefined,
+    distance: number | undefined,
+    weight: number | undefined,
+  ) => {
+    const hasTime = (elapsedTime ?? 0) > 0;
+    const hasDist = !hasTime && (distance ?? 0) > 0;
+    const hasLoad = !hasTime && !hasDist && (weight ?? 0) > 0;
+    if (!hasTime && !hasDist && !hasLoad) return null;
+
+    // Fetch all historical conditioning sessions for this exercise
+    let history: any[] = [];
+    try {
+      const data = await analyticsApi.conditioningHistory(exerciseName);
+      // Exclude today — conditioning-history returns ALL dates including today
+      const todayStr = getLocalDateString();
+      history = (Array.isArray(data) ? data : []).filter((s: any) => s.date < todayStr);
+    } catch { return null; }
+
+    // Also include today's already-logged earlier sets (for intra-session PRs)
+    const exNode = exercises.find(e => e.name === exerciseName);
+    if (exNode) {
+      for (const s of exNode.sets) {
+        if (loggedSets.has(s.id)) {
+          const sv = setValuesRef.current[s.id] ?? setValues[s.id];
+          if (sv) {
+            const timed = parseFloat(sv.timeElapsed ?? '') || 0;
+            const dist  = parseFloat(sv.distance  ?? '') || 0;
+            const load  = parseFloat(sv.weight    ?? '') || 0;
+            if (timed > 0 || dist > 0 || load > 0) {
+              history.push({ elapsedTime: timed || undefined, distance: dist || undefined, weight: load });
+            }
+          }
+        }
+      }
+    }
+
+    if (history.length === 0) return null;
+
+    if (hasTime && elapsedTime) {
+      // Time PR: faster (lower) is better.
+      // Must be same-distance bucket AND current load >= historical load.
+      const thisDist = distance ?? 0;
+      const thisLoad = weight ?? 0;
+      const comparable = history.filter(h => {
+        const hDist = h.distance ?? 0;
+        const hLoad = h.weight   ?? 0;
+        return Math.abs(hDist - thisDist) < 0.01 && thisLoad >= hLoad;
+      }).filter(h => (h.elapsedTime ?? 0) > 0);
+      if (comparable.length === 0) return null;
+      const bestTime = Math.min(...comparable.map((h: any) => h.elapsedTime as number));
+      if (elapsedTime < bestTime) {
+        return {
+          exercise: exerciseName,
+          weight: 0, reps: 0, e1rm: 0, previousBest: 0,
+          prType: 'conditioning',
+          condMetric: 'time',
+          condValue: elapsedTime,
+          condUnit: 'sec',
+          condPreviousBest: bestTime,
+          condImprovement: parseFloat((bestTime - elapsedTime).toFixed(1)),
+        };
+      }
+    } else if (hasDist && distance) {
+      // Distance PR: more is better; current load >= historical load.
+      const thisLoad = weight ?? 0;
+      const comparable = history
+        .filter(h => thisLoad >= (h.weight ?? 0))
+        .filter(h => (h.distance ?? 0) > 0);
+      if (comparable.length === 0) return null;
+      const bestDist = Math.max(...comparable.map((h: any) => h.distance as number));
+      if (distance > bestDist) {
+        return {
+          exercise: exerciseName,
+          weight: 0, reps: 0, e1rm: 0, previousBest: 0,
+          prType: 'conditioning',
+          condMetric: 'distance',
+          condValue: distance,
+          condUnit: 'm',
+          condPreviousBest: bestDist,
+          condImprovement: parseFloat((distance - bestDist).toFixed(1)),
+        };
+      }
+    } else if (hasLoad && weight) {
+      // Load PR: heavier carry is better (conditioning-only; no reps).
+      const comparable = history.filter(h => (h.weight ?? 0) > 0);
+      if (comparable.length === 0) return null;
+      const bestLoad = Math.max(...comparable.map((h: any) => h.weight as number));
+      if (weight > bestLoad) {
+        return {
+          exercise: exerciseName,
+          weight: 0, reps: 0, e1rm: 0, previousBest: 0,
+          prType: 'conditioning',
+          condMetric: 'load',
+          condValue: weight,
+          condUnit: 'lbs',
+          condPreviousBest: bestLoad,
+          condImprovement: parseFloat((weight - bestLoad).toFixed(1)),
+        };
+      }
+    }
+    return null;
+  }, [exercises, loggedSets, setValues]);
 
   // ── Share PR card ─────────────────────────────────────────────────────────────
   const sharePRCard = useCallback(async (data: any) => {
@@ -3053,7 +3232,8 @@ export default function TodayScreen() {
 
   // ── Defensive: clear invalid PR celebration state ──────────────────────────
   useEffect(() => {
-    if (prCelebration && (prCelebration.weight <= 0 || prCelebration.reps <= 0)) {
+    // P4: conditioning PRs have weight=0/reps=0 by design — guard only clears strength PRs
+    if (prCelebration && prCelebration.prType !== 'conditioning' && (prCelebration.weight <= 0 || prCelebration.reps <= 0)) {
       console.warn('[Today] Invalid PR celebration detected — clearing', prCelebration);
       setPrCelebration(null);
     }
@@ -3935,6 +4115,9 @@ export default function TodayScreen() {
       // Hoist these so PR detection (outside try) can read them
       let payloadWeight = 0;
       let payloadReps   = 0;
+      let payloadElapsedTime: number | undefined = undefined;  // P4 hoist
+      let payloadDistance:    number | undefined = undefined;  // P4 hoist
+      let setWeightUnit: string = profileUnits === 'kgs' ? 'kg' : 'lb'; // P4 hoist
       let exForSet: typeof exercises[0] | undefined;
       try {
         const todayStr  = getLocalDateString();
@@ -3952,6 +4135,9 @@ export default function TodayScreen() {
         const hasCal    = exFields.some(f => f.type === 'calories');
         // hasRpe is hoisted above the auto-advance block — reuse it here
 
+        // P4: per-set weight unit — user's row toggle or profile default
+        setWeightUnit = (currentVals as any)?.weightUnit ?? (profileUnits === 'kgs' ? 'kg' : 'lb');
+
         // P2b: send 0 for absent fields so backend e1RM guard works correctly
         payloadWeight = hasWeight
           ? (parseFloat((currentVals as any)?.weight ?? '') || (set?.weight || 0))
@@ -3959,10 +4145,11 @@ export default function TodayScreen() {
         payloadReps = hasReps
           ? (parseInt((currentVals as any)?.reps ?? '') || 0)
           : 0;
-        const payloadElapsedTime = hasTime
+        // P4: use let so hoisted vars are set here inside try
+        payloadElapsedTime = hasTime
           ? (parseFloat((currentVals as any)?.timeElapsed ?? '') || undefined)
           : undefined;
-        const payloadDistance = hasDist
+        payloadDistance = hasDist
           ? (parseFloat((currentVals as any)?.distance ?? '') || undefined)
           : undefined;
         const payloadCalories = hasCal
@@ -3994,6 +4181,7 @@ export default function TodayScreen() {
           notes:    notesByExercise[exForSet?.id ?? ''] || undefined,
           category: exForSet?.category,
           prescriptionType,
+          weightUnit: setWeightUnit,                              // P4: per-set unit
           ...(payloadElapsedTime !== undefined && { elapsedTime: payloadElapsedTime }),
           ...(payloadDistance !== undefined && { distance: payloadDistance }),
           ...(payloadCalories !== undefined && { calories: payloadCalories }),
@@ -4029,7 +4217,14 @@ export default function TodayScreen() {
         try {
           const exCat = exForSet?.category;
           if (exCat !== 'warmup' && exCat !== 'cooldown' && exCat !== 'prehab') {
-            const prData = await checkForPR(logName, payloadWeight, payloadReps);
+            let prData: any = null;
+            if (exCat === 'gpp') {
+              // P4: conditioning PR — time/distance/load comparison with bucketing
+              prData = await checkForConditioningPR(logName, payloadElapsedTime, payloadDistance, payloadWeight);
+            } else {
+              // Strength PR — normalized e1RM comparison
+              prData = await checkForPR(logName, payloadWeight, payloadReps, setWeightUnit);
+            }
             if (prData) {
               setPrCelebration(prData);
               setPrExercises(prev => new Set([...prev, logName]));
@@ -5602,10 +5797,10 @@ export default function TodayScreen() {
       />
 
       {/* ── Part 3B: PR CELEBRATION OVERLAY ── */}
-      {prCelebration && prCelebration.weight > 0 && prCelebration.reps > 0 && (
+      {prCelebration && (prCelebration.prType === 'conditioning' || (prCelebration.weight > 0 && prCelebration.reps > 0)) && (
         <Modal transparent visible animationType="fade" onRequestClose={() => setPrCelebration(null)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-            {/* Gold particle confetti */}
+            {/* Particle confetti — gold for strength, orange for conditioning */}
             {prParticles.map((p, i) => (
               <Animated.View
                 key={i}
@@ -5616,30 +5811,67 @@ export default function TodayScreen() {
                   width: p.size,
                   height: p.size,
                   borderRadius: p.size / 2,
-                  backgroundColor: i % 3 === 0 ? '#C9A84C' : i % 3 === 1 ? '#E8C868' : '#FFD700',
+                  backgroundColor: prCelebration.prType === 'conditioning'
+                    ? (i % 3 === 0 ? '#FFA726' : i % 3 === 1 ? '#FFB74D' : '#FF8F00')
+                    : (i % 3 === 0 ? '#C9A84C' : i % 3 === 1 ? '#E8C868' : '#FFD700'),
                   opacity: p.animOpacity,
                   transform: [{ translateY: p.animY }],
                 }}
               />
             ))}
-            <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
-            <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6', marginBottom: 4, textAlign: 'center' }}>{prCelebration.exercise}</Text>
-            <Text style={{ fontSize: 52, fontWeight: '800', color: COLORS.accent, lineHeight: 60 }}>{prCelebration.weight}</Text>
-            <Text style={{ fontSize: 16, color: '#888', marginBottom: 20 }}>lbs × {prCelebration.reps} reps</Text>
-            <View style={{ width: '100%', backgroundColor: '#111114', borderRadius: 16, padding: 20, gap: 8 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Est. Max</Text>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: COLORS.accent }}>{prCelebration.e1rm} lbs</Text>
-              </View>
-              <View style={{ height: 1, backgroundColor: '#1E1E22' }} />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Improvement</Text>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#4DCEA6' }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs</Text>
-              </View>
-            </View>
+
+            {prCelebration.prType === 'conditioning' ? (
+              /* ── Conditioning PR content ── */
+              <>
+                <Text style={{ fontSize: 12, color: '#FFA726', letterSpacing: 3, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+                <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6', marginBottom: 4, textAlign: 'center' }}>{prCelebration.exercise}</Text>
+                <Text style={{ fontSize: 52, fontWeight: '800', color: '#FFA726', lineHeight: 60 }}>{prCelebration.condValue?.toFixed(1)}</Text>
+                <Text style={{ fontSize: 16, color: '#888', marginBottom: 20 }}>
+                  {prCelebration.condUnit}
+                  {' · '}
+                  {prCelebration.condMetric === 'time'     ? 'fastest time'   :
+                   prCelebration.condMetric === 'distance' ? 'best distance'  : 'heaviest load'}
+                </Text>
+                <View style={{ width: '100%', backgroundColor: '#111114', borderRadius: 16, padding: 20, gap: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Previous Best</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#888' }}>{prCelebration.condPreviousBest?.toFixed(1)} {prCelebration.condUnit}</Text>
+                  </View>
+                  <View style={{ height: 1, backgroundColor: '#1E1E22' }} />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Improvement</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#4DCEA6' }}>
+                      {prCelebration.condMetric === 'time' ? '−' : '+'}{prCelebration.condImprovement} {prCelebration.condUnit}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            ) : (
+              /* ── Strength PR content ── */
+              <>
+                <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+                <Text style={{ fontSize: 32, fontWeight: '800', color: '#E8E8E6', marginBottom: 4, textAlign: 'center' }}>{prCelebration.exercise}</Text>
+                <Text style={{ fontSize: 52, fontWeight: '800', color: COLORS.accent, lineHeight: 60 }}>{prCelebration.weight}</Text>
+                <Text style={{ fontSize: 16, color: '#888', marginBottom: 20 }}>
+                  {prCelebration.weightUnit === 'kg' ? 'kg' : 'lbs'} × {prCelebration.reps} reps
+                </Text>
+                <View style={{ width: '100%', backgroundColor: '#111114', borderRadius: 16, padding: 20, gap: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Est. Max</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: COLORS.accent }}>{prCelebration.e1rm} lbs</Text>
+                  </View>
+                  <View style={{ height: 1, backgroundColor: '#1E1E22' }} />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 14, color: '#E8E8E6' }}>Improvement</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#4DCEA6' }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs</Text>
+                  </View>
+                </View>
+              </>
+            )}
+
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 20, width: '100%' }}>
               <TouchableOpacity
-                style={{ flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                style={{ flex: 1, backgroundColor: prCelebration.prType === 'conditioning' ? '#FFA726' : COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
                 onPress={() => sharePRCard(prCelebration)}>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A0A0C' }}>SHARE</Text>
               </TouchableOpacity>
@@ -5716,17 +5948,29 @@ export default function TodayScreen() {
         </Modal>
       )}
 
-      {/* ── Part 3C: Hidden PR share card ── */}
+      {/* ── Part 3C: Hidden PR share card — P4: handles conditioning PRs too ── */}
       <View style={{ height: 0, overflow: 'hidden' }}>
         <View ref={prCardRef} collapsable={false} style={{ width: 360, height: 640, backgroundColor: '#0A0A0C', padding: 40, justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{ fontSize: 12, color: COLORS.accent, letterSpacing: 3, marginBottom: 20, fontWeight: '700' }}>THE PROGRAM</Text>
-          <Text style={{ fontSize: 14, color: COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
+          <Text style={{ fontSize: 14, color: prCelebration?.prType === 'conditioning' ? '#FFA726' : COLORS.accent, letterSpacing: 2, marginBottom: 8, fontWeight: '700' }}>NEW PERSONAL RECORD</Text>
           <Text style={{ fontSize: 28, fontWeight: '800', color: '#E8E8E6', marginBottom: 4 }}>{prCelebration?.exercise || '—'}</Text>
-          <Text style={{ fontSize: 56, fontWeight: '800', color: COLORS.accent }}>{prCelebration?.weight || 0}</Text>
-          <Text style={{ fontSize: 16, color: '#888' }}>lbs × {prCelebration?.reps || 0} reps</Text>
-          <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
-          <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
-          {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
+          {prCelebration?.prType === 'conditioning' ? (
+            <>
+              <Text style={{ fontSize: 56, fontWeight: '800', color: '#FFA726' }}>{prCelebration.condValue?.toFixed(1)}</Text>
+              <Text style={{ fontSize: 16, color: '#888' }}>{prCelebration.condUnit} · {prCelebration.condMetric === 'time' ? 'fastest time' : prCelebration.condMetric === 'distance' ? 'best distance' : 'heaviest load'}</Text>
+              <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
+              <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Best: {prCelebration.condPreviousBest?.toFixed(1)} → {prCelebration.condValue?.toFixed(1)} {prCelebration.condUnit}</Text>
+              <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>{prCelebration.condMetric === 'time' ? '−' : '+'}{prCelebration.condImprovement} {prCelebration.condUnit} improvement</Text>
+            </>
+          ) : (
+            <>
+              <Text style={{ fontSize: 56, fontWeight: '800', color: COLORS.accent }}>{prCelebration?.weight || 0}</Text>
+              <Text style={{ fontSize: 16, color: '#888' }}>{prCelebration?.weightUnit === 'kg' ? 'kg' : 'lbs'} × {prCelebration?.reps || 0} reps</Text>
+              <View style={{ height: 1, backgroundColor: '#1E1E22', width: '100%', marginVertical: 20 }} />
+              <Text style={{ fontSize: 16, color: '#E8E8E6' }}>Est. Max: {prCelebration?.e1rm || 0} lbs</Text>
+              {prCelebration && <Text style={{ fontSize: 14, color: '#4DCEA6', marginTop: 4 }}>+{prCelebration.e1rm - prCelebration.previousBest} lbs improvement</Text>}
+            </>
+          )}
           <Text style={{ fontSize: 11, color: '#444', marginTop: 40 }}>Coached by The Program · theprogram.app</Text>
         </View>
       </View>

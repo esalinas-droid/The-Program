@@ -317,6 +317,10 @@ export const analyticsApi = {
   volume:   () => api('/analytics/volume'),
   pain:     () => api('/analytics/pain'),
   compliance: () => api('/analytics/compliance'),
+  // P4: conditioning progression endpoints
+  conditioningMovements: () => api('/analytics/conditioning-movements'),
+  conditioningHistory:   (exercise: string) =>
+    api(`/analytics/conditioning-history?exercise=${encodeURIComponent(exercise)}`),
 };
 
 // Upload Processing
