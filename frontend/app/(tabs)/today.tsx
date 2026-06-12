@@ -3382,6 +3382,16 @@ export default function TodayScreen() {
       }
 
       const todayStr = getLocalDateString();
+
+      // ── EARLY UNITS REFRESH ──────────────────────────────────────────────────
+      // Must run before any early-return branches so Settings lbs↔kgs is
+      // reflected immediately on focus-return (the full-rebuild path is NOT
+      // reached when the screen is already loaded for the current day).
+      try {
+        const profEarly = await getProfile();
+        setProfileUnits(profEarly?.units === 'kg' ? 'kgs' : 'lbs');
+      } catch {} // non-critical — stale value is worse than a silent skip
+
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         // Safety net: re-verify added sets are present in exercises state
         // (On Expo Go, a background/foreground cycle can reset state while
