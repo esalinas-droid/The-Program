@@ -2820,6 +2820,10 @@ export default function TodayScreen() {
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
   const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  // ── Tracker Mode: text note entry ────────────────────────────────────────────
+  const [isTextNoteModalOpen, setIsTextNoteModalOpen] = useState(false);
+  const [textNoteInput, setTextNoteInput] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -4747,6 +4751,41 @@ export default function TodayScreen() {
     }
   }, [router]);
 
+  // ── Tracker Mode: save a free-text note entry ─────────────────────────────────
+  const handleSaveTextNote = async () => {
+    const text = textNoteInput.trim();
+    if (!text) return;
+    setIsSavingNote(true);
+    try {
+      await logApi.create({
+        date: getLocalDateString(),
+        week: 0,
+        day: getTodayDayName(),
+        sessionType: 'Tracker',
+        exercise: '__note__',
+        sets: 0,
+        weight: 0,
+        reps: 0,
+        rpe: 0,
+        pain: 0,
+        completed: 'yes',
+        prescriptionType: 'text_note',
+        notes: text,
+      });
+      setIsTextNoteModalOpen(false);
+      setTextNoteInput('');
+      // Immediately refresh tracker logs so the card appears
+      const todayS = getLocalDateString();
+      const tLogs = await logApi.list({ startDate: todayS, endDate: todayS });
+      const raw = Array.isArray(tLogs) ? tLogs : [];
+      setTrackerLogs(raw.filter((l: any) => Number(l.week) === 0));
+    } catch {
+      Alert.alert('Error', 'Could not save note. Please try again.');
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
   // ── Loading guard (B1/B2 fix) ────────────────────────────────────────────────
   // Block render until profile is loaded: prevents mode flicker and keeps
   // the loading state while tracker-mode users skip program API calls.
@@ -4769,11 +4808,16 @@ export default function TodayScreen() {
     })();
     const todayStr = getLocalDateString();
 
-    // Group tracker logs by exercise
+    // Separate pure text-note entries from exercise logs.
+    // A log is a note card ONLY if prescriptionType === 'text_note'.
+    // A regular exercise set that also has a notes string stays in exercise groups.
+    const noteLogs = trackerLogs.filter((l: any) => l.prescriptionType === 'text_note');
+    const exerciseLogs = trackerLogs.filter((l: any) => l.prescriptionType !== 'text_note');
+    // Group exercise logs by exercise
     type TGroup = { name: string; sessionType: string; prescriptionType: string; sets: any[] };
     const groupMap: Record<string, TGroup> = {};
     const groups: TGroup[] = [];
-    for (const log of trackerLogs) {
+    for (const log of exerciseLogs) {
       const key = `${log.sessionType}___${log.exercise}`;
       if (!groupMap[key]) {
         groupMap[key] = { name: log.exercise, sessionType: log.sessionType, prescriptionType: log.prescriptionType || 'weighted', sets: [] };
@@ -4801,8 +4845,21 @@ export default function TodayScreen() {
         )}
 
         {/* Logged exercises list */}
-        {!trackerLogsLoading && groups.length > 0 && (
+        {!trackerLogsLoading && (groups.length > 0 || noteLogs.length > 0) && (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, gap: SPACING.sm }} showsVerticalScrollIndicator={false}>
+            {/* Note cards — text_note entries render as distinct note cards */}
+            {noteLogs.map((note: any, idx: number) => (
+              <View
+                key={`note-${note.id || idx}`}
+                style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '30', borderLeftWidth: 3, borderLeftColor: GOLD, padding: SPACING.lg, gap: 6 }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <MaterialCommunityIcons name="text" size={13} color={GOLD} />
+                  <Text style={{ color: GOLD, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, letterSpacing: 0.9 }}>NOTE</Text>
+                </View>
+                <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.base, lineHeight: 22 }}>{note.notes}</Text>
+              </View>
+            ))}
             {groups.map((group, idx) => {
               const icon = (TRACKER_TYPE_ICONS[group.prescriptionType] || 'dumbbell') as any;
               const summary = formatTrackerSummary(group.sets, group.prescriptionType);
@@ -4857,6 +4914,16 @@ export default function TodayScreen() {
               </Text>
             </TouchableOpacity>
 
+            {/* Add text note */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10', marginTop: 2 }}
+              onPress={() => setIsTextNoteModalOpen(true)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
+              <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>Add Text Note</Text>
+            </TouchableOpacity>
+
             {/* Log different session */}
             <TouchableOpacity
               style={{ alignItems: 'center', paddingVertical: SPACING.md }}
@@ -4869,7 +4936,7 @@ export default function TodayScreen() {
         )}
 
         {/* Empty state */}
-        {!trackerLogsLoading && groups.length === 0 && (
+        {!trackerLogsLoading && groups.length === 0 && noteLogs.length === 0 && (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
             <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
             <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
@@ -4899,8 +4966,67 @@ export default function TodayScreen() {
                 {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
               </Text>
             </TouchableOpacity>
+            {/* Add text note */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '12', paddingHorizontal: 20, paddingVertical: 12 }}
+              onPress={() => setIsTextNoteModalOpen(true)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
+              <Text style={{ color: GOLD, fontSize: 14, fontWeight: '600' }}>Add Text Note</Text>
+            </TouchableOpacity>
           </View>
         )}
+
+        {/* ── Text Note Modal ─────────────────────────────────────────────────── */}
+        <Modal
+          visible={isTextNoteModalOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+        >
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
+              onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+            >
+              <Pressable onPress={e => e.stopPropagation()}>
+                <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.xl, paddingBottom: SPACING.xl + 8, gap: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border }}>
+                  <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>What did you do today?</Text>
+                  <TextInput
+                    style={{ backgroundColor: COLORS.background, color: COLORS.text.primary, borderRadius: RADIUS.md, padding: SPACING.md, fontSize: FONTS.sizes.base, lineHeight: 22, minHeight: 120, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border }}
+                    placeholder="e.g. 30 min easy run, upper body pump, mobility work..."
+                    placeholderTextColor={COLORS.text.muted}
+                    multiline
+                    value={textNoteInput}
+                    onChangeText={setTextNoteInput}
+                    autoFocus
+                  />
+                  <View style={{ flexDirection: 'row', gap: SPACING.md }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' }}
+                      onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={{ color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, fontSize: FONTS.sizes.base }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 2, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, backgroundColor: !textNoteInput.trim() ? GOLD + '60' : GOLD, alignItems: 'center' }}
+                      onPress={handleSaveTextNote}
+                      disabled={isSavingNote || !textNoteInput.trim()}
+                      activeOpacity={0.85}
+                    >
+                      {isSavingNote
+                        ? <ActivityIndicator size="small" color="#000" />
+                        : <Text style={{ color: '#000', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.base }}>Save Note</Text>
+                      }
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Pressable>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Modal>
       </SafeAreaView>
     );
   }
