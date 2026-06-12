@@ -1894,13 +1894,21 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
               {!logged && (
                 <View style={sr.unitToggleRow}>
                   {(['lb', 'kg'] as const).map(u => {
-                    const effectiveUnit = (setValues.weightUnit as string) ?? (units === 'kgs' ? 'kg' : 'lb');
+                    // P4 FIX: use || not ?? — empty string ('') and undefined both mean "no explicit override",
+                    // so the global unit (units prop) is always the source of truth for un-overridden sets.
+                    const effectiveUnit = (setValues.weightUnit as string) || (units === 'kgs' ? 'kg' : 'lb');
                     const active = effectiveUnit === u;
                     return (
                       <TouchableOpacity
                         key={u}
                         style={[sr.unitBtn, active && sr.unitBtnActive]}
-                        onPress={() => onValueChange('weightUnit', u)}
+                        onPress={() => {
+                          const globalDefault = units === 'kgs' ? 'kg' : 'lb';
+                          // Only persist a per-set override when the chosen unit DIFFERS from the global.
+                          // Tapping the same unit as global writes '' (no override) so the global
+                          // remains the source of truth and future global changes are respected.
+                          onValueChange('weightUnit', u !== globalDefault ? u : '');
+                        }}
                         activeOpacity={0.7}
                       >
                         <Text style={[sr.unitBtnTxt, active && sr.unitBtnTxtActive]}>{u}</Text>
@@ -4136,7 +4144,8 @@ export default function TodayScreen() {
         // hasRpe is hoisted above the auto-advance block — reuse it here
 
         // P4: per-set weight unit — user's row toggle or profile default
-        setWeightUnit = (currentVals as any)?.weightUnit ?? (profileUnits === 'kgs' ? 'kg' : 'lb');
+        // P4 FIX: use || so '' (cleared override) falls back to global setting, not empty string
+        setWeightUnit = (currentVals as any)?.weightUnit || (profileUnits === 'kgs' ? 'kg' : 'lb');
 
         // P2b: send 0 for absent fields so backend e1RM guard works correctly
         payloadWeight = hasWeight
