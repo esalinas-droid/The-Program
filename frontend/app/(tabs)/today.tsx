@@ -494,6 +494,83 @@ function formatTrackerSummary(sets: any[], prescriptionType: string): string {
   }
 }
 
+// ── Tracker ↔ ExerciseCard conversion helpers ─────────────────────────────────
+/** Infer FieldSpec[] for a tracker exercise from its prescriptionType */
+function inferFieldsFromPrescriptionType(pt: string, log?: any): FieldSpec[] {
+  switch (pt) {
+    case 'timed':    return [{ type: 'time' }];
+    case 'distance': return [{ type: 'distance', unit: (log?.unit as string) || 'ft' }, { type: 'weight' }];
+    case 'calories': return [{ type: 'calories' }];
+    case 'height':   return [{ type: 'weight' }, { type: 'reps' }];
+    default:         return [{ type: 'weight' }, { type: 'reps' }]; // weighted/emom/amrap/for_time
+  }
+}
+
+/** Convert week-0 log records into Exercise[] + pre-populated state maps.
+ *  text_note entries are excluded — they stay as read-only note cards.
+ *  For tracker sets: setId === logEntryId (the MongoDB _id string). */
+function trackerLogsToExercises(logs: any[]): {
+  exercises: Exercise[];
+  loggedSetIds: Set<string>;
+  setValuesMap: Record<string, SetValueMap>;
+  logEntryIdsMap: Record<string, string>;
+} {
+  const exerciseLogs = logs.filter((l: any) => l.prescriptionType !== 'text_note');
+
+  // Group preserving DB insertion order
+  const groupMap = new Map<string, any[]>();
+  for (const log of exerciseLogs) {
+    const key = (log.exercise as string) || '__unknown__';
+    if (!groupMap.has(key)) groupMap.set(key, []);
+    groupMap.get(key)!.push(log);
+  }
+
+  const exercises: Exercise[] = [];
+  const loggedSetIds   = new Set<string>();
+  const setValuesMap:   Record<string, SetValueMap> = {};
+  const logEntryIdsMap: Record<string, string>      = {};
+
+  for (const [exerciseName, exLogs] of groupMap.entries()) {
+    const pt = (exLogs[0]?.prescriptionType as string) || 'weighted';
+    // Stable ID: 'tracker-ex-' prefix ensures no collision with program exercise IDs
+    const exId  = `tracker-ex-${exerciseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    const fields: FieldSpec[] = inferFieldsFromPrescriptionType(pt, exLogs[0]);
+    const category: ExCategory = (pt === 'timed' || pt === 'distance' || pt === 'calories') ? 'gpp' : 'supplemental';
+
+    const sets: ExSet[] = exLogs.map((log: any, i: number) => {
+      const setId = (log.id || log._id) as string;
+      loggedSetIds.add(setId);
+      logEntryIdsMap[setId] = setId; // tracker: setId IS the log entry id
+
+      setValuesMap[setId] = {
+        weight:  log.weight > 0   ? String(log.weight)       : '',
+        reps:    log.reps > 0     ? String(log.reps)         : '',
+        ...(log.rpe > 0           ? { rpe:         String(log.rpe)          } : {}),
+        ...(log.elapsedTime       ? { timeElapsed:  String(log.elapsedTime)  } : {}),
+        ...(log.distance          ? { distance:     String(log.distance)     } : {}),
+        ...(log.calories          ? { calories:     String(log.calories)     } : {}),
+        ...(log.weightUnit        ? { weightUnit:   log.weightUnit           } : {}),
+      };
+
+      return {
+        id:     setId,
+        type:   'work' as SetType,
+        weight: log.weight || 0,
+        reps:   String(log.reps || ''),
+        label:  `Set ${i + 1}`,
+      };
+    });
+
+    exercises.push({
+      id: exId, name: exerciseName, category,
+      prescription: '', lastSession: '', cues: [], notes: '',
+      sets, fields,
+    });
+  }
+
+  return { exercises, loggedSetIds, setValuesMap, logEntryIdsMap };
+}
+
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
   return ({
     primary:      { bg: COLORS.accent + '25',      text: COLORS.accent,         label: 'Primary' },
@@ -2824,6 +2901,8 @@ export default function TodayScreen() {
   const [isTextNoteModalOpen, setIsTextNoteModalOpen] = useState(false);
   const [textNoteInput, setTextNoteInput] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
+  // ── Tracker Mode: interactive exercise cards ──────────────────────────────────
+  const [trackerExercises, setTrackerExercises] = useState<Exercise[]>([]);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -3542,7 +3621,14 @@ export default function TodayScreen() {
             const rawLogs = Array.isArray(tLogs) ? tLogs : [];
             const newLogs = rawLogs.filter((l: any) => Number(l.week) === 0);
             setTrackerLogs(newLogs);
-          } catch { setTrackerLogs([]); }
+            // Rebuild interactive tracker exercises from refreshed logs
+            const { exercises: tExs, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs);
+            setTrackerExercises(tExs);
+            setLoggedSets(tLogged);
+            setSetValues(prev => ({ ...prev, ...tVals }));
+            setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
+            if (tExs.length > 0) setExpanded(new Set([tExs[0].id]));
+          } catch { setTrackerLogs([]); setTrackerExercises([]); }
           finally { setTrackerLogsLoading(false); }
           return;
         }
@@ -3585,8 +3671,16 @@ export default function TodayScreen() {
           const logs = await logApi.list({ startDate: todayStr, endDate: todayStr });
           const newLogs2 = Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : [];
           setTrackerLogs(newLogs2);
+          // Build interactive tracker exercises from logs
+          const { exercises: tExs, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs2);
+          setTrackerExercises(tExs);
+          setLoggedSets(tLogged);
+          setSetValues(prev => ({ ...prev, ...tVals }));
+          setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
+          if (tExs.length > 0) setExpanded(new Set([tExs[0].id]));
         } catch {
           setTrackerLogs([]);
+          setTrackerExercises([]);
         } finally {
           setTrackerLogsLoading(false);
         }
@@ -4786,6 +4880,153 @@ export default function TodayScreen() {
     }
   };
 
+  // ── Tracker Mode: log a set (week 0, no PR detection) ─────────────────────────
+  const handleTrackerLog = async (setId: string, exerciseName: string, _set: ExSet) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setLoggedSets(prev => new Set([...prev, setId]));
+
+    const currentVals = setValuesRef.current[setId] ?? setValues[setId];
+    const exForSet    = trackerExercises.find(e => e.sets.some(s => s.id === setId));
+    if (!exForSet) return;
+
+    const exFields   = exForSet.fields ?? [{ type: 'weight' as FieldType }, { type: 'reps' as FieldType }];
+    const hasWeight  = exFields.some(f => f.type === 'weight');
+    const hasReps    = exFields.some(f => f.type === 'reps');
+    const hasTime    = exFields.some(f => f.type === 'time');
+    const hasDist    = exFields.some(f => f.type === 'distance');
+    const hasCal     = exFields.some(f => f.type === 'calories');
+    const hasRpe     = exFields.some(f => f.type === 'rpe');
+    const setIdx     = exForSet.sets.findIndex(s => s.id === setId);
+
+    const setWeightUnit     = (currentVals as any)?.weightUnit || (profileUnits === 'kgs' ? 'kg' : 'lb');
+    const payloadWeight     = hasWeight ? (parseFloat((currentVals as any)?.weight     ?? '') || 0) : 0;
+    const payloadReps       = hasReps   ? (parseInt((currentVals as any)?.reps         ?? '') || 0) : 0;
+    const payloadRpe        = hasRpe    ? (parseFloat((currentVals as any)?.rpe        ?? '') || 7) : 7;
+    const payloadElapsed    = hasTime   ? (parseFloat((currentVals as any)?.timeElapsed ?? '') || undefined) : undefined;
+    const payloadDistance   = hasDist   ? (parseFloat((currentVals as any)?.distance   ?? '') || undefined) : undefined;
+    const payloadCalories   = hasCal    ? (parseFloat((currentVals as any)?.calories   ?? '') || undefined) : undefined;
+
+    const todayStr  = getLocalDateString();
+    const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
+    // Derive prescriptionType that mirrors the existing entry so analytics stay consistent
+    const prescriptionType = exForSet.category === 'gpp'
+      ? (hasTime && !hasReps ? 'timed' : hasDist ? 'distance' : hasCal ? 'calories' : undefined)
+      : undefined;
+
+    try {
+      const result = await logApi.create({
+        date:        todayStr,
+        week:        0,            // ← TRACKER: always week 0
+        day:         dayOfWeek,
+        sessionType: 'Tracker',
+        exercise:    exerciseName,
+        sets:        1,
+        weight:      payloadWeight,
+        reps:        payloadReps,
+        rpe:         payloadRpe,
+        pain:        0,
+        completed:   'yes',
+        setIndex:    setIdx >= 0 ? setIdx : undefined,
+        category:    exForSet.category,
+        prescriptionType,
+        weightUnit:  setWeightUnit,
+        ...(payloadElapsed   !== undefined && { elapsedTime: payloadElapsed  }),
+        ...(payloadDistance  !== undefined && { distance:    payloadDistance }),
+        ...(payloadCalories  !== undefined && { calories:    payloadCalories }),
+      });
+      if (result?._id || result?.id) {
+        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      }
+      // Refresh trackerLogs to keep DB scope in sync; card remains interactive in-memory
+      const tLogs = await logApi.list({ startDate: todayStr, endDate: todayStr });
+      const raw   = Array.isArray(tLogs) ? tLogs : [];
+      setTrackerLogs(raw.filter((l: any) => Number(l.week) === 0));
+      // PR detection: SKIPPED in tracker mode (confirmed)
+    } catch (err: any) {
+      console.warn('[Today] Tracker log failed:', err);
+      setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Log Failed', `Could not save your set.\n\n${err?.message || ''}`);
+    }
+  };
+
+  // ── Tracker Mode: add a set to a card ─────────────────────────────────────────
+  const handleTrackerAddSet = (exerciseId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const ex = trackerExercises.find(e => e.id === exerciseId);
+    if (!ex) return;
+    const lastSet  = ex.sets[ex.sets.length - 1];
+    const newSetId = `${exerciseId}-added-${Date.now()}`;
+    const newSet: ExSet = {
+      id:     newSetId,
+      type:   'work',
+      weight: lastSet?.weight || 0,
+      reps:   lastSet?.reps   || '5',
+      label:  'Work',
+    };
+    setTrackerExercises(prev => prev.map(e =>
+      e.id !== exerciseId ? e : { ...e, sets: [...e.sets, newSet] }
+    ));
+    setSetValues(prev => ({
+      ...prev,
+      [newSetId]: {
+        weight: lastSet?.weight > 0 ? String(lastSet.weight) : '',
+        reps:   String(lastSet?.reps || ''),
+      },
+    }));
+  };
+
+  // ── Tracker Mode: remove a set (also deletes from DB if logged) ───────────────
+  const handleTrackerRemoveSet = (exId: string, setId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    const wasLogged = loggedSets.has(setId);
+    setLoggedSets(prev => { const next = new Set(prev); next.delete(setId); return next; });
+    setTrackerExercises(prev => prev.map(e =>
+      e.id !== exId ? e : { ...e, sets: e.sets.filter(s => s.id !== setId) }
+    ));
+    if (wasLogged && logEntryIds[setId]) {
+      logApi.delete(logEntryIds[setId]).catch(() => {});
+      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+    }
+  };
+
+  // ── Tracker Mode: edit-save (delete old entry, write new one at week 0) ──────
+  const handleTrackerEditSave = async (exId: string, setId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const ex = trackerExercises.find(e => e.id === exId);
+    if (!ex) return;
+    const vals    = setValuesRef.current[setId] ?? setValues[setId];
+    const weight  = parseFloat(vals?.weight || '0') || 0;
+    const reps    = parseInt(vals?.reps     || '1') || 1;
+    const setIdx  = ex.sets.findIndex(s => s.id === setId);
+    const oldId   = logEntryIds[setId];
+    try {
+      if (oldId) await logApi.delete(oldId).catch(() => {});
+      const todayStr  = getLocalDateString();
+      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+      const result = await logApi.create({
+        date: todayStr, week: 0, day: dayOfWeek,  // ← TRACKER: week 0
+        sessionType: 'Tracker',
+        exercise: ex.name, sets: 1, weight, reps, rpe: 7, pain: 0, completed: 'yes',
+        setIndex: setIdx >= 0 ? setIdx : undefined,
+      });
+      if (result?._id || result?.id) {
+        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      } else {
+        setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+      }
+    } catch (e) {
+      console.warn('[Today] Tracker edit-save failed:', e);
+      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+    }
+  };
+
+  // ── Tracker Mode: field change (local only — no plan to persist to) ───────────
+  const handleTrackerFieldsChange = (exercise: Exercise, newFields: FieldSpec[], _scope: 'today' | 'everyTime') => {
+    setTrackerExercises(prev => prev.map(ex => ex.id === exercise.id ? { ...ex, fields: newFields } : ex));
+  };
+
   // ── Loading guard (B1/B2 fix) ────────────────────────────────────────────────
   // Block render until profile is loaded: prevents mode flicker and keeps
   // the loading state while tracker-mode users skip program API calls.
@@ -4808,23 +5049,8 @@ export default function TodayScreen() {
     })();
     const todayStr = getLocalDateString();
 
-    // Separate pure text-note entries from exercise logs.
-    // A log is a note card ONLY if prescriptionType === 'text_note'.
-    // A regular exercise set that also has a notes string stays in exercise groups.
+    // Text-note entries (shown as note cards; never passed to ExerciseCard)
     const noteLogs = trackerLogs.filter((l: any) => l.prescriptionType === 'text_note');
-    const exerciseLogs = trackerLogs.filter((l: any) => l.prescriptionType !== 'text_note');
-    // Group exercise logs by exercise
-    type TGroup = { name: string; sessionType: string; prescriptionType: string; sets: any[] };
-    const groupMap: Record<string, TGroup> = {};
-    const groups: TGroup[] = [];
-    for (const log of exerciseLogs) {
-      const key = `${log.sessionType}___${log.exercise}`;
-      if (!groupMap[key]) {
-        groupMap[key] = { name: log.exercise, sessionType: log.sessionType, prescriptionType: log.prescriptionType || 'weighted', sets: [] };
-        groups.push(groupMap[key]);
-      }
-      groupMap[key].sets.push(log);
-    }
 
     return (
       <SafeAreaView style={s.safe}>
@@ -4844,14 +5070,14 @@ export default function TodayScreen() {
           </View>
         )}
 
-        {/* Logged exercises list */}
-        {!trackerLogsLoading && (groups.length > 0 || noteLogs.length > 0) && (
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, gap: SPACING.sm }} showsVerticalScrollIndicator={false}>
-            {/* Note cards — text_note entries render as distinct note cards */}
+        {/* Interactive cards + note cards */}
+        {!trackerLogsLoading && (trackerExercises.length > 0 || noteLogs.length > 0) && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, paddingBottom: SPACING.xxl ?? 48 }} showsVerticalScrollIndicator={false}>
+            {/* ── Note cards (text_note entries only) ── */}
             {noteLogs.map((note: any, idx: number) => (
               <View
                 key={`note-${note.id || idx}`}
-                style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '30', borderLeftWidth: 3, borderLeftColor: GOLD, padding: SPACING.lg, gap: 6 }}
+                style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '30', borderLeftWidth: 3, borderLeftColor: GOLD, padding: SPACING.lg, gap: 6, marginBottom: SPACING.sm }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <MaterialCommunityIcons name="text" size={13} color={GOLD} />
@@ -4860,83 +5086,103 @@ export default function TodayScreen() {
                 <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.base, lineHeight: 22 }}>{note.notes}</Text>
               </View>
             ))}
-            {groups.map((group, idx) => {
-              const icon = (TRACKER_TYPE_ICONS[group.prescriptionType] || 'dumbbell') as any;
-              const summary = formatTrackerSummary(group.sets, group.prescriptionType);
-              return (
-                <TouchableOpacity
-                  key={idx}
-                  style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg, flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}
-                  onPress={() => {
-                    // Open the FULL day's session in edit mode (not just this exercise)
-                    const allLogIds = trackerLogs.map((l: any) => l.id).filter(Boolean);
-                    router.push({
-                      pathname: '/tracker-review',
-                      params: { editingLogIds: JSON.stringify(allLogIds) },
-                    } as any);
-                  }}
-                  activeOpacity={0.75}
-                >
-                  <View style={{ width: 40, height: 40, borderRadius: RADIUS.md, backgroundColor: GOLD + '1A', alignItems: 'center', justifyContent: 'center' }}>
-                    <MaterialCommunityIcons name={icon} size={20} color={GOLD} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }} numberOfLines={1}>{group.name}</Text>
-                    <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm, marginTop: 2 }}>{summary}</Text>
-                  </View>
-                  <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
-                </TouchableOpacity>
-              );
-            })}
 
-            {/* Add another exercise */}
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD, marginTop: SPACING.sm }}
-              onPress={() => router.push('/tracker-session')}
-              activeOpacity={0.75}
-            >
-              <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
-              <Text style={{ color: GOLD, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }}>Add another exercise</Text>
-            </TouchableOpacity>
+            {/* ── Interactive ExerciseCards (same component as program mode) ── */}
+            {trackerExercises.map((ex, idx) => (
+              <ExerciseCard
+                key={ex.id}
+                exercise={ex}
+                expanded={expanded.has(ex.id)}
+                loggedSets={loggedSets}
+                onToggle={() => handleToggleExpand(ex.id)}
+                onLog={handleTrackerLog}
+                onAdjust={() => {}}
+                onReportPain={() => {}}
+                onAddSet={handleTrackerAddSet}
+                swap={undefined}
+                setValues={setValues}
+                onSetValueChange={handleSetValueChange}
+                inRemoveMode={removeModeExId === ex.id}
+                inEditMode={editModeExId === ex.id}
+                onRemoveSet={(setId) => handleTrackerRemoveSet(ex.id, setId)}
+                onEditSave={(setId) => handleTrackerEditSave(ex.id, setId)}
+                onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                adjustActive={false}
+                previousData={undefined}
+                prExercises={new Set<string>()}
+                restConfig={{
+                  selectedSeconds: exerciseRestDurations[ex.id] ?? 120,
+                  onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                  onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                }}
+                onKebab={undefined}
+                onMoveUp={undefined}
+                onMoveDown={undefined}
+                canMoveUp={false}
+                canMoveDown={false}
+                onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
+                exerciseNote={notesByExercise[ex.id] ?? ''}
+                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                pendingEffortLogId={null}
+                onEffortSelect={handleEffortSelect}
+                profileUnits={profileUnits}
+                onFieldsChange={(newFields, scope) => handleTrackerFieldsChange(ex, newFields, scope)}
+              />
+            ))}
 
-            {/* Scan a workout photo */}
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10', marginTop: 2 }}
-              onPress={handleImageUpload}
-              disabled={isUploadingImage}
-              activeOpacity={0.75}
-            >
-              {isUploadingImage
-                ? <ActivityIndicator size="small" color={GOLD} />
-                : <MaterialCommunityIcons name="camera-outline" size={18} color={GOLD} />}
-              <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>
-                {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
-              </Text>
-            </TouchableOpacity>
+            {/* ── Action buttons ── */}
+            <View style={{ marginTop: SPACING.md, gap: SPACING.sm }}>
+              {/* Add another exercise */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD }}
+                onPress={() => router.push('/tracker-session')}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
+                <Text style={{ color: GOLD, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }}>Add another exercise</Text>
+              </TouchableOpacity>
 
-            {/* Add text note */}
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10', marginTop: 2 }}
-              onPress={() => setIsTextNoteModalOpen(true)}
-              activeOpacity={0.75}
-            >
-              <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
-              <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>Add Text Note</Text>
-            </TouchableOpacity>
+              {/* Scan a workout photo */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10' }}
+                onPress={handleImageUpload}
+                disabled={isUploadingImage}
+                activeOpacity={0.75}
+              >
+                {isUploadingImage
+                  ? <ActivityIndicator size="small" color={GOLD} />
+                  : <MaterialCommunityIcons name="camera-outline" size={18} color={GOLD} />}
+                <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>
+                  {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
+                </Text>
+              </TouchableOpacity>
 
-            {/* Log different session */}
-            <TouchableOpacity
-              style={{ alignItems: 'center', paddingVertical: SPACING.md }}
-              onPress={() => router.push('/tracker-session')}
-              activeOpacity={0.75}
-            >
-              <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm }}>Log a different session</Text>
-            </TouchableOpacity>
+              {/* Add text note */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10' }}
+                onPress={() => setIsTextNoteModalOpen(true)}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
+                <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>Add Text Note</Text>
+              </TouchableOpacity>
+
+              {/* Log different session */}
+              <TouchableOpacity
+                style={{ alignItems: 'center', paddingVertical: SPACING.md }}
+                onPress={() => router.push('/tracker-session')}
+                activeOpacity={0.75}
+              >
+                <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.sm }}>Log a different session</Text>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         )}
 
         {/* Empty state */}
-        {!trackerLogsLoading && groups.length === 0 && noteLogs.length === 0 && (
+        {!trackerLogsLoading && trackerExercises.length === 0 && noteLogs.length === 0 && (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 16 }}>
             <MaterialCommunityIcons name="notebook-outline" size={48} color="#2A9D8F" />
             <Text style={{ fontSize: 20, fontWeight: '700', color: COLORS.text.primary, textAlign: 'center' }}>
