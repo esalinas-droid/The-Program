@@ -506,77 +506,101 @@ function inferFieldsFromPrescriptionType(pt: string, log?: any): FieldSpec[] {
   }
 }
 
-/** Convert week-0 log records into Exercise[] + pre-populated state maps.
+/** Convert week-0 log records into Exercise[] + session groupings + pre-populated state maps.
  *  text_note entries are excluded — they stay as read-only note cards.
- *  For tracker sets: setId === logEntryId (the MongoDB _id string). */
+ *  For tracker sets: setId === logEntryId (the MongoDB _id string).
+ *  Logs are grouped first by sessionId (fallback '__legacy__' for pre-sessionId entries),
+ *  then by exercise name within each session — matching the DB insertion order. */
 function trackerLogsToExercises(logs: any[]): {
   exercises: Exercise[];
+  sessionGroups: TrackerSessionGroup[];
   loggedSetIds: Set<string>;
   setValuesMap: Record<string, SetValueMap>;
   logEntryIdsMap: Record<string, string>;
 } {
+  const LEGACY_SESSION_ID = '__legacy__';
   const exerciseLogs = logs.filter((l: any) => l.prescriptionType !== 'text_note');
 
-  // Group preserving DB insertion order
-  const groupMap = new Map<string, any[]>();
+  // ── Step 1: Group logs by sessionId, preserving DB insertion order ──────
+  const sessionMap = new Map<string, { title: string | null; logs: any[] }>();
   for (const log of exerciseLogs) {
-    const key = (log.exercise as string) || '__unknown__';
-    if (!groupMap.has(key)) groupMap.set(key, []);
-    groupMap.get(key)!.push(log);
+    const sid = (log.sessionId as string | undefined) || LEGACY_SESSION_ID;
+    if (!sessionMap.has(sid)) {
+      sessionMap.set(sid, { title: (log.sessionTitle as string | null) || null, logs: [] });
+    }
+    sessionMap.get(sid)!.logs.push(log);
   }
 
   const exercises: Exercise[] = [];
+  const sessionGroups: TrackerSessionGroup[] = [];
   const loggedSetIds   = new Set<string>();
   const setValuesMap:   Record<string, SetValueMap> = {};
   const logEntryIdsMap: Record<string, string>      = {};
 
-  for (const [exerciseName, exLogs] of groupMap.entries()) {
-    const pt = (exLogs[0]?.prescriptionType as string) || 'weighted';
-    // Stable ID: 'tracker-ex-' prefix ensures no collision with program exercise IDs
-    const exId  = `tracker-ex-${exerciseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-    const fields: FieldSpec[] = inferFieldsFromPrescriptionType(pt, exLogs[0]);
-    const category: ExCategory = (pt === 'timed' || pt === 'distance' || pt === 'calories') ? 'gpp' : 'supplemental';
+  for (const [sid, { title, logs: sessionLogs }] of sessionMap.entries()) {
+    // ── Step 2: Within session, group by exercise name preserving order ──
+    const groupMap = new Map<string, any[]>();
+    for (const log of sessionLogs) {
+      const key = (log.exercise as string) || '__unknown__';
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(log);
+    }
 
-    const sets: ExSet[] = exLogs.map((log: any, i: number) => {
-      const setId      = (log.id || log._id) as string;
-      const isCompleted = log.completed === 'yes';
+    const sessionExerciseIds: string[] = [];
 
-      // Only mark as logged when the DB entry is confirmed completed.
-      // Entries saved as 'no' (scanned prescriptions) render as fillable targets.
-      if (isCompleted) loggedSetIds.add(setId);
+    for (const [exerciseName, exLogs] of groupMap.entries()) {
+      const pt = (exLogs[0]?.prescriptionType as string) || 'weighted';
+      // Include sessionId in exId so the same exercise name in different sessions
+      // gets distinct IDs and doesn't collide in state maps.
+      const exId  = `tracker-ex-${sid}-${exerciseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      const fields: FieldSpec[] = inferFieldsFromPrescriptionType(pt, exLogs[0]);
+      const category: ExCategory = (pt === 'timed' || pt === 'distance' || pt === 'calories') ? 'gpp' : 'supplemental';
 
-      // Always register in logEntryIdsMap — needed for update path in handleTrackerLog.
-      logEntryIdsMap[setId] = setId; // tracker: setId IS the log entry id
+      const sets: ExSet[] = exLogs.map((log: any, i: number) => {
+        const setId      = (log.id || log._id) as string;
+        const isCompleted = log.completed === 'yes';
 
-      // Always pre-fill values: for completed sets these are the recorded actuals;
-      // for incomplete sets these are the prescribed targets shown as starting inputs.
-      setValuesMap[setId] = {
-        weight:  log.weight > 0   ? String(log.weight)       : '',
-        reps:    log.reps > 0     ? String(log.reps)         : '',
-        ...(log.rpe > 0           ? { rpe:         String(log.rpe)          } : {}),
-        ...(log.elapsedTime       ? { timeElapsed:  String(log.elapsedTime)  } : {}),
-        ...(log.distance          ? { distance:     String(log.distance)     } : {}),
-        ...(log.calories          ? { calories:     String(log.calories)     } : {}),
-        ...(log.weightUnit        ? { weightUnit:   log.weightUnit           } : {}),
-      };
+        // Only mark as logged when the DB entry is confirmed completed.
+        // Entries saved as 'no' (scanned prescriptions) render as fillable targets.
+        if (isCompleted) loggedSetIds.add(setId);
 
-      return {
-        id:     setId,
-        type:   'work' as SetType,
-        weight: log.weight || 0,
-        reps:   String(log.reps || ''),
-        label:  `Set ${i + 1}`,
-      };
-    });
+        // Always register in logEntryIdsMap — needed for update path in handleTrackerLog.
+        logEntryIdsMap[setId] = setId; // tracker: setId IS the log entry id
 
-    exercises.push({
-      id: exId, name: exerciseName, category,
-      prescription: '', lastSession: '', cues: [], notes: '',
-      sets, fields,
-    });
+        // Always pre-fill values: for completed sets these are the recorded actuals;
+        // for incomplete sets these are the prescribed targets shown as starting inputs.
+        setValuesMap[setId] = {
+          weight:  log.weight > 0   ? String(log.weight)       : '',
+          reps:    log.reps > 0     ? String(log.reps)         : '',
+          ...(log.rpe > 0           ? { rpe:         String(log.rpe)          } : {}),
+          ...(log.elapsedTime       ? { timeElapsed:  String(log.elapsedTime)  } : {}),
+          ...(log.distance          ? { distance:     String(log.distance)     } : {}),
+          ...(log.calories          ? { calories:     String(log.calories)     } : {}),
+          ...(log.weightUnit        ? { weightUnit:   log.weightUnit           } : {}),
+        };
+
+        return {
+          id:     setId,
+          type:   'work' as SetType,
+          weight: log.weight || 0,
+          reps:   String(log.reps || ''),
+          label:  `Set ${i + 1}`,
+        };
+      });
+
+      exercises.push({
+        id: exId, name: exerciseName, category,
+        prescription: '', lastSession: '', cues: [], notes: '',
+        sets, fields,
+      });
+
+      sessionExerciseIds.push(exId);
+    }
+
+    sessionGroups.push({ sessionId: sid, sessionTitle: title, exerciseIds: sessionExerciseIds });
   }
 
-  return { exercises, loggedSetIds, setValuesMap, logEntryIdsMap };
+  return { exercises, sessionGroups, loggedSetIds, setValuesMap, logEntryIdsMap };
 }
 
 // ── Tracker session group (maps a session's exercises for multi-session rendering) ──
@@ -2918,6 +2942,8 @@ export default function TodayScreen() {
   const [isSavingNote, setIsSavingNote] = useState(false);
   // ── Tracker Mode: interactive exercise cards ──────────────────────────────────
   const [trackerExercises, setTrackerExercises] = useState<Exercise[]>([]);
+  // ── Tracker Mode: session groupings (parallel to trackerExercises) ────────────
+  const [trackerSessionGroups, setTrackerSessionGroups] = useState<TrackerSessionGroup[]>([]);
 
   // Dynamic exercise list — initialized from local programData (correct day, instant)
   // then overridden by API exercises when the plan loads
@@ -3637,13 +3663,14 @@ export default function TodayScreen() {
             const newLogs = rawLogs.filter((l: any) => Number(l.week) === 0);
             setTrackerLogs(newLogs);
             // Rebuild interactive tracker exercises from refreshed logs
-            const { exercises: tExs, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs);
+            const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs);
             setTrackerExercises(tExs);
+            setTrackerSessionGroups(tGroups);
             setLoggedSets(tLogged);
             setSetValues(prev => ({ ...prev, ...tVals }));
             setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
             if (tExs.length > 0) setExpanded(new Set([tExs[0].id]));
-          } catch { setTrackerLogs([]); setTrackerExercises([]); }
+          } catch { setTrackerLogs([]); setTrackerExercises([]); setTrackerSessionGroups([]); }
           finally { setTrackerLogsLoading(false); }
           return;
         }
@@ -3687,8 +3714,9 @@ export default function TodayScreen() {
           const newLogs2 = Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : [];
           setTrackerLogs(newLogs2);
           // Build interactive tracker exercises from logs
-          const { exercises: tExs, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs2);
+          const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs2);
           setTrackerExercises(tExs);
+          setTrackerSessionGroups(tGroups);
           setLoggedSets(tLogged);
           setSetValues(prev => ({ ...prev, ...tVals }));
           setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
@@ -3696,6 +3724,7 @@ export default function TodayScreen() {
         } catch {
           setTrackerLogs([]);
           setTrackerExercises([]);
+          setTrackerSessionGroups([]);
         } finally {
           setTrackerLogsLoading(false);
         }
@@ -5124,49 +5153,67 @@ export default function TodayScreen() {
               </View>
             ))}
 
-            {/* ── Interactive ExerciseCards (same component as program mode) ── */}
-            {trackerExercises.map((ex, idx) => (
-              <ExerciseCard
-                key={ex.id}
-                exercise={ex}
-                expanded={expanded.has(ex.id)}
-                loggedSets={loggedSets}
-                onToggle={() => handleToggleExpand(ex.id)}
-                onLog={handleTrackerLog}
-                onAdjust={() => {}}
-                onReportPain={() => {}}
-                onAddSet={handleTrackerAddSet}
-                swap={undefined}
-                setValues={setValues}
-                onSetValueChange={handleSetValueChange}
-                inRemoveMode={removeModeExId === ex.id}
-                inEditMode={editModeExId === ex.id}
-                onRemoveSet={(setId) => handleTrackerRemoveSet(ex.id, setId)}
-                onEditSave={(setId) => handleTrackerEditSave(ex.id, setId)}
-                onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
-                onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
-                onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
-                adjustActive={false}
-                previousData={{}}
-                prExercises={new Set<string>()}
-                restConfig={{
-                  selectedSeconds: exerciseRestDurations[ex.id] ?? 120,
-                  onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
-                  onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
-                }}
-                onKebab={undefined}
-                onMoveUp={undefined}
-                onMoveDown={undefined}
-                canMoveUp={false}
-                canMoveDown={false}
-                onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
-                exerciseNote={notesByExercise[ex.id] ?? ''}
-                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
-                pendingEffortLogId={null}
-                onEffortSelect={handleEffortSelect}
-                profileUnits={profileUnits}
-                onFieldsChange={(newFields, scope) => handleTrackerFieldsChange(ex, newFields, scope)}
-              />
+            {/* ── Interactive ExerciseCards grouped by session ── */}
+            {trackerSessionGroups.map((session, sIdx) => (
+              <View key={session.sessionId}>
+                {/* Session divider — only rendered when more than one session exists */}
+                {trackerSessionGroups.length > 1 && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm, ...(sIdx > 0 ? { marginTop: SPACING.lg } : {}) }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: COLORS.border }} />
+                    <Text style={{ color: GOLD, fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, letterSpacing: 1, paddingHorizontal: SPACING.xs }}>
+                      {session.sessionTitle || `SESSION ${sIdx + 1}`}
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: COLORS.border }} />
+                  </View>
+                )}
+                {session.exerciseIds.map(exId => {
+                  const ex = trackerExercises.find(e => e.id === exId);
+                  if (!ex) return null;
+                  return (
+                    <ExerciseCard
+                      key={ex.id}
+                      exercise={ex}
+                      expanded={expanded.has(ex.id)}
+                      loggedSets={loggedSets}
+                      onToggle={() => handleToggleExpand(ex.id)}
+                      onLog={handleTrackerLog}
+                      onAdjust={() => {}}
+                      onReportPain={() => {}}
+                      onAddSet={handleTrackerAddSet}
+                      swap={undefined}
+                      setValues={setValues}
+                      onSetValueChange={handleSetValueChange}
+                      inRemoveMode={removeModeExId === ex.id}
+                      inEditMode={editModeExId === ex.id}
+                      onRemoveSet={(setId) => handleTrackerRemoveSet(ex.id, setId)}
+                      onEditSave={(setId) => handleTrackerEditSave(ex.id, setId)}
+                      onEnterRemoveMode={() => { setRemoveModeExId(ex.id); setEditModeExId(null); }}
+                      onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
+                      onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
+                      adjustActive={false}
+                      previousData={{}}
+                      prExercises={new Set<string>()}
+                      restConfig={{
+                        selectedSeconds: exerciseRestDurations[ex.id] ?? 120,
+                        onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
+                        onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
+                      }}
+                      onKebab={undefined}
+                      onMoveUp={undefined}
+                      onMoveDown={undefined}
+                      canMoveUp={false}
+                      canMoveDown={false}
+                      onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
+                      exerciseNote={notesByExercise[ex.id] ?? ''}
+                      onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                      pendingEffortLogId={null}
+                      onEffortSelect={handleEffortSelect}
+                      profileUnits={profileUnits}
+                      onFieldsChange={(newFields, scope) => handleTrackerFieldsChange(ex, newFields, scope)}
+                    />
+                  );
+                })}
+              </View>
             ))}
 
             {/* ── Action buttons ── */}
