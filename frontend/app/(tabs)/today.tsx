@@ -2313,14 +2313,14 @@ function ExerciseCard({
           {heroMode ? (
             <View style={ec.heroBody}>
               {/* Previous-session reference */}
-              {previousData[exercise.name]?.length > 0 ? (
+              {previousData?.[exercise.name]?.length ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 8 }}>
                   <MaterialCommunityIcons name="history" size={12} color="#555" />
                   <Text style={{ fontSize: 11, color: '#555' }}>
-                    Last ({previousData[exercise.name][0].date.slice(5).replace('-', '/')}):
+                    Last ({previousData?.[exercise.name]?.[0]?.date?.slice(5)?.replace('-', '/')}):
                   </Text>
                   <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>
-                    {previousData[exercise.name].map(s => `${s.weight}×${s.reps}`).join(' · ')}
+                    {previousData?.[exercise.name]?.map(s => `${s.weight}×${s.reps}`).join(' · ')}
                   </Text>
                 </View>
               ) : exercise.lastSession !== '—' ? (
@@ -2501,14 +2501,14 @@ function ExerciseCard({
           ══════════════════════════════════════════════════════════════════ */
           <View style={ec.body}>
           {/* Previous workout reference */}
-          {previousData[exercise.name]?.length > 0 ? (
+          {previousData?.[exercise.name]?.length ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 4 }}>
               <MaterialCommunityIcons name="history" size={12} color="#555" />
               <Text style={{ fontSize: 11, color: '#555' }}>
-                Last ({previousData[exercise.name][0].date.slice(5).replace('-', '/')}):
+                Last ({previousData?.[exercise.name]?.[0]?.date?.slice(5)?.replace('-', '/')}):
               </Text>
               <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>
-                {previousData[exercise.name].map(s => `${s.weight}×${s.reps}`).join(' · ')}
+                {previousData?.[exercise.name]?.map(s => `${s.weight}×${s.reps}`).join(' · ')}
               </Text>
             </View>
           ) : exercise.lastSession !== '—' ? (
@@ -3142,7 +3142,7 @@ export default function TodayScreen() {
     let historicalBest = 0;
 
     // 1. Check previousData (prior days, from local state)
-    const prevEntries = previousData[exerciseName] || [];
+    const prevEntries = previousData?.[exerciseName] || [];
     const prevBestE1rm = prevEntries.reduce((mx, s) => {
       const wLbs = toLbs(s.weight, s.weightUnit);    // P4: normalize stored unit
       const prev = wLbs * (1 + s.reps / 30);
@@ -5121,7 +5121,7 @@ export default function TodayScreen() {
                 onEnterEditMode={() => { setEditModeExId(ex.id); setRemoveModeExId(null); }}
                 onExitMode={() => { setRemoveModeExId(null); setEditModeExId(null); }}
                 adjustActive={false}
-                previousData={undefined}
+                previousData={{}}
                 prExercises={new Set<string>()}
                 restConfig={{
                   selectedSeconds: exerciseRestDurations[ex.id] ?? 120,
