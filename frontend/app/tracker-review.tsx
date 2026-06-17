@@ -205,6 +205,7 @@ function buildEntries(
   week: number,
   sessionTitle: string | null,
   imageId: string | undefined,
+  sessionId: string | null,
 ): any[] {
   const entries: any[] = [];
   for (const ex of exercises) {
@@ -221,8 +222,9 @@ function buildEntries(
         completed: 'no',    // tracker: scanned/parsed exercises start as prescriptions (not done)
         setIndex: idx,
         prescriptionType: ex.prescriptionType,
-        ...(imageId  ? { imageId }             : {}),
-        ...(sessionTitle ? { sessionTitle }    : {}),
+        ...(imageId      ? { imageId }      : {}),
+        ...(sessionTitle ? { sessionTitle } : {}),
+        ...(sessionId    ? { sessionId }    : {}),   // stable stamp — all entries from this scan share one id
       };
 
       switch (ex.prescriptionType) {
@@ -910,14 +912,24 @@ export default function TrackerReviewScreen() {
     return true;
   };
 
-  const doSave = async (week: number) => {
-    if (!validateBeforeSave()) return;
+  const doSave = async (
+    week: number,
+    sessionId: string,
+    options?: { replace?: boolean; existingLogIds?: string[] },
+  ) => {
     setSaving(true);
     try {
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
-      const entries = buildEntries(exercises, date, week, title, imageId);
-      await logApi.createBulk(entries, imageId, title || undefined);
+      const entries = buildEntries(exercises, date, week, title, imageId, sessionId);
+
+      if (options?.replace && options?.existingLogIds?.length) {
+        // Replace: atomically delete today's existing week-0 logs, insert new session
+        await logApi.updateSession(options.existingLogIds, entries);
+      } else {
+        // Add (first scan, or separate session)
+        await logApi.createBulk(entries, imageId, title || undefined, sessionId);
+      }
       clearParsedSession();
       router.back();
     } catch (e: any) {
@@ -927,7 +939,48 @@ export default function TrackerReviewScreen() {
     }
   };
 
-  const handleSaveTrackerMode = () => doSave(0);
+  const handleSaveTrackerMode = async () => {
+    if (!validateBeforeSave()) return;
+
+    // Generate a stable sessionId that groups every entry in this scan
+    const sessionId = `${toISODate(selectedDate)}-${Date.now()}`;
+
+    // Check whether today already has tracker content (week-0 logs, excluding text-notes)
+    let existingLogs: any[] = [];
+    try {
+      const todayStr = toISODate(new Date());
+      const fetched  = await logApi.list({ startDate: todayStr, endDate: todayStr });
+      existingLogs = Array.isArray(fetched)
+        ? fetched.filter((l: any) => Number(l.week) === 0 && l.prescriptionType !== 'text_note')
+        : [];
+    } catch {
+      /* if the check fails, fall through to a normal save */
+    }
+
+    if (existingLogs.length > 0) {
+      Alert.alert(
+        'Add this workout?',
+        'You already have a workout logged today.',
+        [
+          {
+            text: 'Replace current',
+            style: 'destructive',
+            onPress: () => doSave(0, sessionId, {
+              replace: true,
+              existingLogIds: existingLogs.map((l: any) => String(l.id || l._id)),
+            }),
+          },
+          {
+            text: 'Add as separate session',
+            onPress: () => doSave(0, sessionId),
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    } else {
+      doSave(0, sessionId);
+    }
+  };
 
   const handleSaveProgramMode = async () => {
     if (!validateBeforeSave()) return;
@@ -937,7 +990,7 @@ export default function TrackerReviewScreen() {
       const week    = profile?.currentWeek || 1;
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
-      const entries = buildEntries(exercises, date, week, title, imageId);
+      const entries = buildEntries(exercises, date, week, title, imageId, null);
       await logApi.createBulk(entries, imageId, title || undefined);
       clearParsedSession();
       router.back();
@@ -956,7 +1009,7 @@ export default function TrackerReviewScreen() {
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
       // Preserve the original week (0 = tracker) from the session
-      const entries = buildEntries(exercises, date, 0, title, undefined);
+      const entries = buildEntries(exercises, date, 0, title, undefined, null);   // null sessionId for edit-mode re-saves
 
       await logApi.updateSession(editingLogIds, entries);
       router.back();

@@ -579,6 +579,13 @@ function trackerLogsToExercises(logs: any[]): {
   return { exercises, loggedSetIds, setValuesMap, logEntryIdsMap };
 }
 
+// ── Tracker session group (maps a session's exercises for multi-session rendering) ──
+interface TrackerSessionGroup {
+  sessionId: string;         // stable key from DB ('__legacy__' for entries without one)
+  sessionTitle: string | null;
+  exerciseIds: string[];     // ordered exercise IDs within this session
+}
+
 function getCategoryStyle(cat: ExCategory): { bg: string; text: string; label: string } {
   return ({
     primary:      { bg: COLORS.accent + '25',      text: COLORS.accent,         label: 'Primary' },

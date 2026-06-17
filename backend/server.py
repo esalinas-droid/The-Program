@@ -229,6 +229,7 @@ class WorkoutLogEntry(BaseDocument):
     side: Optional[str] = None              # left|right|both (per-side modifier)
     imageId: Optional[str] = None           # tracker-review: Supabase image UUID
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
+    sessionId: Optional[str] = None         # groups all entries from the same scan/session
     # ── Phase 6: per-set effort signal ──────────────────────────────────────────
     reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
     # ── P2a: conditioning structured fields ──────────────────────────────────────
@@ -265,10 +266,7 @@ class WorkoutLogCreate(BaseModel):
     side: Optional[str] = None              # left|right|both (per-side modifier)
     imageId: Optional[str] = None           # tracker-review: Supabase image UUID
     sessionTitle: Optional[str] = None      # tracker-review: user-edited session title
-    # ── Phase 6: per-set effort signal ──────────────────────────────────────────
-    reps_in_tank: Optional[int] = None      # 0=maximal, 1/2/3+=reserves; null=not answered
-    # ── P2a/P2b: conditioning structured fields ───────────────────────────────────
-    load: Optional[float] = None            # carry/drag/sled weight — distinct from `weight` (e1rm driver)
+    sessionId: Optional[str] = None         # groups all entries from the same scan/session
     elapsedTime: Optional[float] = None     # PERFORMANCE time in seconds (lower=better; ≠ duration which is prescribed)
     category: Optional[str] = None          # exercise category tag (gpp, warmup, cooldown, etc.)
     calories: Optional[float] = None        # rower/ski-erg calories
@@ -2041,7 +2039,7 @@ async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str =
     if not existing or existing.get("userId", "") not in (userId, ""):
         raise HTTPException(status_code=404, detail="Entry not found")
     e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
-    data = entry.model_dump()
+    data = entry.model_dump(exclude_none=True)   # exclude_none: don't wipe sessionId/other optional fields not in payload
     data["e1rm"] = e1rm
     data["userId"] = userId
     await db.log.update_one({"_id": ObjectId(entry_id)}, {"$set": data})

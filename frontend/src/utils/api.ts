@@ -166,11 +166,12 @@ export const logApi = {
    * imageId and sessionTitle (optional) are injected into every entry so the
    * backend can link log records back to the Supabase image and user-edited title.
    */
-  createBulk: (entries: any[], imageId?: string, sessionTitle?: string) => {
+  createBulk: (entries: any[], imageId?: string, sessionTitle?: string, sessionId?: string) => {
     const enriched = entries.map(e => ({
       ...e,
-      ...(imageId     ? { imageId }     : {}),
+      ...(imageId      ? { imageId }      : {}),
       ...(sessionTitle ? { sessionTitle } : {}),
+      ...(sessionId    ? { sessionId }    : {}),
     }));
     return api('/log/session-bulk', { method: 'POST', body: JSON.stringify({ entries: enriched }) });
   },
