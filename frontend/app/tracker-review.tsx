@@ -218,7 +218,7 @@ function buildEntries(
         sets: 1,
         weight: 0, reps: 0, rpe: 0,
         pain: 0,
-        completed: 'yes',
+        completed: 'no',    // tracker: scanned/parsed exercises start as prescriptions (not done)
         setIndex: idx,
         prescriptionType: ex.prescriptionType,
         ...(imageId  ? { imageId }             : {}),

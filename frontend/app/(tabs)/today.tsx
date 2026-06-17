@@ -538,10 +538,18 @@ function trackerLogsToExercises(logs: any[]): {
     const category: ExCategory = (pt === 'timed' || pt === 'distance' || pt === 'calories') ? 'gpp' : 'supplemental';
 
     const sets: ExSet[] = exLogs.map((log: any, i: number) => {
-      const setId = (log.id || log._id) as string;
-      loggedSetIds.add(setId);
+      const setId      = (log.id || log._id) as string;
+      const isCompleted = log.completed === 'yes';
+
+      // Only mark as logged when the DB entry is confirmed completed.
+      // Entries saved as 'no' (scanned prescriptions) render as fillable targets.
+      if (isCompleted) loggedSetIds.add(setId);
+
+      // Always register in logEntryIdsMap — needed for update path in handleTrackerLog.
       logEntryIdsMap[setId] = setId; // tracker: setId IS the log entry id
 
+      // Always pre-fill values: for completed sets these are the recorded actuals;
+      // for incomplete sets these are the prescribed targets shown as starting inputs.
       setValuesMap[setId] = {
         weight:  log.weight > 0   ? String(log.weight)       : '',
         reps:    log.reps > 0     ? String(log.reps)         : '',
@@ -4926,7 +4934,9 @@ export default function TodayScreen() {
       : undefined;
 
     try {
-      const result = await logApi.create({
+      const existingEntryId = logEntryIds[setId]; // set if this came from a saved prescription
+
+      const payload: any = {
         date:        todayStr,
         week:        0,            // ← TRACKER: always week 0
         day:         dayOfWeek,
@@ -4937,7 +4947,7 @@ export default function TodayScreen() {
         reps:        payloadReps,
         rpe:         payloadRpe,
         pain:        0,
-        completed:   'yes',
+        completed:   'yes',        // ← logging = marking done
         setIndex:    setIdx >= 0 ? setIdx : undefined,
         category:    exForSet.category,
         prescriptionType,
@@ -4945,11 +4955,20 @@ export default function TodayScreen() {
         ...(payloadElapsed   !== undefined && { elapsedTime: payloadElapsed  }),
         ...(payloadDistance  !== undefined && { distance:    payloadDistance }),
         ...(payloadCalories  !== undefined && { calories:    payloadCalories }),
-      });
-      if (result?._id || result?.id) {
-        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      };
+
+      if (existingEntryId) {
+        // UPDATE the existing incomplete prescription entry → mark it completed
+        // (no new entry created; logEntryIds[setId] stays the same DB id)
+        await logApi.update(existingEntryId, payload);
+      } else {
+        // INSERT: fresh set added in-session (no prior DB entry)
+        const result = await logApi.create(payload);
+        if (result?._id || result?.id) {
+          setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+        }
       }
-      // Refresh trackerLogs to keep DB scope in sync; card remains interactive in-memory
+      // Refresh trackerLogs to keep DB scope in sync; card stays interactive in-memory
       const tLogs = await logApi.list({ startDate: todayStr, endDate: todayStr });
       const raw   = Array.isArray(tLogs) ? tLogs : [];
       setTrackerLogs(raw.filter((l: any) => Number(l.week) === 0));
