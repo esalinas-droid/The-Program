@@ -4820,6 +4820,17 @@ export default function TodayScreen() {
 
       const data = await res.json();
 
+      // Guard: if parse returned nothing, show a readable error — do NOT navigate to an empty review screen
+      if (!data.exercises || data.exercises.length === 0) {
+        Alert.alert(
+          'Couldn\'t read that image',
+          data.error
+            ? `Parse error: ${data.error}`
+            : 'No exercises were found in this image. Try a clearer photo of your workout log.',
+        );
+        return;
+      }
+
       // 5. Store parsed data and navigate to review
       setParsedSession({
         session_title: data.session_title || null,

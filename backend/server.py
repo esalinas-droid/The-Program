@@ -1965,6 +1965,7 @@ async def parse_session_image(
             )
             credit_used = False
     except Exception as e:
+        logger.exception("Vision parse failed for user %s image %s", userId, image_id)
         balance_after_spend = await _image_credits.refund_credit(
             db, userId, related_id=image_id, reason="vision_error"
         )
@@ -1980,7 +1981,7 @@ async def parse_session_image(
             "credit_used": False,
             "balance_after": balance_after_spend,
             "granted_this_call": granted,
-            "error": f"Vision parse failed: {str(e)[:200]}",
+            "error": f"{type(e).__name__}: {str(e)[:300]}",
         }
 
     return {
