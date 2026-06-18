@@ -3126,7 +3126,7 @@ export default function TodayScreen() {
   const [modalVisible, setModal]   = useState(false);
   const [adjustKey, setAdjustKey]  = useState('');
   const [adjustName, setAdjustName] = useState('');
-  const [pickerMode, setPickerMode] = useState<'swap' | 'add'>('swap');
+  const [pickerMode, setPickerMode] = useState<'swap' | 'add' | 'tracker-add'>('swap');
 
   // ── Readiness check state ────────────────────────────────────────────────────
   const [showReadiness, setShowReadiness]       = useState(false);
@@ -4837,6 +4837,90 @@ export default function TodayScreen() {
     console.log('[Today] Added exercise:', picked.name, newExId);
   };
 
+  // ── Tracker Mode: manually add an exercise via picker (persists as week-0) ──────
+  const handleTrackerAddExerciseManual = async (picked: PickedExercise) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setModal(false); // close picker immediately
+
+    const todayStr = getLocalDateString();
+
+    // Target the last/current session; fall back to creating a new one if none exist
+    const lastSession = trackerSessionGroups.length > 0
+      ? trackerSessionGroups[trackerSessionGroups.length - 1]
+      : null;
+    const targetSessionId    = lastSession?.sessionId ?? `manual-${Date.now()}`;
+    const targetSessionTitle = lastSession?.sessionTitle ?? null;
+    // '__legacy__' means no real sessionId in DB — pass null so it stays legacy on reload
+    const dbSessionId = targetSessionId === '__legacy__' ? null : targetSessionId;
+
+    // ExerciseId uses the same formula as trackerLogsToExercises → reload-consistent
+    const exId = `tracker-ex-${targetSessionId}-${picked.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+    try {
+      // Create an uncompleted week-0 log entry (prescription-style, log-as-you-go)
+      const result = await logApi.create({
+        date: todayStr,
+        week: 0,
+        day: todayName,
+        sessionType: 'free',
+        exercise: picked.name,
+        sets: 1,
+        weight: 0,
+        reps: 0,
+        rpe: 0,
+        pain: 0,
+        completed: 'no',           // ← UNCOMPLETED: shows as fillable target
+        prescriptionType: 'weighted',
+        setIndex: 0,
+        sessionId:    dbSessionId,
+        sessionTitle: targetSessionTitle,
+      });
+
+      const dbId  = String(result.id ?? result._id);
+      const newSet: ExSet = { id: dbId, type: 'work', weight: 0, reps: '0', label: 'Set 1' };
+
+      // Register in logEntryIds: handleTrackerLog will UPDATE (not insert) this entry
+      setLogEntryIds(prev => ({ ...prev, [dbId]: dbId }));
+
+      // Check if the exercise already exists in this session (same name → same exId)
+      const existingEx = trackerExercises.find(e => e.id === exId);
+      if (existingEx) {
+        // Append the new set to the existing card (mirrors reload behavior)
+        setTrackerExercises(prev => prev.map(e =>
+          e.id === exId
+            ? { ...e, sets: [...e.sets, { ...newSet, label: `Set ${e.sets.length + 1}` }] }
+            : e
+        ));
+      } else {
+        // Brand-new exercise — add card + session group entry
+        const newEx: Exercise = {
+          id: exId, name: picked.name, category: 'supplemental',
+          prescription: '', lastSession: '', cues: [], notes: '',
+          fields: defaultFields('supplemental'),
+          sets: [newSet],
+        };
+        setTrackerExercises(prev => [...prev, newEx]);
+        setTrackerSessionGroups(prev => {
+          if (prev.length === 0) {
+            return [{ sessionId: targetSessionId, sessionTitle: targetSessionTitle, exerciseIds: [exId] }];
+          }
+          const last = prev[prev.length - 1];
+          return [
+            ...prev.slice(0, -1),
+            { ...last, exerciseIds: [...last.exerciseIds, exId] },
+          ];
+        });
+      }
+
+      // Expand the exercise so it's ready to log immediately
+      setExpanded(prev => { const next = new Set(prev); next.add(exId); return next; });
+      console.log('[Today] Tracker added exercise manually:', picked.name, 'dbId:', dbId);
+    } catch (err) {
+      console.error('[Today] handleTrackerAddExerciseManual failed:', err);
+      Alert.alert('Error', 'Failed to add exercise. Please try again.');
+    }
+  };
+
   const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -5371,7 +5455,7 @@ export default function TodayScreen() {
               {/* Add another exercise */}
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD }}
-                onPress={() => router.push('/tracker-session')}
+                onPress={() => { setPickerMode('tracker-add'); setAdjustKey(''); setAdjustName(''); setModal(true); }}
                 activeOpacity={0.75}
               >
                 <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
@@ -5970,14 +6054,16 @@ export default function TodayScreen() {
         visible={modalVisible}
         onClose={() => setModal(false)}
         onSelect={(picked) => {
-          if (pickerMode === 'add') {
+          if (pickerMode === 'tracker-add') {
+            handleTrackerAddExerciseManual(picked);
+          } else if (pickerMode === 'add') {
             handleAddExercise(picked);
           } else {
             handleConfirmSwap(picked);
           }
         }}
         originalExerciseName={pickerMode === 'swap' && adjustName ? extractExerciseName(adjustName) : undefined}
-        title={pickerMode === 'add' ? 'Add Exercise' : 'Swap Exercise'}
+        title={pickerMode === 'tracker-add' || pickerMode === 'add' ? 'Add Exercise' : 'Swap Exercise'}
       />
 
       {/* ── READINESS CHECK MODAL — suppressed while celebration is visible ── */}
