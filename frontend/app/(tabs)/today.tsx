@@ -5591,6 +5591,18 @@ export default function TodayScreen() {
             </Pressable>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* ── ExercisePicker for tracker "Add another exercise" ──────────────── */}
+        <ExercisePicker
+          visible={modalVisible && pickerMode === 'tracker-add'}
+          onClose={() => { setModal(false); setPickerMode('swap'); }}
+          onSelect={(picked) => {
+            handleTrackerAddExerciseManual(picked);
+            setModal(false);
+            setPickerMode('swap');
+          }}
+          title="Add Exercise"
+        />
       </SafeAreaView>
     );
   }
