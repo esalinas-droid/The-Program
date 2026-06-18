@@ -5351,6 +5351,8 @@ export default function TodayScreen() {
     // Text-note entries (shown as note cards; never passed to ExerciseCard)
     const noteLogs = trackerLogs.filter((l: any) => l.prescriptionType === 'text_note');
 
+    console.log('[ADD-DEBUG] TRACKER return block rendering. trainingMode=', trainingMode, 'modalVisible=', modalVisible, 'pickerMode=', pickerMode);
+
     return (
       <SafeAreaView style={s.safe}>
         {/* Header */}
@@ -5455,7 +5457,13 @@ export default function TodayScreen() {
               {/* Add another exercise */}
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD }}
-                onPress={() => { setPickerMode('tracker-add'); setAdjustKey(''); setAdjustName(''); setModal(true); }}
+                onPress={() => {
+                  console.log('[ADD-DEBUG] button pressed. before:', { modalVisible, pickerMode });
+                  setPickerMode('tracker-add');
+                  setAdjustKey(''); setAdjustName('');
+                  setModal(true);
+                  console.log('[ADD-DEBUG] setters called (values update next render)');
+                }}
                 activeOpacity={0.75}
               >
                 <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
@@ -5593,6 +5601,7 @@ export default function TodayScreen() {
         </Modal>
 
         {/* ── ExercisePicker for tracker "Add another exercise" ──────────────── */}
+        {(() => { console.log('[ADD-DEBUG] tracker picker render. visible would be:', modalVisible && pickerMode === 'tracker-add', { modalVisible, pickerMode }); return null; })()}
         <ExercisePicker
           visible={modalVisible && pickerMode === 'tracker-add'}
           onClose={() => { setModal(false); setPickerMode('swap'); }}
