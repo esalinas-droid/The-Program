@@ -2149,6 +2149,7 @@ function ExerciseCard({
   onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
   exerciseNote, onNoteChange, pendingEffortLogId, onEffortSelect,
   profileUnits, onFieldsChange,
+  onRemoveExercise,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -2190,6 +2191,8 @@ function ExerciseCard({
   // ── P2b ───────────────────────────────────────────────────────────────────
   profileUnits?: 'lbs' | 'kgs';
   onFieldsChange?: (newFields: FieldSpec[], scope: 'today' | 'everyTime') => void;
+  // ── Tracker: whole-exercise removal ──────────────────────────────────────
+  onRemoveExercise?: () => void;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -2307,6 +2310,17 @@ function ExerciseCard({
               activeOpacity={0.6}
             >
               <MaterialCommunityIcons name="dots-vertical" size={19} color={COLORS.text.secondary} />
+            </TouchableOpacity>
+          )}
+          {/* ✕ tracker whole-exercise remove */}
+          {onRemoveExercise && (
+            <TouchableOpacity
+              onPress={onRemoveExercise}
+              style={ec.arrowBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              activeOpacity={0.6}
+            >
+              <MaterialCommunityIcons name="close" size={16} color={RED + 'B0'} />
             </TouchableOpacity>
           )}
           <MaterialCommunityIcons
@@ -5093,6 +5107,64 @@ export default function TodayScreen() {
     setTrackerExercises(prev => prev.map(ex => ex.id === exercise.id ? { ...ex, fields: newFields } : ex));
   };
 
+  // ── Tracker Mode: remove an entire exercise (deletes all its DB log entries) ──
+  const handleTrackerRemoveExercise = (exerciseId: string) => {
+    const ex = trackerExercises.find(e => e.id === exerciseId);
+    if (!ex) return;
+
+    Alert.alert(
+      'Remove Exercise',
+      `Remove "${ex.name}" and all its logged sets? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+            // ── 1. Optimistic state removal ──────────────────────────────────
+            setTrackerExercises(prev => prev.filter(e => e.id !== exerciseId));
+            setTrackerSessionGroups(prev =>
+              prev
+                .map(sg => ({ ...sg, exerciseIds: sg.exerciseIds.filter(id => id !== exerciseId) }))
+                .filter(sg => sg.exerciseIds.length > 0)
+            );
+            setLoggedSets(prev => {
+              const next = new Set(prev);
+              ex.sets.forEach(s => next.delete(s.id));
+              return next;
+            });
+            setLogEntryIds(prev => {
+              const n = { ...prev };
+              ex.sets.forEach(s => { delete n[s.id]; });
+              return n;
+            });
+            setSetValues(prev => {
+              const n = { ...prev };
+              ex.sets.forEach(s => { delete n[s.id]; });
+              return n;
+            });
+
+            // ── 2. Delete from DB (fire-and-forget; errors logged, not surfaced) ──
+            // For DB-sourced sets: set.id === logEntryId (via logEntryIdsMap[setId] = setId).
+            // For locally-added-then-logged sets: logEntryIds[set.id] holds the real DB id.
+            // Guard: only attempt DELETE if the id is a valid MongoDB ObjectId (24-char hex)
+            //        — locally-added unlogged sets have synthetic ids that would cause a 500.
+            const MONGO_OID_RE = /^[0-9a-fA-F]{24}$/;
+            ex.sets.forEach(s => {
+              const entryId = logEntryIds[s.id] ?? s.id;
+              if (!MONGO_OID_RE.test(entryId)) return; // skip non-DB entries
+              logApi.delete(entryId).catch(err =>
+                console.warn('[Today] Tracker remove exercise: delete failed for', entryId, err)
+              );
+            });
+          },
+        },
+      ]
+    );
+  };
+
   // ── Loading guard (B1/B2 fix) ────────────────────────────────────────────────
   // Block render until profile is loaded: prevents mode flicker and keeps
   // the loading state while tracker-mode users skip program API calls.
@@ -5210,6 +5282,7 @@ export default function TodayScreen() {
                       onEffortSelect={handleEffortSelect}
                       profileUnits={profileUnits}
                       onFieldsChange={(newFields, scope) => handleTrackerFieldsChange(ex, newFields, scope)}
+                      onRemoveExercise={() => handleTrackerRemoveExercise(ex.id)}
                     />
                   );
                 })}
