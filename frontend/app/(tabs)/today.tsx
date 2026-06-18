@@ -3091,6 +3091,7 @@ export default function TodayScreen() {
   const ADDED_SETS_KEY      = 'today_added_sets';
   const FINISHED_DATE_KEY   = 'today_finished_date';
   const FIELD_OVERRIDES_KEY = 'today_field_overrides'; // P2b: "just today" field choices
+  const ADDED_EXERCISES_KEY = 'today_added_exercises'; // exercises added via "Add Exercise"
 
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
@@ -3121,10 +3122,11 @@ export default function TodayScreen() {
     }
   }, []);
 
-  // Adjust modal
+  // Adjust / Add-Exercise modal
   const [modalVisible, setModal]   = useState(false);
   const [adjustKey, setAdjustKey]  = useState('');
   const [adjustName, setAdjustName] = useState('');
+  const [pickerMode, setPickerMode] = useState<'swap' | 'add'>('swap');
 
   // ── Readiness check state ────────────────────────────────────────────────────
   const [showReadiness, setShowReadiness]       = useState(false);
@@ -3439,7 +3441,7 @@ export default function TodayScreen() {
         if (!dateValid) {
           // No valid same-day session data — wipe all related keys to avoid
           // leaking yesterday's weights/reps into today's UI.
-          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, FIELD_OVERRIDES_KEY]);
+          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, FIELD_OVERRIDES_KEY, ADDED_EXERCISES_KEY]);
           setSetValues({});
         } else {
           // Same-day data — restore both setValues and loggedSets.
@@ -3503,6 +3505,18 @@ export default function TodayScreen() {
     }
   }, [exercises, saveAddedSetsToStorage]);
 
+  // ── Auto-persist added exercises (exercises added via "+ Add Exercise") ────────
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    const addedExs = exercises.filter((e: any) => e.id.startsWith('added-ex-'));
+    if (addedExs.length > 0) {
+      const payload = { date: getLocalDateString(), exercises: addedExs };
+      AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify(payload)).catch(() => {});
+    } else {
+      AsyncStorage.removeItem(ADDED_EXERCISES_KEY).catch(() => {});
+    }
+  }, [exercises]);
+
   // ── Load session ────────────────────────────────────────────────────────────
   useFocusEffect(useCallback(() => {
     (async () => {
@@ -3560,6 +3574,21 @@ export default function TodayScreen() {
             }
           }
         } catch (err) { console.warn('[Today] Re-sync added sets failed:', err); }
+
+        // ── Re-sync added exercises (exercises added via "+ Add Exercise") ────
+        try {
+          const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+          if (savedAddedExs) {
+            const parsedExs = JSON.parse(savedAddedExs);
+            if (parsedExs?.date === todayStr && Array.isArray(parsedExs?.exercises) && parsedExs.exercises.length > 0) {
+              setExercises(prev => {
+                const existingIds = new Set(prev.map(e => e.id));
+                const newOnes = parsedExs.exercises.filter((e: any) => !existingIds.has(e.id));
+                return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+              });
+            }
+          }
+        } catch (err) { console.warn('[Today] Re-sync added exercises failed:', err); }
 
         try {
           const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
@@ -3693,7 +3722,7 @@ export default function TodayScreen() {
 
       // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
       if (lastLoadDate.current && lastLoadDate.current !== todayStr) {
-        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY]).catch(() => {});
+        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, ADDED_EXERCISES_KEY]).catch(() => {});
         setSetValues({});
         setLoggedSets(new Set());
         setLogEntryIds({});
@@ -3799,6 +3828,25 @@ export default function TodayScreen() {
           } catch (err) {
             console.warn('[Today] Failed to restore added sets:', err);
           }
+
+          // ── Restore added exercises (from "+ Add Exercise") ─────────────────
+          try {
+            const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+            if (savedAddedExs) {
+              const parsed = JSON.parse(savedAddedExs);
+              if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length > 0) {
+                const existingIds = new Set(exsWithAdded.map((e: any) => e.id));
+                const newOnes = parsed.exercises.filter((e: any) => !existingIds.has(e.id));
+                if (newOnes.length > 0) {
+                  exsWithAdded = [...exsWithAdded, ...newOnes];
+                  console.log('[Today] Full-rebuild: restored', newOnes.length, 'added exercises');
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[Today] Failed to restore added exercises:', err);
+          }
+
           setExercises(exsWithAdded);
           // Expand only the first exercise by default
           setExpanded(new Set([exsWithAdded[0].id]));
@@ -4603,7 +4651,7 @@ export default function TodayScreen() {
   };
 
   const openAdjust = (id: string, name: string) => {
-    setAdjustKey(id); setAdjustName(name); setModal(true);
+    setPickerMode('swap'); setAdjustKey(id); setAdjustName(name); setModal(true);
   };
 
   // ── Kebab menu handlers (Phase 1C) ──────────────────────────────────────────
@@ -4758,6 +4806,35 @@ export default function TodayScreen() {
         reason,
       });
     } catch (e) { console.warn('Substitution log failed:', e); }
+  };
+
+  // ── Add Exercise (program mode only) ─────────────────────────────────────────
+  const handleAddExercise = (picked: PickedExercise) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const newExId  = `added-ex-${Date.now()}`;
+    const newSetId = `${newExId}-set-0`;
+    const newEx: Exercise = {
+      id:           newExId,
+      name:         picked.name,
+      category:     'supplemental', // renders in main EXERCISES section; not warmup/gpp/cooldown
+      prescription: '',
+      lastSession:  '',
+      cues:         [],
+      notes:        '',
+      fields:       defaultFields('supplemental'), // weight + reps by default
+      sets: [{
+        id:     newSetId,
+        type:   'work',
+        weight: 0,
+        reps:   '5',
+        label:  'Set 1',
+      }],
+    };
+    setExercises(prev => [...prev, newEx]);
+    // Expand the newly added exercise so it's immediately usable
+    setExpanded(prev => { const next = new Set(prev); next.add(newExId); return next; });
+    setModal(false);
+    console.log('[Today] Added exercise:', picked.name, newExId);
   };
 
   const handleFinish = async () => {
@@ -5717,6 +5794,23 @@ export default function TodayScreen() {
           );
         })}
 
+        {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ────────
+             The "+ Add Exercise" button sits between exercises and conditioning. */}
+        {/* ── ADD EXERCISE BUTTON (program mode, bottom of EXERCISES section) ── */}
+        <TouchableOpacity
+          style={s.addExerciseBtn}
+          onPress={() => {
+            setPickerMode('add');
+            setAdjustKey('');
+            setAdjustName('');
+            setModal(true);
+          }}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="plus-circle-outline" size={15} color={COLORS.accent} />
+          <Text style={s.addExerciseBtnText}>Add Exercise</Text>
+        </TouchableOpacity>
+
         {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ──────── */}
         {exercises.filter(ex => ex.category === 'gpp').length > 0 && (
           <>
@@ -5871,13 +5965,19 @@ export default function TodayScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── ADJUST EXERCISE MODAL (consolidated to ExercisePicker) ── */}
+      {/* ── ADJUST / ADD EXERCISE MODAL (ExercisePicker) ── */}
       <ExercisePicker
         visible={modalVisible}
         onClose={() => setModal(false)}
-        onSelect={handleConfirmSwap}
-        originalExerciseName={adjustName ? extractExerciseName(adjustName) : undefined}
-        title="Swap Exercise"
+        onSelect={(picked) => {
+          if (pickerMode === 'add') {
+            handleAddExercise(picked);
+          } else {
+            handleConfirmSwap(picked);
+          }
+        }}
+        originalExerciseName={pickerMode === 'swap' && adjustName ? extractExerciseName(adjustName) : undefined}
+        title={pickerMode === 'add' ? 'Add Exercise' : 'Swap Exercise'}
       />
 
       {/* ── READINESS CHECK MODAL — suppressed while celebration is visible ── */}
@@ -6650,6 +6750,16 @@ const s = StyleSheet.create({
   finishBtnDisabled: { backgroundColor: COLORS.surfaceHighlight, shadowOpacity: 0 },
   finishBtnText:     { color: COLORS.primary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.heavy, letterSpacing: 1 },
   finishBtnTextDisabled: { color: COLORS.text.muted },
+
+  // ── Add Exercise button ──────────────────────────────────────────────────────
+  addExerciseBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: SPACING.xs, marginHorizontal: SPACING.lg, marginTop: SPACING.sm, marginBottom: SPACING.xs,
+    paddingVertical: 11, borderRadius: RADIUS.lg,
+    borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.accent + '50',
+    backgroundColor: COLORS.accent + '08',
+  },
+  addExerciseBtnText: { color: COLORS.accent, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, letterSpacing: 0.3 },
 });
 
 // ── AdjustModal Styles ────────────────────────────────────────────────────────
