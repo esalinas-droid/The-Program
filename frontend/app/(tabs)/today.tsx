@@ -1976,9 +1976,86 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
       ) : (
         /* 2 fields */
         <>
-          {/* P4: weight field gets lb/kg toggle; other fields render as-is */}
+          {/* P4: weight field gets lb/kg toggle.
+              Weight case: wrap all inputs in alignItems:'flex-start' so weight box and
+              reps box share the same top baseline regardless of unit-toggle height below. */}
           {fields[0].type === 'weight' ? (
-            <View style={{ flex: 1, gap: 2 }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+              {/* Weight column — input + lb/kg toggle stacked below */}
+              <View style={{ flex: 1, gap: 2 }}>
+                {adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
+                  <View style={sr.weightCol}>
+                    <Text style={sr.strikeWeight}>{set.weight}</Text>
+                    <TextInput
+                      style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
+                      value={setValues[fieldValueKey(fields[0])] ?? ''}
+                      onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                      keyboardType={fieldKeyboardType(fields[0])}
+                      editable={!logged}
+                      placeholder={fieldPlaceholder(fields[0])}
+                      placeholderTextColor={COLORS.text.muted}
+                      selectTextOnFocus
+                      returnKeyType="next"
+                    />
+                  </View>
+                ) : (
+                  <TextInput
+                    style={[sr.input, logged && sr.inputLogged]}
+                    value={setValues[fieldValueKey(fields[0])] ?? ''}
+                    onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
+                    keyboardType={fieldKeyboardType(fields[0])}
+                    editable={!logged}
+                    placeholder={fieldPlaceholder(fields[0])}
+                    placeholderTextColor={COLORS.text.muted}
+                    selectTextOnFocus
+                    returnKeyType="next"
+                  />
+                )}
+                {!logged && (
+                  <View style={sr.unitToggleRow}>
+                    {(['lb', 'kg'] as const).map(u => {
+                      // P4 FIX: use || not ?? — empty string ('') and undefined both mean "no explicit override",
+                      // so the global unit (units prop) is always the source of truth for un-overridden sets.
+                      const effectiveUnit = (setValues.weightUnit as string) || (units === 'kgs' ? 'kg' : 'lb');
+                      const active = effectiveUnit === u;
+                      return (
+                        <TouchableOpacity
+                          key={u}
+                          style={[sr.unitBtn, active && sr.unitBtnActive]}
+                          onPress={() => {
+                            const globalDefault = units === 'kgs' ? 'kg' : 'lb';
+                            // Only persist a per-set override when the chosen unit DIFFERS from the global.
+                            // Tapping the same unit as global writes '' (no override) so the global
+                            // remains the source of truth and future global changes are respected.
+                            onValueChange('weightUnit', u !== globalDefault ? u : '');
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[sr.unitBtnTxt, active && sr.unitBtnTxtActive]}>{u}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+              {/* × separator — paddingTop centers it within the 36px input height */}
+              <Text style={[sr.sep, isGPP && { color: ORANGE + '60' }, { paddingTop: 9 }]}>×</Text>
+              {/* Reps input — top-aligned with weight input */}
+              <TextInput
+                style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
+                value={setValues[fieldValueKey(fields[1])] ?? ''}
+                onChangeText={v => onValueChange(fieldValueKey(fields[1]), v)}
+                keyboardType={fieldKeyboardType(fields[1])}
+                editable={!logged}
+                placeholder={fieldPlaceholder(fields[1])}
+                placeholderTextColor={COLORS.text.muted}
+                selectTextOnFocus
+                returnKeyType="done"
+              />
+            </View>
+          ) : (
+            /* Non-weight field (time, distance, etc.) — no unit toggle, both inputs same height */
+            <>
               {adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
                 <View style={sr.weightCol}>
                   <Text style={sr.strikeWeight}>{set.weight}</Text>
@@ -2007,76 +2084,20 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
                   returnKeyType="next"
                 />
               )}
-              {!logged && (
-                <View style={sr.unitToggleRow}>
-                  {(['lb', 'kg'] as const).map(u => {
-                    // P4 FIX: use || not ?? — empty string ('') and undefined both mean "no explicit override",
-                    // so the global unit (units prop) is always the source of truth for un-overridden sets.
-                    const effectiveUnit = (setValues.weightUnit as string) || (units === 'kgs' ? 'kg' : 'lb');
-                    const active = effectiveUnit === u;
-                    return (
-                      <TouchableOpacity
-                        key={u}
-                        style={[sr.unitBtn, active && sr.unitBtnActive]}
-                        onPress={() => {
-                          const globalDefault = units === 'kgs' ? 'kg' : 'lb';
-                          // Only persist a per-set override when the chosen unit DIFFERS from the global.
-                          // Tapping the same unit as global writes '' (no override) so the global
-                          // remains the source of truth and future global changes are respected.
-                          onValueChange('weightUnit', u !== globalDefault ? u : '');
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[sr.unitBtnTxt, active && sr.unitBtnTxtActive]}>{u}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-          ) : (
-            /* Non-weight field (time, distance, etc.) — no unit toggle */
-            adjustActive && set.type === 'work' && set.weight > 0 && !logged ? (
-              <View style={sr.weightCol}>
-                <Text style={sr.strikeWeight}>{set.weight}</Text>
-                <TextInput
-                  style={[sr.input, sr.inputFull, logged && sr.inputLogged]}
-                  value={setValues[fieldValueKey(fields[0])] ?? ''}
-                  onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
-                  keyboardType={fieldKeyboardType(fields[0])}
-                  editable={!logged}
-                  placeholder={fieldPlaceholder(fields[0])}
-                  placeholderTextColor={COLORS.text.muted}
-                  selectTextOnFocus
-                  returnKeyType="next"
-                />
-              </View>
-            ) : (
+              <Text style={[sr.sep, isGPP && { color: ORANGE + '60' }]}>×</Text>
               <TextInput
-                style={[sr.input, logged && sr.inputLogged]}
-                value={setValues[fieldValueKey(fields[0])] ?? ''}
-                onChangeText={v => onValueChange(fieldValueKey(fields[0]), v)}
-                keyboardType={fieldKeyboardType(fields[0])}
+                style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
+                value={setValues[fieldValueKey(fields[1])] ?? ''}
+                onChangeText={v => onValueChange(fieldValueKey(fields[1]), v)}
+                keyboardType={fieldKeyboardType(fields[1])}
                 editable={!logged}
-                placeholder={fieldPlaceholder(fields[0])}
+                placeholder={fieldPlaceholder(fields[1])}
                 placeholderTextColor={COLORS.text.muted}
                 selectTextOnFocus
-                returnKeyType="next"
+                returnKeyType="done"
               />
-            )
+            </>
           )}
-          <Text style={[sr.sep, isGPP && { color: ORANGE + '60' }]}>×</Text>
-          <TextInput
-            style={[sr.input, sr.repsInput, logged && sr.inputLogged]}
-            value={setValues[fieldValueKey(fields[1])] ?? ''}
-            onChangeText={v => onValueChange(fieldValueKey(fields[1]), v)}
-            keyboardType={fieldKeyboardType(fields[1])}
-            editable={!logged}
-            placeholder={fieldPlaceholder(fields[1])}
-            placeholderTextColor={COLORS.text.muted}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
         </>
       )}
 
@@ -5268,6 +5289,40 @@ export default function TodayScreen() {
     setTrackerExercises(prev => prev.map(ex => ex.id === exercise.id ? { ...ex, fields: newFields } : ex));
   };
 
+  // ── Tracker Mode: reorder exercise within its session group (session-local) ───
+  // NOTE: reorder is NOT persisted to DB — DB stores exercises by insertion order.
+  // The reordered position holds for the current session; reload restores insertion order.
+  const handleTrackerMoveExercise = (exerciseId: string, direction: 'up' | 'down') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const sessionIdx = trackerSessionGroups.findIndex(sg => sg.exerciseIds.includes(exerciseId));
+    if (sessionIdx === -1) return;
+
+    const session   = trackerSessionGroups[sessionIdx];
+    const exIdx     = session.exerciseIds.indexOf(exerciseId);
+    const targetIdx = direction === 'up' ? exIdx - 1 : exIdx + 1;
+    if (targetIdx < 0 || targetIdx >= session.exerciseIds.length) return;
+
+    // Swap within the session group's exerciseIds
+    const newExIds = [...session.exerciseIds];
+    [newExIds[exIdx], newExIds[targetIdx]] = [newExIds[targetIdx], newExIds[exIdx]];
+    setTrackerSessionGroups(prev =>
+      prev.map((sg, i) => i === sessionIdx ? { ...sg, exerciseIds: newExIds } : sg)
+    );
+
+    // Mirror the swap in the flat trackerExercises array
+    const idA = session.exerciseIds[exIdx];
+    const idB = session.exerciseIds[targetIdx];
+    setTrackerExercises(prev => {
+      const next = [...prev];
+      const iA = next.findIndex(e => e.id === idA);
+      const iB = next.findIndex(e => e.id === idB);
+      if (iA === -1 || iB === -1) return prev;
+      [next[iA], next[iB]] = [next[iB], next[iA]];
+      return next;
+    });
+  };
+
   // ── Tracker Mode: remove an entire exercise (deletes all its DB log entries) ──
   const handleTrackerRemoveExercise = (exerciseId: string) => {
     const ex = trackerExercises.find(e => e.id === exerciseId);
@@ -5399,9 +5454,10 @@ export default function TodayScreen() {
                     <View style={{ flex: 1, height: 1, backgroundColor: COLORS.border }} />
                   </View>
                 )}
-                {session.exerciseIds.map(exId => {
+                {session.exerciseIds.map((exId, exIdx) => {
                   const ex = trackerExercises.find(e => e.id === exId);
                   if (!ex) return null;
+                  const totalInSession = session.exerciseIds.length;
                   return (
                     <ExerciseCard
                       key={ex.id}
@@ -5432,10 +5488,10 @@ export default function TodayScreen() {
                         onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                       }}
                       onKebab={undefined}
-                      onMoveUp={undefined}
-                      onMoveDown={undefined}
-                      canMoveUp={false}
-                      canMoveDown={false}
+                      onMoveUp={() => handleTrackerMoveExercise(ex.id, 'up')}
+                      onMoveDown={() => handleTrackerMoveExercise(ex.id, 'down')}
+                      canMoveUp={exIdx > 0}
+                      canMoveDown={exIdx < totalInSession - 1}
                       onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
                       exerciseNote={notesByExercise[ex.id] ?? ''}
                       onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
