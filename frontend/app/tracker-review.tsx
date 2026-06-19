@@ -934,7 +934,9 @@ export default function TrackerReviewScreen() {
         await logApi.createBulk(entries, imageId, title || undefined, sessionId);
       }
       clearParsedSession();
-      router.back();
+      // Replace the full review+paste/scan back-stack with Today so the user
+      // lands on the refreshed tracker cards and cannot back into the saved review.
+      router.replace('/(tabs)/today' as any);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally {
@@ -1094,6 +1096,16 @@ export default function TrackerReviewScreen() {
                 {confidence === 'low'
                   ? 'Parser confidence: low · please verify everything below'
                   : 'Parser confidence: medium · review carefully before saving'}
+              </Text>
+            </View>
+          )}
+
+          {/* Review-before-saving reminder — visible on all parse saves, not in edit mode */}
+          {!isEditMode && (
+            <View style={rc.reviewNote}>
+              <MaterialCommunityIcons name="pencil-outline" size={13} color={COLORS.text.muted} />
+              <Text style={rc.reviewNoteText}>
+                Review and edit your exercises below before saving. Saving adds them to Today.
               </Text>
             </View>
           )}
@@ -1317,6 +1329,17 @@ const rc = StyleSheet.create({
   confidenceBannerText: {
     flex: 1, fontSize: FONTS.sizes.sm,
     color: GOLD, lineHeight: 18,
+  },
+
+  // Review-before-saving reminder note
+  reviewNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    paddingHorizontal: SPACING.xs, paddingVertical: SPACING.xs,
+    marginBottom: SPACING.md,
+  },
+  reviewNoteText: {
+    flex: 1, fontSize: FONTS.sizes.xs,
+    color: COLORS.text.muted, lineHeight: 17,
   },
 
   // Title row
