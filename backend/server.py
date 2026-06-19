@@ -240,6 +240,8 @@ class WorkoutLogEntry(BaseDocument):
     calories: Optional[float] = None        # e.g. calories burned on rower/ski erg
     # ── P4: per-entry weight unit (lb/kg) — source of truth for e1RM + tonnage ──
     weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
+    # ── Tracker exercise display order ───────────────────────────────────────────
+    exerciseOrder: Optional[int] = None     # 0-based sort position within a tracker session
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -272,6 +274,8 @@ class WorkoutLogCreate(BaseModel):
     calories: Optional[float] = None        # rower/ski-erg calories
     # ── P4: per-entry weight unit — source of truth for e1RM + tonnage ──────────
     weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
+    # ── Tracker exercise display order ───────────────────────────────────────────
+    exerciseOrder: Optional[int] = None     # 0-based sort position within a tracker session
 
 class CheckIn(BaseDocument):
     week: int
@@ -2032,6 +2036,39 @@ async def get_tracker_image_url(image_id: str, userId: str = Depends(get_current
         return {"signed_url": signed_url, "object_path": object_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not generate signed URL: {e}")
+
+# ── Tracker Mode: persist exercise display order ──────────────────────────────
+class TrackerReorderBody(BaseModel):
+    sessionId: str
+    orderedExerciseNames: List[str]
+
+@api_router.patch("/tracker/reorder")
+async def reorder_tracker_exercises(
+    body: TrackerReorderBody,
+    userId: str = Depends(get_current_user),
+):
+    """Write exerciseOrder (0-based) to all week=0 log entries for each exercise in a session.
+    Accepts the desired final order as an array of exercise names.
+    Uses update_many so all sets of each exercise receive the same order value.
+    """
+    updated = 0
+    for order_idx, exercise_name in enumerate(body.orderedExerciseNames):
+        result = await db.log.update_many(
+            {
+                "userId":    userId,
+                "week":      0,
+                "sessionId": body.sessionId,
+                "exercise":  exercise_name,
+            },
+            {"$set": {"exerciseOrder": order_idx}},
+        )
+        updated += result.modified_count
+    logger.info(
+        "[TrackerReorder] user=%s session=%s names=%s updated=%d",
+        userId, body.sessionId, body.orderedExerciseNames, updated,
+    )
+    return {"success": True, "updated": updated}
+
 
 @api_router.put("/log/{entry_id}")
 async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):

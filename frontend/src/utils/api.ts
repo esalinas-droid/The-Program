@@ -200,6 +200,16 @@ export const logApi = {
   // ── Phase 6: patch effort signal (reps_in_tank) onto a logged set ─────────
   patchEffort: (id: string, repsInTank: number | null) =>
     api(`/log/${id}/effort`, { method: 'PATCH', body: JSON.stringify({ reps_in_tank: repsInTank }) }),
+  /**
+   * Persist the display order of exercises within a tracker session.
+   * orderedExerciseNames must be the complete ordered list (index = new exerciseOrder).
+   * Only works for sessions with a real sessionId (not '__legacy__').
+   */
+  reorderTrackerExercises: (sessionId: string, orderedExerciseNames: string[]) =>
+    api('/tracker/reorder', {
+      method: 'PATCH',
+      body: JSON.stringify({ sessionId, orderedExerciseNames }),
+    }),
   // ── Tracker Phase 3: per-set upsert ─────────────────────────────────────
   commitTrackerSet: (entry: {
     setId: string; date: string; sessionTitle: string;

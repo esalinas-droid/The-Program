@@ -208,7 +208,8 @@ function buildEntries(
   sessionId: string | null,
 ): any[] {
   const entries: any[] = [];
-  for (const ex of exercises) {
+  for (let exIdx = 0; exIdx < exercises.length; exIdx++) {
+    const ex = exercises[exIdx];
     ex.sets.forEach((set, idx) => {
       const entry: any = {
         date,
@@ -222,6 +223,8 @@ function buildEntries(
         completed: 'no',    // tracker: scanned/parsed exercises start as prescriptions (not done)
         setIndex: idx,
         prescriptionType: ex.prescriptionType,
+        // exerciseOrder: sequential index so scanned sessions have a stable initial order
+        ...(week === 0 && sessionId ? { exerciseOrder: exIdx } : {}),
         ...(imageId      ? { imageId }      : {}),
         ...(sessionTitle ? { sessionTitle } : {}),
         ...(sessionId    ? { sessionId }    : {}),   // stable stamp — all entries from this scan share one id

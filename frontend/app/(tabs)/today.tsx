@@ -546,9 +546,18 @@ function trackerLogsToExercises(logs: any[]): {
       groupMap.get(key)!.push(log);
     }
 
+    // ── Step 2b: Sort exercises within session by exerciseOrder ─────────────
+    // Falls back to DB insertion order when exerciseOrder is null/undefined
+    // (legacy entries or entries added before this feature).
+    const sortedGroups = [...groupMap.entries()].sort(([, logsA], [, logsB]) => {
+      const orderA = (logsA[0]?.exerciseOrder as number | null | undefined) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = (logsB[0]?.exerciseOrder as number | null | undefined) ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB;
+    });
+
     const sessionExerciseIds: string[] = [];
 
-    for (const [exerciseName, exLogs] of groupMap.entries()) {
+    for (const [exerciseName, exLogs] of sortedGroups) {
       const pt = (exLogs[0]?.prescriptionType as string) || 'weighted';
       // Include sessionId in exId so the same exercise name in different sessions
       // gets distinct IDs and doesn't collide in state maps.
@@ -4877,6 +4886,11 @@ export default function TodayScreen() {
     // ExerciseId uses the same formula as trackerLogsToExercises → reload-consistent
     const exId = `tracker-ex-${targetSessionId}-${picked.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
+    // exerciseOrder: only for brand-new exercises (append-to-end).
+    // Adding a 2nd set to an existing exercise inherits the already-stored order.
+    const existingEx = trackerExercises.find(e => e.id === exId);
+    const exerciseOrderForNew = existingEx ? undefined : (lastSession?.exerciseIds.length ?? 0);
+
     try {
       // Create an uncompleted week-0 log entry (prescription-style, log-as-you-go)
       const result = await logApi.create({
@@ -4895,6 +4909,7 @@ export default function TodayScreen() {
         setIndex: 0,
         sessionId:    dbSessionId,
         sessionTitle: targetSessionTitle,
+        ...(exerciseOrderForNew !== undefined ? { exerciseOrder: exerciseOrderForNew } : {}),
       });
 
       const dbId  = String(result.id ?? result._id);
@@ -5290,8 +5305,6 @@ export default function TodayScreen() {
   };
 
   // ── Tracker Mode: reorder exercise within its session group (session-local) ───
-  // NOTE: reorder is NOT persisted to DB — DB stores exercises by insertion order.
-  // The reordered position holds for the current session; reload restores insertion order.
   const handleTrackerMoveExercise = (exerciseId: string, direction: 'up' | 'down') => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -5321,6 +5334,17 @@ export default function TodayScreen() {
       [next[iA], next[iB]] = [next[iB], next[iA]];
       return next;
     });
+
+    // ── Persist to DB (fire-and-forget; UI is already updated above) ─────────
+    // Skip '__legacy__' sessions — they have no sessionId to key the update on.
+    const realSessionId = session.sessionId;
+    if (realSessionId && realSessionId !== '__legacy__') {
+      const orderedExerciseNames = newExIds
+        .map(exId => trackerExercises.find(e => e.id === exId)?.name ?? '')
+        .filter(n => n !== '');
+      logApi.reorderTrackerExercises(realSessionId, orderedExerciseNames)
+        .catch(err => console.error('[Today] Failed to persist tracker reorder:', err));
+    }
   };
 
   // ── Tracker Mode: remove an entire exercise (deletes all its DB log entries) ──
