@@ -5684,6 +5684,16 @@ export default function TodayScreen() {
                 </Text>
               </TouchableOpacity>
 
+              {/* Paste workout text (free) */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '40', backgroundColor: GOLD + '08' }}
+                onPress={() => router.push('/tracker-paste' as any)}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="text-box-edit-outline" size={18} color={GOLD} />
+                <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>Paste workout text</Text>
+              </TouchableOpacity>
+
               {/* Log different session */}
               <TouchableOpacity
                 style={{ alignItems: 'center', paddingVertical: SPACING.md }}
@@ -5726,6 +5736,15 @@ export default function TodayScreen() {
               <Text style={{ color: GOLD, fontSize: 14, fontWeight: '600' }}>
                 {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
               </Text>
+            </TouchableOpacity>
+            {/* Paste workout text (free) */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, borderColor: GOLD + '40', backgroundColor: GOLD + '0D', paddingHorizontal: 20, paddingVertical: 12 }}
+              onPress={() => router.push('/tracker-paste' as any)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="text-box-edit-outline" size={18} color={GOLD} />
+              <Text style={{ color: GOLD, fontSize: 14, fontWeight: '600' }}>Paste workout text</Text>
             </TouchableOpacity>
             {/* Add text note */}
           </View>

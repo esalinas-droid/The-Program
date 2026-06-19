@@ -231,6 +231,13 @@ export const logApi = {
    */
   patchLogFieldShape: (id: string, fields: Array<{type: string; unit?: string}>) =>
     api(`/log/${id}/fieldshape`, { method: 'PATCH', body: JSON.stringify({ fields }) }),
+  /**
+   * Parse a pasted workout text into structured exercises.
+   * FREE — no image credits charged.
+   * Returns {session_title, session_date, confidence, exercises, error?}.
+   */
+  parseWorkoutText: (text: string) =>
+    api('/tracker/parse-session-text', { method: 'POST', body: JSON.stringify({ text }) }),
   // ── Tracker Phase 3: per-set upsert ─────────────────────────────────────
   commitTrackerSet: (entry: {
     setId: string; date: string; sessionTitle: string;

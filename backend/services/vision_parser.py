@@ -232,3 +232,96 @@ async def parse_workout_image(image_bytes: bytes, model: str = "claude-sonnet-4-
     if model.startswith("gpt"):
         return await _openai_parse(image_bytes, model)
     raise ValueError(f"Unsupported vision model: {model}")
+
+
+# ─── Text parse (FREE — no image, no credits) ────────────────────────────────
+
+# Adapt the system prompt for text input: swap "image" references for "text"
+_TEXT_SYSTEM_PROMPT = (
+    SYSTEM_PROMPT
+    .replace(
+        "A user has uploaded ONE image of ONE workout session they performed (or will perform today). "
+        "Your job is one-to-one transcription of exactly what is visible in that image — nothing more.",
+        "A user has pasted their workout as plain text for ONE workout session they performed (or will perform today). "
+        "Your job is one-to-one transcription of exactly what is written in that text — nothing more.",
+    )
+    .replace("visible in that image", "written in that text")
+    .replace("visible in the image", "written in the text")
+    .replace("clearly visible in the image", "clearly written in the text")
+    .replace("the image shows", "the text shows")
+    .replace("the image is", "the text is")
+    .replace("from the image", "from the text")
+    .replace("in the image", "in the text")
+    .replace("of the image", "of the text")
+    .replace("the image", "the text")
+)
+
+_TEXT_TRANSCRIBE_MSG_PREFIX = (
+    "Transcribe the following pasted workout exactly as written. "
+    "Return only the JSON object — no commentary, no markdown fences.\n\n"
+)
+
+
+async def _claude_parse_text(text: str, model: str) -> Dict:
+    """Parse pasted workout text via Claude (emergentintegrations)."""
+    chat = LlmChat(
+        api_key=_get_emergent_key(),
+        session_id=str(uuid.uuid4()),
+        system_message=_TEXT_SYSTEM_PROMPT,
+    ).with_model(_EMERGENT_MODEL_PROVIDER, _CLAUDE_MODEL_ID)
+
+    response_text: str = await chat.send_message(
+        UserMessage(text=_TEXT_TRANSCRIBE_MSG_PREFIX + text)
+    )
+
+    # Strip markdown fences if Claude wraps the JSON
+    content = response_text.strip()
+    if content.startswith("```"):
+        parts = content.split("```")
+        content = parts[1] if len(parts) > 1 else content
+        if content.startswith("json"):
+            content = content[4:]
+        content = content.strip()
+
+    parsed = json.loads(content)
+    return {
+        "session_title": parsed.get("session_title"),
+        "session_date":  parsed.get("session_date"),
+        "confidence":    parsed.get("confidence", "low"),
+        "exercises":     parsed.get("exercises") or [],
+    }
+
+
+async def _openai_parse_text(text: str, model: str = "gpt-4o") -> Dict:
+    """Parse pasted workout text via OpenAI (JSON mode)."""
+    client = _get_openai()
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _TEXT_SYSTEM_PROMPT},
+            {"role": "user",   "content": _TEXT_TRANSCRIBE_MSG_PREFIX + text},
+        ],
+        response_format={"type": "json_object"},
+        max_tokens=1500,
+    )
+    content = response.choices[0].message.content or "{}"
+    parsed = json.loads(content)
+    return {
+        "session_title": parsed.get("session_title"),
+        "session_date":  parsed.get("session_date"),
+        "confidence":    parsed.get("confidence", "low"),
+        "exercises":     parsed.get("exercises") or [],
+    }
+
+
+async def parse_workout_text(text: str, model: str = "claude-sonnet-4-5") -> Dict:
+    """
+    Parse a user-pasted workout string into structured exercises.
+    FREE — no credits, no image storage.
+    Returns {session_title, session_date, confidence, exercises}.
+    """
+    if model.startswith("claude"):
+        return await _claude_parse_text(text, model)
+    if model.startswith("gpt"):
+        return await _openai_parse_text(text, model)
+    raise ValueError(f"Unsupported text parse model: {model}")

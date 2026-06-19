@@ -2003,6 +2003,55 @@ async def parse_session_image(
         "granted_this_call": granted,
     }
 
+# ── Tracker Mode: parse pasted text (FREE — no credits, no image storage) ────
+class ParseSessionTextBody(BaseModel):
+    text: str
+
+TEXT_PARSE_MAX_CHARS = 4000
+
+@api_router.post("/tracker/parse-session-text")
+async def parse_session_text(
+    body: ParseSessionTextBody,
+    userId: str = Depends(get_current_user),
+):
+    """
+    Parse a user-pasted workout string into structured exercises.
+    FREE — no image credits charged, no Supabase storage.
+    Input cap: TEXT_PARSE_MAX_CHARS characters.
+    Returns {session_title, session_date, confidence, exercises, error?}.
+    """
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(text) > TEXT_PARSE_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text too long ({len(text)} chars). Maximum is {TEXT_PARSE_MAX_CHARS} characters.",
+        )
+
+    try:
+        parse_result = await _vision_parser.parse_workout_text(text, model="claude-sonnet-4-5")
+        exercises     = parse_result["exercises"]
+        session_title = parse_result.get("session_title")
+        session_date  = parse_result.get("session_date")
+        confidence    = parse_result.get("confidence", "low")
+    except Exception as e:
+        logger.exception("Text parse failed for user %s", userId)
+        return {
+            "session_title": None,
+            "session_date":  None,
+            "confidence":    "low",
+            "exercises":     [],
+            "error":         f"{type(e).__name__}: {str(e)[:300]}",
+        }
+
+    return {
+        "session_title": session_title,
+        "session_date":  session_date,
+        "confidence":    confidence,
+        "exercises":     exercises,
+    }
+
 
 # ── Tracker Mode: credit balance lookup ──────────────────────────────────────
 @api_router.get("/tracker/credits")
