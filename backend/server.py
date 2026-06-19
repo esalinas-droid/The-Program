@@ -242,6 +242,8 @@ class WorkoutLogEntry(BaseDocument):
     weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
     # ── Tracker exercise display order ───────────────────────────────────────────
     exerciseOrder: Optional[int] = None     # 0-based sort position within a tracker session
+    # ── Tracker exercise field configuration (user-chosen FieldSpec[]) ────────────
+    fieldShape: Optional[list] = None       # e.g. [{"type":"weight"},{"type":"rpe"}]
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class WorkoutLogCreate(BaseModel):
@@ -276,6 +278,8 @@ class WorkoutLogCreate(BaseModel):
     weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
     # ── Tracker exercise display order ───────────────────────────────────────────
     exerciseOrder: Optional[int] = None     # 0-based sort position within a tracker session
+    # ── Tracker exercise field configuration (user-chosen FieldSpec[]) ────────────
+    fieldShape: Optional[list] = None       # e.g. [{"type":"weight"},{"type":"rpe"}]
 
 class CheckIn(BaseDocument):
     week: int
@@ -2041,6 +2045,57 @@ async def get_tracker_image_url(image_id: str, userId: str = Depends(get_current
 class TrackerReorderBody(BaseModel):
     sessionId: str
     orderedExerciseNames: List[str]
+
+# ── Tracker Mode: persist chosen field shape for an exercise (all sets at once) ──
+class TrackerExerciseFieldsBody(BaseModel):
+    sessionId: str
+    exerciseName: str
+    fields: list   # serialized FieldSpec[]: e.g. [{"type":"weight"},{"type":"rpe"}]
+
+@api_router.patch("/tracker/exercise-fields")
+async def patch_tracker_exercise_fields(
+    body: TrackerExerciseFieldsBody,
+    userId: str = Depends(get_current_user),
+):
+    """Write fieldShape to every week=0 log entry for a given exercise in a session.
+    Uses update_many so all sets of the exercise share the same field configuration.
+    """
+    result = await db.log.update_many(
+        {
+            "userId":    userId,
+            "week":      0,
+            "sessionId": body.sessionId,
+            "exercise":  body.exerciseName,
+        },
+        {"$set": {"fieldShape": body.fields}},
+    )
+    logger.info(
+        "[TrackerFields] user=%s session=%s exercise=%s fields=%s updated=%d",
+        userId, body.sessionId, body.exerciseName, body.fields, result.modified_count,
+    )
+    return {"success": True, "updated": result.modified_count}
+
+
+# ── Tracker Mode: per-entry fieldShape patch (legacy sessions without sessionId) ─
+class LogFieldShapeBody(BaseModel):
+    fields: list   # serialized FieldSpec[]
+
+@api_router.patch("/log/{entry_id}/fieldshape")
+async def patch_log_fieldshape(
+    entry_id: str,
+    body: LogFieldShapeBody,
+    userId: str = Depends(get_current_user),
+):
+    """Patch fieldShape on a single log entry (used for __legacy__ sessions)."""
+    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    if not existing or existing.get("userId", "") not in (userId, ""):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    await db.log.update_one(
+        {"_id": ObjectId(entry_id)},
+        {"$set": {"fieldShape": body.fields}},
+    )
+    return {"success": True, "fields": body.fields}
+
 
 @api_router.patch("/tracker/reorder")
 async def reorder_tracker_exercises(

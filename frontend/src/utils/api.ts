@@ -216,6 +216,21 @@ export const logApi = {
    */
   patchNote: (id: string, notes: string | null) =>
     api(`/log/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes }) }),
+  /**
+   * Persist chosen fieldShape (FieldSpec[]) to ALL sets of a tracker exercise in a session.
+   * Uses update_many keyed on userId + sessionId + exerciseName + week=0.
+   */
+  patchTrackerExerciseFields: (sessionId: string, exerciseName: string, fields: Array<{type: string; unit?: string}>) =>
+    api('/tracker/exercise-fields', {
+      method: 'PATCH',
+      body: JSON.stringify({ sessionId, exerciseName, fields }),
+    }),
+  /**
+   * Patch fieldShape on a single log entry.
+   * Used for __legacy__ tracker sessions that have no sessionId.
+   */
+  patchLogFieldShape: (id: string, fields: Array<{type: string; unit?: string}>) =>
+    api(`/log/${id}/fieldshape`, { method: 'PATCH', body: JSON.stringify({ fields }) }),
   // ── Tracker Phase 3: per-set upsert ─────────────────────────────────────
   commitTrackerSet: (entry: {
     setId: string; date: string; sessionTitle: string;

@@ -564,7 +564,12 @@ function trackerLogsToExercises(logs: any[]): {
       // Include sessionId in exId so the same exercise name in different sessions
       // gets distinct IDs and doesn't collide in state maps.
       const exId  = `tracker-ex-${sid}-${exerciseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-      const fields: FieldSpec[] = inferFieldsFromPrescriptionType(pt, exLogs[0]);
+      // Read stored fieldShape first — falls back to inference for new/legacy exercises.
+      // This is how user-chosen fields (e.g. reps → RPE) survive a reload.
+      const storedFields = exLogs[0]?.fieldShape as FieldSpec[] | null | undefined;
+      const fields: FieldSpec[] = (Array.isArray(storedFields) && storedFields.length > 0)
+        ? storedFields
+        : inferFieldsFromPrescriptionType(pt, exLogs[0]);
       const category: ExCategory = (pt === 'timed' || pt === 'distance' || pt === 'calories') ? 'gpp' : 'supplemental';
 
       const sets: ExSet[] = exLogs.map((log: any, i: number) => {
@@ -5401,9 +5406,28 @@ export default function TodayScreen() {
     }
   };
 
-  // ── Tracker Mode: field change (local only — no plan to persist to) ───────────
+  // ── Tracker Mode: field change — persist fieldShape so the choice survives reload ──
   const handleTrackerFieldsChange = (exercise: Exercise, newFields: FieldSpec[], _scope: 'today' | 'everyTime') => {
+    // 1. Update local state immediately so UI feels instant
     setTrackerExercises(prev => prev.map(ex => ex.id === exercise.id ? { ...ex, fields: newFields } : ex));
+
+    // 2. Persist fieldShape to DB so the converter reads it back on next load
+    const sg = trackerSessionGroups.find(sg => sg.exerciseIds.includes(exercise.id));
+    const sessionId = sg?.sessionId;
+
+    if (sessionId && sessionId !== '__legacy__') {
+      // Real session: update all sets at once via session-keyed update_many
+      logApi.patchTrackerExerciseFields(sessionId, exercise.name, newFields)
+        .catch(err => console.error('[Today] Failed to persist tracker fields:', err));
+    } else {
+      // Legacy session (no real sessionId): patch each set entry individually
+      for (const s of exercise.sets) {
+        if (s.id) {
+          logApi.patchLogFieldShape(s.id, newFields)
+            .catch(err => console.error('[Today] Failed to persist tracker fields (legacy):', err));
+        }
+      }
+    }
   };
 
   // ── Tracker Mode: reorder exercise within its session group (session-local) ───
