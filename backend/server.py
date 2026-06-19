@@ -2113,6 +2113,25 @@ async def patch_log_effort(
     )
     return {"updated": True, "reps_in_tank": body.reps_in_tank}
 
+class NotesPatch(BaseModel):
+    notes: Optional[str] = None   # null = clear the note
+
+@api_router.patch("/log/{entry_id}/notes")
+async def patch_log_notes(
+    entry_id: str,
+    body: NotesPatch,
+    userId: str = Depends(get_current_user)
+):
+    """Patch only the notes field on a single log entry. Pass notes=null to clear."""
+    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    if not existing or existing.get("userId", "") not in (userId, ""):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    await db.log.update_one(
+        {"_id": ObjectId(entry_id)},
+        {"$set": {"notes": body.notes}}
+    )
+    return {"updated": True, "notes": body.notes}
+
 @api_router.get("/log/stats/week/{week_num}")
 async def get_week_stats(
     week_num: int,

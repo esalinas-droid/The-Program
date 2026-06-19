@@ -517,6 +517,7 @@ function trackerLogsToExercises(logs: any[]): {
   loggedSetIds: Set<string>;
   setValuesMap: Record<string, SetValueMap>;
   logEntryIdsMap: Record<string, string>;
+  notesByExerciseId: Record<string, string>;
 } {
   const LEGACY_SESSION_ID = '__legacy__';
   const exerciseLogs = logs.filter((l: any) => l.prescriptionType !== 'text_note');
@@ -534,8 +535,9 @@ function trackerLogsToExercises(logs: any[]): {
   const exercises: Exercise[] = [];
   const sessionGroups: TrackerSessionGroup[] = [];
   const loggedSetIds   = new Set<string>();
-  const setValuesMap:   Record<string, SetValueMap> = {};
-  const logEntryIdsMap: Record<string, string>      = {};
+  const setValuesMap:     Record<string, SetValueMap> = {};
+  const logEntryIdsMap:   Record<string, string>      = {};
+  const notesByExerciseId: Record<string, string>     = {};
 
   for (const [sid, { title, logs: sessionLogs }] of sessionMap.entries()) {
     // ── Step 2: Within session, group by exercise name preserving order ──
@@ -603,13 +605,17 @@ function trackerLogsToExercises(logs: any[]): {
         sets, fields,
       });
 
+      // Persist the first non-empty note found for this exercise (fire-and-forget on load)
+      const savedNote = exLogs.find((l: any) => l.notes)?.notes || '';
+      if (savedNote) notesByExerciseId[exId] = savedNote;
+
       sessionExerciseIds.push(exId);
     }
 
     sessionGroups.push({ sessionId: sid, sessionTitle: title, exerciseIds: sessionExerciseIds });
   }
 
-  return { exercises, sessionGroups, loggedSetIds, setValuesMap, logEntryIdsMap };
+  return { exercises, sessionGroups, loggedSetIds, setValuesMap, logEntryIdsMap, notesByExerciseId };
 }
 
 // ── Tracker session group (maps a session's exercises for multi-session rendering) ──
@@ -2177,7 +2183,7 @@ function ExerciseCard({
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
   restConfig, adjustActive, previousData, prExercises, onKebab,
   onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
-  exerciseNote, onNoteChange, pendingEffortLogId, onEffortSelect,
+  exerciseNote, onNoteSave, onNoteRemove, pendingEffortLogId, onEffortSelect,
   profileUnits, onFieldsChange,
   onRemoveExercise,
 }: {
@@ -2215,7 +2221,8 @@ function ExerciseCard({
   onHowTo?: () => void;
   // ── Phase 6 ───────────────────────────────────────────────────────────────
   exerciseNote?: string;
-  onNoteChange?: (note: string) => void;
+  onNoteSave?: (note: string) => void;
+  onNoteRemove?: () => void;
   pendingEffortLogId?: string | null;
   onEffortSelect?: (repsInTank: number | null) => void;
   // ── P2b ───────────────────────────────────────────────────────────────────
@@ -2240,9 +2247,98 @@ function ExerciseCard({
   const [pickingFieldIdx, setPickingFieldIdx] = React.useState<number | null>(null);
   const [pendingFields, setPendingFields] = React.useState<FieldSpec[] | null>(null);
 
+  // ── Phase 6: per-exercise note — add/edit/remove state machine ────────────
+  const [noteEditing, setNoteEditing] = React.useState(false);
+  const [noteInputText, setNoteInputText] = React.useState('');
+  // Reset editing mode whenever the card collapses (cancel any in-progress edit)
+  React.useEffect(() => {
+    if (!expanded) { setNoteEditing(false); setNoteInputText(''); }
+  }, [expanded]);
+
+  /** Renders the note section at the bottom of the expanded card.
+   *  Three states: idle (no note) → editing (input open) → saved (text + Edit/Remove). */
+  const renderNoteSection = () => {
+    const hasNote = !!(exerciseNote && exerciseNote.trim());
+    if (noteEditing) {
+      return (
+        <View style={ec.noteEditArea}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+            <MaterialCommunityIcons name="comment-text-outline" size={12} color={COLORS.accent} />
+            <Text style={{ fontSize: 9, fontWeight: '800', color: COLORS.accent, letterSpacing: 1.2 }}>NOTE</Text>
+          </View>
+          <TextInput
+            style={ec.noteEditInput}
+            value={noteInputText}
+            onChangeText={setNoteInputText}
+            placeholder="Add a note for this exercise…"
+            placeholderTextColor={COLORS.text.muted}
+            multiline
+            numberOfLines={3}
+            maxLength={300}
+            autoFocus
+          />
+          <View style={ec.noteEditActions}>
+            <TouchableOpacity onPress={() => { setNoteEditing(false); setNoteInputText(''); }} activeOpacity={0.7}>
+              <Text style={{ fontSize: FONTS.sizes.xs, color: COLORS.text.muted }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                const trimmed = noteInputText.trim();
+                if (!trimmed) return;
+                onNoteSave?.(trimmed);
+                setNoteEditing(false);
+                setNoteInputText('');
+              }}
+              style={[ec.noteEditSaveBtn, !noteInputText.trim() && { opacity: 0.4 }]}
+              activeOpacity={0.8}
+              disabled={!noteInputText.trim()}
+            >
+              <Text style={ec.noteEditSaveBtnText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+    if (hasNote) {
+      return (
+        <View style={ec.noteSaved}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+            <MaterialCommunityIcons name="comment-text-outline" size={12} color={COLORS.accent} />
+            <Text style={{ fontSize: 9, fontWeight: '800', color: COLORS.accent, letterSpacing: 1.2 }}>NOTE</Text>
+            <View style={{ flex: 1 }} />
+            <TouchableOpacity
+              onPress={() => { setNoteInputText(exerciseNote ?? ''); setNoteEditing(true); }}
+              activeOpacity={0.7}
+              style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+            >
+              <Text style={ec.noteActionText}>Edit</Text>
+            </TouchableOpacity>
+            <Text style={{ color: COLORS.text.muted, fontSize: 10, marginHorizontal: 2 }}>·</Text>
+            <TouchableOpacity
+              onPress={() => onNoteRemove?.()}
+              activeOpacity={0.7}
+              style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+            >
+              <Text style={[ec.noteActionText, { color: RED }]}>Remove</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={ec.noteSavedText}>{exerciseNote}</Text>
+        </View>
+      );
+    }
+    // No note, not editing — subtle gold affordance
+    return (
+      <TouchableOpacity style={ec.noteAddBtn} onPress={() => { setNoteEditing(true); setNoteInputText(''); }} activeOpacity={0.7}>
+        <MaterialCommunityIcons name="plus" size={12} color={COLORS.accent} />
+        <Text style={ec.noteAddText}>Add note</Text>
+      </TouchableOpacity>
+    );
+  };
+
   const handlePillPress = (idx: number) => { setPickingFieldIdx(idx); };
 
   const handleFieldTypePick = (type: FieldType, unit?: string) => {
+  // ── Phase 1: Hero mode for Primary/Speed cards ────────────────────────────
     const current = exercise.fields ?? [];
     let newFields: FieldSpec[];
     if (type === 'empty') {
@@ -2559,20 +2655,8 @@ function ExerciseCard({
                 </>
               )}
 
-              {/* ── Phase 6: Per-exercise note (coach reads this) ──────── */}
-              <View style={ec.noteRow}>
-                <MaterialCommunityIcons name="comment-text-outline" size={13} color={COLORS.text.muted} />
-                <TextInput
-                  style={ec.noteInput}
-                  value={exerciseNote ?? ''}
-                  onChangeText={onNoteChange}
-                  placeholder="Coach reads this…"
-                  placeholderTextColor={COLORS.text.muted}
-                  multiline
-                  numberOfLines={2}
-                  maxLength={200}
-                />
-              </View>
+              {/* ── Phase 6: Per-exercise note (add/edit/remove) ──────── */}
+              {renderNoteSection()}
 
               {/* Coach notes */}
               {exercise.notes ? <Text style={ec.notes}>{exercise.notes}</Text> : null}
@@ -2695,20 +2779,8 @@ function ExerciseCard({
             </View>
           )}
 
-          {/* ── Phase 6: Per-exercise note (coach reads this) ─────────── */}
-          <View style={ec.noteRow}>
-            <MaterialCommunityIcons name="comment-text-outline" size={13} color={COLORS.text.muted} />
-            <TextInput
-              style={ec.noteInput}
-              value={exerciseNote ?? ''}
-              onChangeText={onNoteChange}
-              placeholder="Coach reads this…"
-              placeholderTextColor={COLORS.text.muted}
-              multiline
-              numberOfLines={2}
-              maxLength={200}
-            />
-          </View>
+          {/* ── Phase 6: Per-exercise note (add/edit/remove) ─────────── */}
+          {renderNoteSection()}
 
           {/* ── Pill action buttons ── */}
           <View style={ec.actionRow}>
@@ -2901,9 +2973,17 @@ const ec = StyleSheet.create({
   effortCircleSelected: { backgroundColor: '#C9A84C', borderColor: '#C9A84C' },
   effortNum:         { fontSize: 13, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted },
   effortNumSelected: { color: '#0A0A0C' },
-  // ── Phase 6: note input + off-row effort ──────────────────────────────────
-  noteRow:           { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.xs, borderTopWidth: 1, borderTopColor: COLORS.border + '50', marginTop: SPACING.xs },
-  noteInput:         { flex: 1, fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, minHeight: 36, paddingVertical: 4, lineHeight: 18 },
+  // ── Phase 6: note section (add/edit/remove) + off-row effort ────────────
+  noteEditArea:     { paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border + '50', marginTop: SPACING.xs },
+  noteEditInput:    { fontSize: FONTS.sizes.sm, color: COLORS.text.primary, backgroundColor: COLORS.background, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.sm, minHeight: 60, textAlignVertical: 'top', lineHeight: 20 },
+  noteEditActions:  { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: SPACING.md, marginTop: SPACING.sm },
+  noteEditSaveBtn:  { backgroundColor: COLORS.accent, borderRadius: RADIUS.md, paddingHorizontal: 16, paddingVertical: 7 },
+  noteEditSaveBtnText: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold as 'bold', color: '#0A0A0C' },
+  noteSaved:        { paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.accent + '30', marginTop: SPACING.xs, backgroundColor: COLORS.accent + '08' },
+  noteSavedText:    { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 19 },
+  noteActionText:   { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold as 'bold' },
+  noteAddBtn:       { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.sm + 2, borderTopWidth: 1, borderTopColor: COLORS.border + '30', marginTop: SPACING.xs },
+  noteAddText:      { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold as 'bold' },
   effortPrompt:      { margin: SPACING.md, backgroundColor: COLORS.accent + '12', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.accent + '40', padding: SPACING.md },
   effortPromptLabel: { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.accent, letterSpacing: 0.5, marginBottom: SPACING.sm },
   effortBtnRow:      { flexDirection: 'row', gap: SPACING.sm, alignItems: 'center' },
@@ -2980,10 +3060,6 @@ export default function TodayScreen() {
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
   const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
-  // ── Tracker Mode: text note entry ────────────────────────────────────────────
-  const [isTextNoteModalOpen, setIsTextNoteModalOpen] = useState(false);
-  const [textNoteInput, setTextNoteInput] = useState('');
-  const [isSavingNote, setIsSavingNote] = useState(false);
   // ── Tracker Mode: interactive exercise cards ──────────────────────────────────
   const [trackerExercises, setTrackerExercises] = useState<Exercise[]>([]);
   // ── Tracker Mode: session groupings (parallel to trackerExercises) ────────────
@@ -3719,6 +3795,16 @@ export default function TodayScreen() {
           if (Object.keys(recoveredValues).length > 0) {
             setSetValues(prev => ({ ...prev, ...recoveredValues }));
           }
+          // ── Reload per-exercise notes from DB into notesByExercise ──────────
+          const recoveredNotes: Record<string, string> = {};
+          for (const ex of currentExs) {
+            const exLogs = logsByEx.get(ex.name.toLowerCase()) || [];
+            const firstWithNote = (exLogs as any[]).find((l: any) => l.notes);
+            if (firstWithNote?.notes) recoveredNotes[ex.id] = firstWithNote.notes;
+          }
+          if (Object.keys(recoveredNotes).length > 0) {
+            setNotesByExercise(prev => ({ ...prev, ...recoveredNotes }));
+          }
         } catch (err) { console.warn('[Today] Re-sync log fetch failed:', err); }
 
         // ── Tracker mode: always refresh today's logs on re-focus ────────────
@@ -3736,12 +3822,13 @@ export default function TodayScreen() {
             const newLogs = rawLogs.filter((l: any) => Number(l.week) === 0);
             setTrackerLogs(newLogs);
             // Rebuild interactive tracker exercises from refreshed logs
-            const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs);
+            const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds, notesByExerciseId: tNotes } = trackerLogsToExercises(newLogs);
             setTrackerExercises(tExs);
             setTrackerSessionGroups(tGroups);
             setLoggedSets(tLogged);
             setSetValues(prev => ({ ...prev, ...tVals }));
             setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
+            setNotesByExercise(tNotes);
             if (tExs.length > 0) setExpanded(new Set([tExs[0].id]));
           } catch { setTrackerLogs([]); setTrackerExercises([]); setTrackerSessionGroups([]); }
           finally { setTrackerLogsLoading(false); }
@@ -3787,12 +3874,13 @@ export default function TodayScreen() {
           const newLogs2 = Array.isArray(logs) ? logs.filter((l: any) => Number(l.week) === 0) : [];
           setTrackerLogs(newLogs2);
           // Build interactive tracker exercises from logs
-          const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds } = trackerLogsToExercises(newLogs2);
+          const { exercises: tExs, sessionGroups: tGroups, loggedSetIds: tLogged, setValuesMap: tVals, logEntryIdsMap: tEntryIds, notesByExerciseId: tNotes } = trackerLogsToExercises(newLogs2);
           setTrackerExercises(tExs);
           setTrackerSessionGroups(tGroups);
           setLoggedSets(tLogged);
           setSetValues(prev => ({ ...prev, ...tVals }));
           setLogEntryIds(prev => ({ ...prev, ...tEntryIds }));
+          setNotesByExercise(tNotes);
           if (tExs.length > 0) setExpanded(new Set([tExs[0].id]));
         } catch {
           setTrackerLogs([]);
@@ -5112,37 +5200,51 @@ export default function TodayScreen() {
   }, [router]);
 
   // ── Tracker Mode: save a free-text note entry ─────────────────────────────────
-  const handleSaveTextNote = async () => {
-    const text = textNoteInput.trim();
-    if (!text) return;
-    setIsSavingNote(true);
-    try {
-      await logApi.create({
-        date: getLocalDateString(),
-        week: 0,
-        day: getTodayDayName(),
-        sessionType: 'Tracker',
-        exercise: '__note__',
-        sets: 0,
-        weight: 0,
-        reps: 0,
-        rpe: 0,
-        pain: 0,
-        completed: 'yes',
-        prescriptionType: 'text_note',
-        notes: text,
-      });
-      setIsTextNoteModalOpen(false);
-      setTextNoteInput('');
-      // Immediately refresh tracker logs so the card appears
-      const todayS = getLocalDateString();
-      const tLogs = await logApi.list({ startDate: todayS, endDate: todayS });
-      const raw = Array.isArray(tLogs) ? tLogs : [];
-      setTrackerLogs(raw.filter((l: any) => Number(l.week) === 0));
-    } catch {
-      Alert.alert('Error', 'Could not save note. Please try again.');
-    } finally {
-      setIsSavingNote(false);
+  // ── Tracker Mode: per-exercise note persist ──────────────────────────────────
+  const handleTrackerNoteSave = (exId: string, note: string) => {
+    setNotesByExercise(prev => ({ ...prev, [exId]: note }));
+    const ex = trackerExercises.find(e => e.id === exId);
+    const firstSetId = ex?.sets[0]?.id;
+    if (firstSetId) {
+      logApi.patchNote(firstSetId, note)
+        .catch(err => console.error('[Today] Failed to save tracker note:', err));
+    }
+  };
+  const handleTrackerNoteRemove = (exId: string) => {
+    setNotesByExercise(prev => ({ ...prev, [exId]: '' }));
+    const ex = trackerExercises.find(e => e.id === exId);
+    const firstSetId = ex?.sets[0]?.id;
+    if (firstSetId) {
+      logApi.patchNote(firstSetId, null)
+        .catch(err => console.error('[Today] Failed to remove tracker note:', err));
+    }
+  };
+
+  // ── Program Mode: per-exercise note persist ───────────────────────────────────
+  const handleProgramNoteSave = (exId: string, note: string) => {
+    setNotesByExercise(prev => ({ ...prev, [exId]: note }));
+    const ex = exercises.find(e => e.id === exId);
+    if (!ex) return;
+    for (const s of ex.sets) {
+      const entryId = logEntryIds[s.id];
+      if (entryId) {
+        logApi.patchNote(entryId, note)
+          .catch(err => console.error('[Today] Failed to save program note:', err));
+        break;
+      }
+    }
+  };
+  const handleProgramNoteRemove = (exId: string) => {
+    setNotesByExercise(prev => ({ ...prev, [exId]: '' }));
+    const ex = exercises.find(e => e.id === exId);
+    if (!ex) return;
+    for (const s of ex.sets) {
+      const entryId = logEntryIds[s.id];
+      if (entryId) {
+        logApi.patchNote(entryId, null)
+          .catch(err => console.error('[Today] Failed to remove program note:', err));
+        break;
+      }
     }
   };
 
@@ -5518,7 +5620,8 @@ export default function TodayScreen() {
                       canMoveDown={exIdx < totalInSession - 1}
                       onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
                       exerciseNote={notesByExercise[ex.id] ?? ''}
-                      onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                      onNoteSave={(note) => handleTrackerNoteSave(ex.id, note)}
+                      onNoteRemove={() => handleTrackerNoteRemove(ex.id)}
                       pendingEffortLogId={null}
                       onEffortSelect={handleEffortSelect}
                       profileUnits={profileUnits}
@@ -5555,16 +5658,6 @@ export default function TodayScreen() {
                 <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>
                   {isUploadingImage ? 'Scanning image…' : 'Scan workout photo'}
                 </Text>
-              </TouchableOpacity>
-
-              {/* Add text note */}
-              <TouchableOpacity
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '10' }}
-                onPress={() => setIsTextNoteModalOpen(true)}
-                activeOpacity={0.75}
-              >
-                <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
-                <Text style={{ color: GOLD, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>Add Text Note</Text>
               </TouchableOpacity>
 
               {/* Log different session */}
@@ -5611,68 +5704,7 @@ export default function TodayScreen() {
               </Text>
             </TouchableOpacity>
             {/* Add text note */}
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, borderColor: GOLD + '50', backgroundColor: GOLD + '12', paddingHorizontal: 20, paddingVertical: 12 }}
-              onPress={() => setIsTextNoteModalOpen(true)}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons name="pencil-outline" size={18} color={GOLD} />
-              <Text style={{ color: GOLD, fontSize: 14, fontWeight: '600' }}>Add Text Note</Text>
-            </TouchableOpacity>
           </View>
-        )}
-
-        {/* ── Text Note Modal — conditionally mounted so only ONE Modal is in the
-             tracker tree at a time; prevents sibling-Modal conflict on iOS/Android. ── */}
-        {isTextNoteModalOpen && (
-          <Modal
-            visible
-            transparent
-            animationType="fade"
-            onRequestClose={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-          >
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-              <Pressable
-                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
-                onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-              >
-                <Pressable onPress={e => e.stopPropagation()}>
-                  <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.xl, paddingBottom: SPACING.xl + 8, gap: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border }}>
-                    <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>What did you do today?</Text>
-                    <TextInput
-                      style={{ backgroundColor: COLORS.background, color: COLORS.text.primary, borderRadius: RADIUS.md, padding: SPACING.md, fontSize: FONTS.sizes.base, lineHeight: 22, minHeight: 120, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border }}
-                      placeholder="e.g. 30 min easy run, upper body pump, mobility work..."
-                      placeholderTextColor={COLORS.text.muted}
-                      multiline
-                      value={textNoteInput}
-                      onChangeText={setTextNoteInput}
-                      autoFocus
-                    />
-                    <View style={{ flexDirection: 'row', gap: SPACING.md }}>
-                      <TouchableOpacity
-                        style={{ flex: 1, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' }}
-                        onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={{ color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, fontSize: FONTS.sizes.base }}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={{ flex: 2, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, backgroundColor: !textNoteInput.trim() ? GOLD + '60' : GOLD, alignItems: 'center' }}
-                        onPress={handleSaveTextNote}
-                        disabled={isSavingNote || !textNoteInput.trim()}
-                        activeOpacity={0.85}
-                      >
-                        {isSavingNote
-                          ? <ActivityIndicator size="small" color="#000" />
-                          : <Text style={{ color: '#000', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.base }}>Save Note</Text>
-                        }
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </Pressable>
-              </Pressable>
-            </KeyboardAvoidingView>
-          </Modal>
         )}
 
         {/* ── ExercisePicker for tracker "Add another exercise" ──────────────── */}
@@ -5880,7 +5912,8 @@ export default function TodayScreen() {
                   canMoveDown={fullIdx < exercises.length - 1}
                   onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
-                  onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                  onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
+                      onNoteRemove={() => handleProgramNoteRemove(ex.id)}
                   pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                   onEffortSelect={handleEffortSelect}
                   profileUnits={profileUnits}
@@ -5964,7 +5997,8 @@ export default function TodayScreen() {
             canMoveDown={fullIdx < exercises.length - 1}
             onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
             exerciseNote={notesByExercise[ex.id] ?? ''}
-            onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+            onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
+                      onNoteRemove={() => handleProgramNoteRemove(ex.id)}
             pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
             onEffortSelect={handleEffortSelect}
             profileUnits={profileUnits}
@@ -6034,7 +6068,8 @@ export default function TodayScreen() {
                   canMoveDown={fullIdx < exercises.length - 1}
                   onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
-                  onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                  onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
+                      onNoteRemove={() => handleProgramNoteRemove(ex.id)}
                   pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                   onEffortSelect={handleEffortSelect}
                   profileUnits={profileUnits}
@@ -6089,7 +6124,8 @@ export default function TodayScreen() {
                 canMoveDown={fullIdx < exercises.length - 1}
                 onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                 exerciseNote={notesByExercise[ex.id] ?? ''}
-                onNoteChange={(note) => setNotesByExercise(prev => ({ ...prev, [ex.id]: note }))}
+                onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
+                      onNoteRemove={() => handleProgramNoteRemove(ex.id)}
                 pendingEffortLogId={pendingEffort?.exerciseId === ex.id ? pendingEffort.logEntryId : null}
                 onEffortSelect={handleEffortSelect}
                 profileUnits={profileUnits}

@@ -210,6 +210,12 @@ export const logApi = {
       method: 'PATCH',
       body: JSON.stringify({ sessionId, orderedExerciseNames }),
     }),
+  /**
+   * Persist the notes field on a single log entry.
+   * Pass notes=null to clear/remove the note.
+   */
+  patchNote: (id: string, notes: string | null) =>
+    api(`/log/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes }) }),
   // ── Tracker Phase 3: per-set upsert ─────────────────────────────────────
   commitTrackerSet: (entry: {
     setId: string; date: string; sessionTitle: string;
