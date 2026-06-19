@@ -5351,8 +5351,6 @@ export default function TodayScreen() {
     // Text-note entries (shown as note cards; never passed to ExerciseCard)
     const noteLogs = trackerLogs.filter((l: any) => l.prescriptionType === 'text_note');
 
-    console.log('[ADD-DEBUG] TRACKER return block rendering. trainingMode=', trainingMode, 'modalVisible=', modalVisible, 'pickerMode=', pickerMode);
-
     return (
       <SafeAreaView style={s.safe}>
         {/* Header */}
@@ -5457,13 +5455,7 @@ export default function TodayScreen() {
               {/* Add another exercise */}
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD }}
-                onPress={() => {
-                  console.log('[ADD-DEBUG] button pressed. before:', { modalVisible, pickerMode });
-                  setPickerMode('tracker-add');
-                  setAdjustKey(''); setAdjustName('');
-                  setModal(true);
-                  console.log('[ADD-DEBUG] setters called (values update next render)');
-                }}
+                onPress={() => { setPickerMode('tracker-add'); setAdjustKey(''); setAdjustName(''); setModal(true); }}
                 activeOpacity={0.75}
               >
                 <MaterialCommunityIcons name="plus" size={18} color={GOLD} />
@@ -5550,58 +5542,60 @@ export default function TodayScreen() {
           </View>
         )}
 
-        {/* ── Text Note Modal ─────────────────────────────────────────────────── */}
-        <Modal
-          visible={isTextNoteModalOpen}
-          transparent
-          animationType="fade"
-          onRequestClose={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-        >
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-            <Pressable
-              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
-              onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-            >
-              <Pressable onPress={e => e.stopPropagation()}>
-                <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.xl, paddingBottom: SPACING.xl + 8, gap: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border }}>
-                  <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>What did you do today?</Text>
-                  <TextInput
-                    style={{ backgroundColor: COLORS.background, color: COLORS.text.primary, borderRadius: RADIUS.md, padding: SPACING.md, fontSize: FONTS.sizes.base, lineHeight: 22, minHeight: 120, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border }}
-                    placeholder="e.g. 30 min easy run, upper body pump, mobility work..."
-                    placeholderTextColor={COLORS.text.muted}
-                    multiline
-                    value={textNoteInput}
-                    onChangeText={setTextNoteInput}
-                    autoFocus
-                  />
-                  <View style={{ flexDirection: 'row', gap: SPACING.md }}>
-                    <TouchableOpacity
-                      style={{ flex: 1, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' }}
-                      onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={{ color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, fontSize: FONTS.sizes.base }}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flex: 2, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, backgroundColor: !textNoteInput.trim() ? GOLD + '60' : GOLD, alignItems: 'center' }}
-                      onPress={handleSaveTextNote}
-                      disabled={isSavingNote || !textNoteInput.trim()}
-                      activeOpacity={0.85}
-                    >
-                      {isSavingNote
-                        ? <ActivityIndicator size="small" color="#000" />
-                        : <Text style={{ color: '#000', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.base }}>Save Note</Text>
-                      }
-                    </TouchableOpacity>
+        {/* ── Text Note Modal — conditionally mounted so only ONE Modal is in the
+             tracker tree at a time; prevents sibling-Modal conflict on iOS/Android. ── */}
+        {isTextNoteModalOpen && (
+          <Modal
+            visible
+            transparent
+            animationType="fade"
+            onRequestClose={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+          >
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+              <Pressable
+                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
+                onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+              >
+                <Pressable onPress={e => e.stopPropagation()}>
+                  <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.xl, paddingBottom: SPACING.xl + 8, gap: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border }}>
+                    <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>What did you do today?</Text>
+                    <TextInput
+                      style={{ backgroundColor: COLORS.background, color: COLORS.text.primary, borderRadius: RADIUS.md, padding: SPACING.md, fontSize: FONTS.sizes.base, lineHeight: 22, minHeight: 120, textAlignVertical: 'top', borderWidth: 1, borderColor: COLORS.border }}
+                      placeholder="e.g. 30 min easy run, upper body pump, mobility work..."
+                      placeholderTextColor={COLORS.text.muted}
+                      multiline
+                      value={textNoteInput}
+                      onChangeText={setTextNoteInput}
+                      autoFocus
+                    />
+                    <View style={{ flexDirection: 'row', gap: SPACING.md }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' }}
+                        onPress={() => { setIsTextNoteModalOpen(false); setTextNoteInput(''); }}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={{ color: COLORS.text.muted, fontWeight: FONTS.weights.semibold, fontSize: FONTS.sizes.base }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 2, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, backgroundColor: !textNoteInput.trim() ? GOLD + '60' : GOLD, alignItems: 'center' }}
+                        onPress={handleSaveTextNote}
+                        disabled={isSavingNote || !textNoteInput.trim()}
+                        activeOpacity={0.85}
+                      >
+                        {isSavingNote
+                          ? <ActivityIndicator size="small" color="#000" />
+                          : <Text style={{ color: '#000', fontWeight: FONTS.weights.bold, fontSize: FONTS.sizes.base }}>Save Note</Text>
+                        }
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
+                </Pressable>
               </Pressable>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Modal>
+            </KeyboardAvoidingView>
+          </Modal>
+        )}
 
         {/* ── ExercisePicker for tracker "Add another exercise" ──────────────── */}
-        {(() => { console.log('[ADD-DEBUG] tracker picker render. visible would be:', modalVisible && pickerMode === 'tracker-add', { modalVisible, pickerMode }); return null; })()}
         <ExercisePicker
           visible={modalVisible && pickerMode === 'tracker-add'}
           onClose={() => { setModal(false); setPickerMode('swap'); }}
