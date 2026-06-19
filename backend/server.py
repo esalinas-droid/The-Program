@@ -30,7 +30,7 @@ import logging
 from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
-load_dotenv(ROOT_DIR / '.env.local', override=True)  # secrets override — gitignored
+load_dotenv(ROOT_DIR / '.env.local', override=False)  # local secrets; K8s env vars take precedence
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
