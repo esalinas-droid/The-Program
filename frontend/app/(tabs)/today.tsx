@@ -12,8 +12,10 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { getAuthToken } from '../../src/utils/auth';
 import { setParsedSession } from '../../src/utils/parsedSessionStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { GestureDetector, type GestureType } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
+import { DragSection } from '../../src/components/DragSection';
 import { getProfile } from '../../src/utils/storage';
 import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi, analyticsApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
@@ -71,6 +73,31 @@ const swapWithinGroup = <T extends { id: string; category?: string }>(
   [next[idx], next[j]] = [next[j], next[idx]];
   return next;
 };
+
+// Move an exercise to an absolute position *within its own display group*.
+// The group's flat-array slots are preserved (non-group exercises keep their
+// positions), mirroring the backend's within-group order reassignment.
+const moveWithinGroup = <T extends { id: string; category?: string }>(
+  list: T[], exerciseId: string, toIndex: number,
+): T[] => {
+  const idx = list.findIndex(e => e.id === exerciseId);
+  if (idx === -1) return list;
+  const group = displayGroupOf(list[idx].category);
+  const groupIdxs = list.reduce<number[]>((acc, e, i) => {
+    if (displayGroupOf(e.category) === group) acc.push(i);
+    return acc;
+  }, []);
+  const pos = groupIdxs.indexOf(idx);
+  const clamped = Math.max(0, Math.min(toIndex, groupIdxs.length - 1));
+  if (pos === clamped) return list;
+  const groupItems = groupIdxs.map(i => list[i]);
+  const [moved] = groupItems.splice(pos, 1);
+  groupItems.splice(clamped, 0, moved);
+  const next = [...list];
+  groupIdxs.forEach((slot, k) => { next[slot] = groupItems[k]; });
+  return next;
+};
+
 
 
 // ── P2b: unified field model (replaces P1/P2a fieldShape + conditioningFields) ──
@@ -2217,6 +2244,24 @@ function isTimedPrescription(prescription: string): boolean {
   return (lower.includes('sec') || lower.includes('min')) && !lower.includes('×') && !/ x /i.test(lower);
 }
 
+// ── DragHandle ────────────────────────────────────────────────────────────────
+// Grip icon in the card header. Wraps the per-row Pan gesture so ONLY the handle
+// (long-press ~400ms) starts a drag — taps, arrows, kebab and body inputs are
+// untouched. Program mode only.
+function DragHandle({ gesture }: { gesture: GestureType }) {
+  return (
+    <GestureDetector gesture={gesture}>
+      <View
+        style={{ paddingHorizontal: 4, paddingVertical: 6, justifyContent: 'center', alignItems: 'center' }}
+        hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+      >
+        <MaterialCommunityIcons name="drag-horizontal-variant" size={20} color={COLORS.text.muted} />
+      </View>
+    </GestureDetector>
+  );
+}
+
+
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
 function ExerciseCard({
   exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
@@ -2226,7 +2271,7 @@ function ExerciseCard({
   onMoveUp, onMoveDown, canMoveUp, canMoveDown, onHowTo,
   exerciseNote, onNoteSave, onNoteRemove, pendingEffortLogId, onEffortSelect,
   profileUnits, onFieldsChange,
-  onRemoveExercise,
+  onRemoveExercise, dragHandle,
 }: {
   exercise: Exercise;
   expanded: boolean;
@@ -2271,6 +2316,8 @@ function ExerciseCard({
   onFieldsChange?: (newFields: FieldSpec[], scope: 'today' | 'everyTime') => void;
   // ── Tracker: whole-exercise removal ──────────────────────────────────────
   onRemoveExercise?: () => void;
+  // ── Drag-to-reorder handle (program mode only; wraps a Pan gesture) ───────
+  dragHandle?: React.ReactNode;
 }) {
   const catStyle    = getCategoryStyle(exercise.category);
   const loggedCount = exercise.sets.filter(s => loggedSets.has(s.id)).length;
@@ -2446,6 +2493,8 @@ function ExerciseCard({
           <View style={[ec.progressPill, { backgroundColor: progColor + '20' }]}>
             <Text style={[ec.progressText, { color: progColor }]}>{loggedCount}/{total}</Text>
           </View>
+          {/* ⠿ drag handle — long-press to reorder within section (program mode) */}
+          {dragHandle}
           {/* ↑ reorder arrow */}
           {onMoveUp && canMoveUp && (
             <TouchableOpacity
@@ -3090,6 +3139,7 @@ export default function TodayScreen() {
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
+  const [scrollEnabled, setScrollEnabled] = useState(true);  // disabled during drag-reorder
   const [sessionFinished, setSessionFinished] = useState(false);
   // B1 fix: initialize as null; never default to 'program' to prevent UI flash
   const [trainingMode, setTrainingMode] = useState<'program' | 'free' | null>(null);
@@ -4860,6 +4910,27 @@ export default function TodayScreen() {
     } catch (e) { console.warn('[Reorder] Failed:', e); }
   }, [planId, sessionId]);
 
+  // ── Drag-to-reorder: move an exercise to an absolute slot within its section ──
+  const handleDragReorder = useCallback(async (exerciseId: string, toIndex: number) => {
+    if (!planId || !sessionId) return;
+    let prevSnapshot: Exercise[] = [];
+    setExercises(prev => { prevSnapshot = prev; return moveWithinGroup(prev, exerciseId, toIndex); });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await exerciseApi.reorderExercise(planId, sessionId, exerciseId, { newIndex: toIndex });
+    } catch (e) {
+      console.warn('[DragReorder] Failed, rolling back:', e);
+      setExercises(prevSnapshot);
+      Alert.alert('Reorder failed', 'Could not save the new order. Please try again.');
+    }
+  }, [planId, sessionId]);
+
+  // Program-mode display-group arrays (drive rendering AND drag-reorder isolation).
+  const warmupExercises   = exercises.filter(ex => ex.category === 'warmup');
+  const mainExercises     = exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown' && ex.category !== 'gpp');
+  const gppExercises      = exercises.filter(ex => ex.category === 'gpp');
+  const cooldownExercises = exercises.filter(ex => ex.category === 'cooldown');
+
   // ── Phase 2: Kebab action handlers ────────────────────────────────────────────
 
   // SWAP — close kebab, open ExercisePicker with this exercise
@@ -5799,6 +5870,7 @@ export default function TodayScreen() {
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={scrollEnabled}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -5935,9 +6007,14 @@ export default function TodayScreen() {
               </View>
             )}
             <Text style={s.sectionLabel}>WARM-UP</Text>
-            {exercises.filter(ex => ex.category === 'warmup').map((ex, gi, garr) => {
+            <DragSection
+              data={warmupExercises}
+              keyExtractor={(e) => e.id}
+              onActiveChange={(a) => setScrollEnabled(!a)}
+              onReorder={(from, to) => handleDragReorder(warmupExercises[from].id, to)}
+              renderItem={(ex, gi, gesture) => {
               const fullIdx = gi;
-              const groupLen = garr.length;
+              const groupLen = warmupExercises.length;
               return (
                 <ExerciseCard
                   key={ex.id}
@@ -5982,9 +6059,11 @@ export default function TodayScreen() {
                   onEffortSelect={handleEffortSelect}
                   profileUnits={profileUnits}
                   onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
+                  dragHandle={<DragHandle gesture={gesture} />}
                 />
               );
-            })}
+            }}
+            />
           </>
         )}
 
@@ -6016,9 +6095,14 @@ export default function TodayScreen() {
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
         {/* ── MAIN/SUPPLEMENTAL/ACCESSORY/PREHAB EXERCISE CARDS ── */}
-        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown' && ex.category !== 'gpp').map((ex, gi, garr) => {
+        <DragSection
+          data={mainExercises}
+          keyExtractor={(e) => e.id}
+          onActiveChange={(a) => setScrollEnabled(!a)}
+          onReorder={(from, to) => handleDragReorder(mainExercises[from].id, to)}
+          renderItem={(ex, gi, gesture) => {
           const fullIdx = gi;
-          const groupLen = garr.length;
+          const groupLen = mainExercises.length;
           return (
           <ExerciseCard
             key={ex.id}
@@ -6068,9 +6152,11 @@ export default function TodayScreen() {
             onEffortSelect={handleEffortSelect}
             profileUnits={profileUnits}
             onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
+            dragHandle={<DragHandle gesture={gesture} />}
           />
           );
-        })}
+        }}
+        />
 
         {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ────────
              The "+ Add Exercise" button sits between exercises and conditioning. */}
@@ -6093,9 +6179,14 @@ export default function TodayScreen() {
         {exercises.filter(ex => ex.category === 'gpp').length > 0 && (
           <>
             <Text style={s.sectionLabel}>CONDITIONING</Text>
-            {exercises.filter(ex => ex.category === 'gpp').map((ex, gi, garr) => {
+            <DragSection
+              data={gppExercises}
+              keyExtractor={(e) => e.id}
+              onActiveChange={(a) => setScrollEnabled(!a)}
+              onReorder={(from, to) => handleDragReorder(gppExercises[from].id, to)}
+              renderItem={(ex, gi, gesture) => {
               const fullIdx = gi;
-              const groupLen = garr.length;
+              const groupLen = gppExercises.length;
               return (
                 <ExerciseCard
                   key={ex.id}
@@ -6140,9 +6231,11 @@ export default function TodayScreen() {
                   onEffortSelect={handleEffortSelect}
                   profileUnits={profileUnits}
                   onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
+                  dragHandle={<DragHandle gesture={gesture} />}
                 />
               );
-            })}
+            }}
+            />
           </>
         )}
 
@@ -6150,9 +6243,14 @@ export default function TodayScreen() {
         {exercises.filter(ex => ex.category === 'cooldown').length > 0 && (
           <>
             <Text style={s.sectionLabel}>COOLDOWN</Text>
-            {exercises.filter(ex => ex.category === 'cooldown').map((ex, gi, garr) => {
+            <DragSection
+              data={cooldownExercises}
+              keyExtractor={(e) => e.id}
+              onActiveChange={(a) => setScrollEnabled(!a)}
+              onReorder={(from, to) => handleDragReorder(cooldownExercises[from].id, to)}
+              renderItem={(ex, gi, gesture) => {
               const fullIdx = gi;
-              const groupLen = garr.length;
+              const groupLen = cooldownExercises.length;
               return (
               <ExerciseCard
                 key={ex.id}
@@ -6197,9 +6295,11 @@ export default function TodayScreen() {
                 onEffortSelect={handleEffortSelect}
                 profileUnits={profileUnits}
                 onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
+                dragHandle={<DragHandle gesture={gesture} />}
               />
               );
-            })}
+            }}
+            />
           </>
         )}
 

@@ -1,6 +1,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { seedApi } from '../src/utils/api';
 import { getProfile } from '../src/utils/storage';
 import { setupAllNotifications } from '../src/utils/notifications';
@@ -15,7 +16,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: COLORS.background } }}>
         <Stack.Screen name="index" />
@@ -35,6 +36,6 @@ export default function RootLayout() {
         <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="session-detail" options={{ animation: 'slide_from_right' }} />
       </Stack>
-    </>
+    </GestureHandlerRootView>
   );
 }

@@ -1,0 +1,54 @@
+{
+  "summary": "Backend-only test for the NEW long-press drag-to-reorder FEATURE — PATCH /api/programs/{pid}/sessions/{sid}/exercises/{eid}/order now accepts {\"newIndex\": N} in addition to legacy {\"direction\": \"up|down\"}. All 14 tests PASS against live backend using user_b@theprogram.app (52-week Hypertrophy plan). Covers: (1) multi-position jump (first→last in one call); (2) isolation — other display groups' orders untouched; (3) propagation to current+future weeks of same sessionType, past bit-for-bit untouched; (4a) newIndex<0 clamps to 0; (4b) newIndex>=groupLen clamps to last; (4c) newIndex==current is no-op; (5a-c) 400 on string/bool newIndex and empty body; (5d) 404 on unknown exerciseId; (6a-c) REGRESSION — direction=up/down still swap with adjacent in-group neighbor, section-edge is no-op, invalid direction w/o newIndex → 400; (7) duplicate-name tiebreaker verified via code review (endpoint uses target_group_pos when future session has same-name+same-category matches; branch active for newIndex mode). Also confirmed prior 8/8 isolated-reorder tests still pass — no regression. Every mutating test reverts its DB change; user's plan is preserved for native drag-UX testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_results": {
+    "test_1_multi_position_jump_first_to_last": "PASS — target moved 0→last in ONE call; group id-sequence rearranged correctly; order pool preserved; non-group exercises untouched; reverted",
+    "test_2_isolation_other_groups_unaffected": "PASS — jumping within one display group leaves every other group's {id→order} snapshot bit-identical",
+    "test_3_propagation_future_weeks_swapped_past_untouched": "PASS — past_before==past_after; future weeks show same-named target at last position; updatedSessions>=1; reverted",
+    "test_4a_clamp_negative_to_zero": "PASS — newIndex=-5 lands target at group[0]; response echoes newIndex:-5 (clamping is internal, as expected)",
+    "test_4b_clamp_overflow_to_last": "PASS — newIndex=len+99 lands target at group[-1]",
+    "test_4c_current_position_is_noop": "PASS — newIndex==current_idx keeps target session's {id→order} identical",
+    "test_5a_newindex_string_returns_400": "PASS",
+    "test_5b_newindex_boolean_returns_400": "PASS — isinstance(bool) explicitly excluded in endpoint",
+    "test_5c_empty_body_returns_400": "PASS — {} → 400 with 'direction must be up/down or provide newIndex'",
+    "test_5d_unknown_exercise_id_returns_404": "PASS",
+    "test_6a_direction_up_swaps_adjacent": "PASS — legacy path unchanged; response now includes newIndex:null",
+    "test_6b_direction_edge_noop": "PASS — first-in-group UP still a no-op",
+    "test_6c_invalid_direction_no_newindex_returns_400": "PASS — {'direction':'sideways'} → 400",
+    "test_7_disambiguation_code_review": "PASS — target_group_pos + 'if len(matches) > 1 and target_group_pos in matches' present; newIndex clamp expression 'max(0, min(new_index, len(group) - 1))' present; past-week skip intact",
+    "regression_test_reorder_isolated.py": "PASS 8/8 — no regression on prior isolated-reorder tests"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reorder_new_index.py",
+    "/app/test_reports/pytest/reorder_new_index_results.xml",
+    "/app/backend/tests/test_reorder_isolated.py",
+    "/app/test_reports/pytest/reorder_isolated_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Endpoint /app/backend/server.py:866-984 cleanly accepts EITHER newIndex OR direction. Validation at line 876-880 correctly rejects bool via isinstance(new_index, bool) check.",
+    "newIndex branch (lines 962-971) uses in-place pop/insert on the group list and reassigns order values from a pre-collected ascending order_pool — this preserves the exact order-value spacing of the group even when it's non-contiguous (e.g. warmup=1,2 / main=10,20,30).",
+    "target_group_pos disambiguation (lines 924-928, 955-956) applies to BOTH newIndex and direction modes — correctly handles same-name+same-category duplicates in future sessions.",
+    "Past-week skip guard (line 934) unchanged — past weeks remain bit-identical after any move.",
+    "In-memory cache invalidation (line 980) still in place — subsequent GET /api/plan/year returns fresh state.",
+    "Response contract at line 983-984 correctly returns null for the mode not used ({direction: null, newIndex: N} for newIndex path; {direction: 'up', newIndex: None} for direction path)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reorder_new_index.py (new — 14 tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14 new + 8/8 regression = 22/22)", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "None — used user_b@theprogram.app's existing 52-week Hypertrophy plan. Fixture selects a ≥3-exercise display group with distinct order values + future weeks of same sessionType. Every mutating test reverts its change so DB is preserved for native drag-UX testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The reorder endpoint now supports both {newIndex:N} (absolute position, clamped) and {direction:'up'|'down'} (legacy adjacent swap). Both paths share the same display-group isolation, current+future-week propagation, past-week protection, and duplicate-name tiebreaker (target_group_pos). Fixture in test_reorder_new_index.py requires a ≥3-exercise display group with distinct orders and at least one future-week session of the same sessionType — user_b (52-wk Hypertrophy) satisfies this. Boundary case 2 (natural same-name+same-category duplicates in a future session's group) has no natural fixture in current seed data; disambiguation was verified via code review only. If needed later, insert a synthetic duplicate directly into db.saved_plans to exercise the runtime branch.",
+  "rca_of_issue": "No issue found. The newIndex extension is behaviorally correct across all tested paths (isolation, propagation, clamping, no-op, validation) and the legacy direction path is a clean regression pass."
+}

@@ -810,10 +810,12 @@ export const exerciseApi = {
       method: 'PATCH', body: JSON.stringify({ category }),
     }),
   reorderExercise: (
-    programId: string, sessionId: string, exerciseId: string, direction: 'up' | 'down'
-  ): Promise<{ success: boolean; updatedSessions: number; direction: string }> =>
+    programId: string, sessionId: string, exerciseId: string,
+    move: 'up' | 'down' | { newIndex: number }
+  ): Promise<{ success: boolean; updatedSessions: number; direction: string | null; newIndex: number | null }> =>
     api(`/programs/${programId}/sessions/${sessionId}/exercises/${exerciseId}/order`, {
-      method: 'PATCH', body: JSON.stringify({ direction }),
+      method: 'PATCH',
+      body: JSON.stringify(typeof move === 'string' ? { direction: move } : { newIndex: move.newIndex }),
     }),
   removeExercise: (
     programId: string, sessionId: string, exerciseId: string

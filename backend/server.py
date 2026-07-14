@@ -871,9 +871,13 @@ async def reorder_exercise_in_plan(
     """Move an exercise up or down. Applies to current + all future sessions of same type.
     proposedPlan in documents collection is NOT modified — only saved_plans is updated.
     """
+    new_index = body.get("newIndex")
     direction = (body.get("direction") or "").lower()
-    if direction not in ("up", "down"):
-        raise HTTPException(status_code=400, detail="direction must be 'up' or 'down'")
+    if new_index is not None:
+        if not isinstance(new_index, int) or isinstance(new_index, bool):
+            raise HTTPException(status_code=400, detail="newIndex must be an integer")
+    elif direction not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="direction must be 'up' or 'down' (or provide newIndex)")
 
     plan_doc = await db.saved_plans.find_one({"planId": program_id, "userId": userId, "status": "active"})
     if not plan_doc:
@@ -955,7 +959,17 @@ async def reorder_exercise_in_plan(
 
                     if idx == -1:
                         continue
-                    if direction == "up" and idx > 0:
+                    if new_index is not None:
+                        # Move target to an absolute position within its group (clamped).
+                        tgt = max(0, min(new_index, len(group) - 1))
+                        if tgt != idx:
+                            order_pool = [e.order for e in group]   # ascending (group is sorted)
+                            moved = group.pop(idx)
+                            group.insert(tgt, moved)
+                            for k, e in enumerate(group):
+                                e.order = order_pool[k]
+                            updated += 1
+                    elif direction == "up" and idx > 0:
                         group[idx].order, group[idx - 1].order = group[idx - 1].order, group[idx].order
                         updated += 1
                     elif direction == "down" and idx < len(group) - 1:
@@ -964,8 +978,10 @@ async def reorder_exercise_in_plan(
 
     await _save_plan_to_db(plan_obj, userId)
     _prog_store["plans"].pop(userId, None)  # invalidate in-memory cache
-    logger.info(f"[ExOrder] user={userId} exercise='{target_exercise_name}' direction='{direction}' in {updated} sessions")
-    return {"success": True, "updatedSessions": updated, "direction": direction}
+    _mode = f"newIndex={new_index}" if new_index is not None else f"direction='{direction}'"
+    logger.info(f"[ExOrder] user={userId} exercise='{target_exercise_name}' {_mode} in {updated} sessions")
+    return {"success": True, "updatedSessions": updated,
+            "direction": direction or None, "newIndex": new_index}
 
 
 @api_router.delete("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}")
