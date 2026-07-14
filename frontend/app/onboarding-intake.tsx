@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert, Image,
-  KeyboardAvoidingView, Dimensions,
+  KeyboardAvoidingView, Dimensions, Linking,
 } from 'react-native';
 import { WEAKNESS_IMAGES, EQUIPMENT_IMAGES, ANATOMY_IMAGES } from '../src/constants/onboardingAssets';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -68,7 +68,7 @@ const STEP_META = [
   },
   {
     greeting:  "Your program is more effective when we know this.",
-    question:  "Where do your lifts\nbreak down?",
+    question:  "Where's your weakest/sticking\npoint on your lifts?",
     subtext:   "Select all that apply — your coach will target these directly.",
     canSkip:   true,
   },
@@ -97,16 +97,16 @@ const STEP_META = [
     canSkip:   false,
   },
   {
-    greeting:  "One more thing.",
-    question:  "Do you have a current\nworkout program?",
-    subtext:   "Describe it and we'll build around what's already working for you. Or skip to let the AI design from scratch.",
-    canSkip:   true,
-  },
-  {
     greeting:  "Almost there.",
     question:  "Where do you train &\ndo you have a competition?",
     subtext:   "Gym environment + competition timeline shape your periodization.",
     canSkip:   false,
+  },
+  {
+    greeting:  "One last thing.",
+    question:  "Do you have a current\nworkout program?",
+    subtext:   "Describe it and we'll build around what's already working for you. Or skip to let the AI design from scratch.",
+    canSkip:   true,
   },
 ];
 
@@ -491,12 +491,12 @@ export default function OnboardingIntake() {
       case 9:  return injuries.length > 0;
       case 10: return true; // optional — medical documents
       case 11: return !!selectedSleep && !!stressLevel && !!occupationType;
-      case 12: return true; // optional, can skip — current program
-      case 13: {
-      if (gymTypes.length === 0 || hasCompetition === null) return false;
-      if (hasCompetition === true) return competitionType !== '' && competitionDate.trim() !== '';
-      return true; // hasCompetition === false → no date needed, activate immediately
-    }
+      case 12: {
+        if (gymTypes.length === 0 || hasCompetition === null) return false;
+        if (hasCompetition === true) return competitionType !== '' && competitionDate.trim() !== '';
+        return true; // hasCompetition === false → no date needed
+      }
+      case 13: return true; // optional, can skip — current program
       default: return false;
     }
   };
@@ -1485,6 +1485,15 @@ export default function OnboardingIntake() {
           <Text style={{ fontSize: 11, color: COLORS.text.secondary, lineHeight: 16 }}>
             Medical documents are encrypted and only used by the AI to personalize your program. Never shared or sold.
           </Text>
+          <TouchableOpacity
+            onPress={() => Linking.openURL('https://theprogramapp.com/privacy')}
+            activeOpacity={0.7}
+            style={{ marginTop: 6 }}
+          >
+            <Text style={{ fontSize: 11, color: COLORS.accent, fontWeight: FONTS.weights.semibold }}>
+              Learn more about how your data is stored →
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -1825,8 +1834,8 @@ export default function OnboardingIntake() {
       case 9:  return renderStep8();
       case 10: return renderMedicalStep();
       case 11: return renderStep9();
-      case 12: return renderProgramStep();
-      case 13: return renderStep10();
+      case 12: return renderStep10();
+      case 13: return renderProgramStep();
       default: return null;
     }
   };
