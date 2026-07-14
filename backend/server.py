@@ -852,6 +852,17 @@ async def update_exercise_fields_in_plan(
     return {"success": True, "updatedSessions": updated, "fields": new_fields}
 
 
+def _display_group(cat) -> str:
+    """Collapse a backend exercise category into the visual section the frontend
+    renders it under (warmup / gpp / cooldown / main). Any unexpected or missing
+    category safely defaults to 'main' — matching frontend displayGroupOf()."""
+    c = (cat.value if hasattr(cat, "value") else str(cat or "")).lower()
+    if c == "warmup":   return "warmup"
+    if c == "cooldown": return "cooldown"
+    if c == "gpp":      return "gpp"
+    return "main"
+
+
 @api_router.patch("/programs/{program_id}/sessions/{session_id}/exercises/{exercise_id}/order")
 async def reorder_exercise_in_plan(
     program_id: str, session_id: str, exercise_id: str,
@@ -874,7 +885,8 @@ async def reorder_exercise_in_plan(
     current_week_num = _calculate_current_week(plan_start) if plan_start else 1
 
     # Locate target session → exercise
-    target_session_type, target_exercise_name = None, None
+    target_session_type, target_exercise_name, target_category = None, None, None
+    target_session_ref = None
     for phase in plan_obj.phases:
         for block in (phase.blocks or []):
             for week in (block.weeks or []):
@@ -884,6 +896,8 @@ async def reorder_exercise_in_plan(
                             if ex.sessionExerciseId == exercise_id:
                                 target_session_type = session.sessionType
                                 target_exercise_name = ex.name
+                                target_category = ex.category
+                                target_session_ref = session
                                 break
                         if target_exercise_name:
                             break
@@ -897,7 +911,18 @@ async def reorder_exercise_in_plan(
     if not target_session_type or not target_exercise_name:
         raise HTTPException(status_code=404, detail="Exercise not found in plan.")
 
-    # Apply order swap in current week + all future weeks
+    # Apply order swap in current week + all future weeks — isolated to the target's
+    # display group so a move never jumps across visual sections (matches frontend).
+    target_group = _display_group(target_category)
+
+    # Group-relative position of the target within its own session — used as a
+    # tiebreaker when a future session holds two same-named same-category exercises.
+    _tgt_group = sorted(target_session_ref.exercises, key=lambda e: e.order)
+    _tgt_group = [e for e in _tgt_group if _display_group(e.category) == target_group]
+    target_group_pos = next(
+        (i for i, e in enumerate(_tgt_group) if e.sessionExerciseId == exercise_id), -1
+    )
+
     updated = 0
     for phase in plan_obj.phases:
         for block in (phase.blocks or []):
@@ -907,15 +932,34 @@ async def reorder_exercise_in_plan(
                 for session in (week.sessions or []):
                     if str(session.sessionType) != str(target_session_type):
                         continue
-                    exs = sorted(session.exercises, key=lambda e: e.order)
-                    idx = next((i for i, e in enumerate(exs) if e.name == target_exercise_name), -1)
+                    exs_sorted = sorted(session.exercises, key=lambda e: e.order)
+                    group = [e for e in exs_sorted if _display_group(e.category) == target_group]
+
+                    # The current target session: move exactly this exercise by its id.
+                    if session.sessionId == session_id:
+                        idx = next((i for i, e in enumerate(group) if e.sessionExerciseId == exercise_id), -1)
+                    else:
+                        # Future sessions: match by name AND category within the group.
+                        matches = [
+                            i for i, e in enumerate(group)
+                            if e.name == target_exercise_name
+                            and str(e.category or "") == str(target_category or "")
+                        ]
+                        if not matches:
+                            # Legacy fallback: match by name only within the group.
+                            matches = [i for i, e in enumerate(group) if e.name == target_exercise_name]
+                        if len(matches) > 1 and target_group_pos in matches:
+                            idx = target_group_pos          # disambiguate by position
+                        else:
+                            idx = matches[0] if matches else -1
+
                     if idx == -1:
                         continue
                     if direction == "up" and idx > 0:
-                        exs[idx].order, exs[idx - 1].order = exs[idx - 1].order, exs[idx].order
+                        group[idx].order, group[idx - 1].order = group[idx - 1].order, group[idx].order
                         updated += 1
-                    elif direction == "down" and idx < len(exs) - 1:
-                        exs[idx].order, exs[idx + 1].order = exs[idx + 1].order, exs[idx].order
+                    elif direction == "down" and idx < len(group) - 1:
+                        group[idx].order, group[idx + 1].order = group[idx + 1].order, group[idx].order
                         updated += 1
 
     await _save_plan_to_db(plan_obj, userId)

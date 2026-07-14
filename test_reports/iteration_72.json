@@ -1,0 +1,43 @@
+{
+  "summary": "Backend-only regression test for the PROGRAM MODE exercise reorder BUG FIX. PATCH /api/programs/{pid}/sessions/{sid}/exercises/{eid}/order verified against live backend using user_b@theprogram.app (Hypertrophy, 52-week plan). All 8 assertions PASS: (1) response shape {success, updatedSessions, direction}; (2) in-group swap; (3) first-in-group UP is no-op (no cross-group swap); (4) last-in-group DOWN is no-op; (5) propagation to current + future weeks, past untouched; (6) invalid direction → 400; (7) unknown exercise → 404; (8) _display_group() correctly collapses main/supplemental/accessory/prehab → 'main'. BOUNDARY CASE 2 (same-name duplicates in future session) verified by code inspection of the reorder endpoint since seed data has no natural duplicates in the same group.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_results": {
+    "test_1_response_shape_and_swap_in_group": "PASS — {success:true, updatedSessions>=1, direction:'up'} returned; order fields swapped within the group; reverted",
+    "test_2_category_isolation_no_cross_group_swap": "PASS — moving first-in-group UP produced no changes to any order values in the target session (no cross-group swap)",
+    "test_3_last_in_group_down_noop": "PASS — moving last-in-group DOWN is a no-op",
+    "test_4_propagation_current_and_future_past_untouched": "PASS — future weeks of same sessionType show swapped order; past weeks unchanged (past_before == past_after)",
+    "test_5_invalid_direction_returns_400": "PASS",
+    "test_6_unknown_exercise_returns_404": "PASS",
+    "test_7_display_group_helper_collapses_main_subcategories": "PASS — main/supplemental/accessory/prehab/None/'' all → 'main'; warmup/gpp/cooldown preserved",
+    "test_8_boundary_same_name_disambiguation_code_review": "PASS (code review) — endpoint uses target_group_pos when len(matches)>1 in future session, correctly disambiguating by group-relative position"
+  },
+  "boundary_case_2_note": "Seed data (user_a=1-week imported CSV, user_b=52-week Hypertrophy) contains no naturally occurring same-name+same-category duplicates within a single display group of a future session. The disambiguation logic (target_group_pos) was verified by static analysis of /app/backend/server.py lines 918-954. A live-DB test would require inserting a synthetic duplicate into db.saved_plans, which is out-of-scope for API-level regression testing.",
+  "test_report_links": [
+    "/app/backend/tests/test_reorder_isolated.py",
+    "/app/test_reports/pytest/reorder_isolated_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_display_group() helper at server.py:855-863 correctly matches the frontend's displayGroupOf() logic (warmup/cooldown/gpp preserved; all else → 'main').",
+    "Reorder endpoint (server.py:866-968) is properly scoped: past weeks skipped (week.weekNumber < current_week_num), target session moves by sessionExerciseId, future sessions match by (name+category) within display group with target_group_pos disambiguation, and in-memory cache (_prog_store['plans']) is invalidated after each write.",
+    "The endpoint mutates db.saved_plans (status='active') only — proposedPlan in db.documents is intentionally not touched, matching the design note in the fix."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reorder_isolated.py"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "None — used user_b@theprogram.app's existing 52-week plan. Every mutating test reverts its change so DB state is preserved for the user's own native testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reorder endpoint (PATCH /api/programs/{pid}/sessions/{sid}/exercises/{eid}/order) is fully green on backend. All swaps are correctly isolated to the display group. Fixture auto-selects user_b (Hypertrophy 52-wk) because user_a's imported CSV plan has only 1 week and cannot exercise the propagation path. If seed data changes and user_b becomes single-week, fixture falls back gracefully to any candidate with future weeks + a ≥2-exercise group with distinct order values.",
+  "rca_of_issue": "No new issue found. The bug fix (isolating reorder to the exercise's display group and using group-relative position for future-week disambiguation) is behaving correctly under all tested boundary conditions."
+}

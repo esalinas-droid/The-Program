@@ -37,6 +37,42 @@ const RED  = '#EF5350';
 type SetType     = 'warmup' | 'ramp' | 'work';
 type ExCategory  = 'primary' | 'speed' | 'supplemental' | 'accessory' | 'prehab' | 'warmup' | 'cooldown' | 'gpp';
 
+// ── Display-group mapping ────────────────────────────────────────────────────
+// Program mode renders exercises in 4 visual sections. Reorder must stay isolated
+// to the section the user sees. All "main" sub-categories collapse into 'main'
+// so they match the single rendered "EXERCISES" section exactly. Any unexpected
+// or missing category safely defaults to 'main'.
+type DisplayGroup = 'warmup' | 'main' | 'gpp' | 'cooldown';
+const displayGroupOf = (cat?: string | null): DisplayGroup => {
+  switch (cat) {
+    case 'warmup':   return 'warmup';
+    case 'cooldown': return 'cooldown';
+    case 'gpp':      return 'gpp';
+    default:         return 'main';
+  }
+};
+// Swap an exercise with its neighbor *within the same display group*.
+// Returns the list unchanged when the move would cross a group edge (no-op).
+const swapWithinGroup = <T extends { id: string; category?: string }>(
+  list: T[], exerciseId: string, direction: 'up' | 'down',
+): T[] => {
+  const idx = list.findIndex(e => e.id === exerciseId);
+  if (idx === -1) return list;
+  const group = displayGroupOf(list[idx].category);
+  const groupIdxs = list.reduce<number[]>((acc, e, i) => {
+    if (displayGroupOf(e.category) === group) acc.push(i);
+    return acc;
+  }, []);
+  const pos = groupIdxs.indexOf(idx);
+  const targetPos = direction === 'up' ? pos - 1 : pos + 1;
+  if (targetPos < 0 || targetPos >= groupIdxs.length) return list; // section edge → no-op
+  const j = groupIdxs[targetPos];
+  const next = [...list];
+  [next[idx], next[j]] = [next[j], next[idx]];
+  return next;
+};
+
+
 // ── P2b: unified field model (replaces P1/P2a fieldShape + conditioningFields) ──
 type FieldType = 'reps' | 'weight' | 'rpe' | 'time' | 'distance' | 'calories' | 'empty';
 type FieldSpec = { type: FieldType; unit?: string };
@@ -4808,15 +4844,7 @@ export default function TodayScreen() {
     setKebabSaving(true);
     try {
       await exerciseApi.reorderExercise(planId, sessionId, kebabMenuExId, direction);
-      setExercises(prev => {
-        const idx = prev.findIndex(e => e.id === kebabMenuExId);
-        if (direction === 'up' && idx > 0) {
-          const next = [...prev]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]; return next;
-        } else if (direction === 'down' && idx >= 0 && idx < prev.length - 1) {
-          const next = [...prev]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]; return next;
-        }
-        return prev;
-      });
+      setExercises(prev => swapWithinGroup(prev, kebabMenuExId, direction));
     } catch (e) { console.warn('[Kebab] Reorder failed:', e); }
     setKebabSaving(false);
     setKebabMenuExId(null);
@@ -4827,15 +4855,7 @@ export default function TodayScreen() {
     if (!planId || !sessionId) return;
     try {
       await exerciseApi.reorderExercise(planId, sessionId, exerciseId, direction);
-      setExercises(prev => {
-        const idx = prev.findIndex(e => e.id === exerciseId);
-        if (direction === 'up' && idx > 0) {
-          const next = [...prev]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]]; return next;
-        } else if (direction === 'down' && idx >= 0 && idx < prev.length - 1) {
-          const next = [...prev]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]; return next;
-        }
-        return prev;
-      });
+      setExercises(prev => swapWithinGroup(prev, exerciseId, direction));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) { console.warn('[Reorder] Failed:', e); }
   }, [planId, sessionId]);
@@ -5915,8 +5935,9 @@ export default function TodayScreen() {
               </View>
             )}
             <Text style={s.sectionLabel}>WARM-UP</Text>
-            {exercises.filter(ex => ex.category === 'warmup').map(ex => {
-              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+            {exercises.filter(ex => ex.category === 'warmup').map((ex, gi, garr) => {
+              const fullIdx = gi;
+              const groupLen = garr.length;
               return (
                 <ExerciseCard
                   key={ex.id}
@@ -5952,7 +5973,7 @@ export default function TodayScreen() {
                   onMoveUp={() => handleDirectOrder(ex.id, 'up')}
                   onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                   canMoveUp={fullIdx > 0}
-                  canMoveDown={fullIdx < exercises.length - 1}
+                  canMoveDown={fullIdx < groupLen - 1}
                   onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
                   onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
@@ -5995,8 +6016,9 @@ export default function TodayScreen() {
         <Text style={s.sectionLabel}>EXERCISES</Text>
 
         {/* ── MAIN/SUPPLEMENTAL/ACCESSORY/PREHAB EXERCISE CARDS ── */}
-        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown' && ex.category !== 'gpp').map(ex => {
-          const fullIdx = exercises.findIndex(e => e.id === ex.id);
+        {exercises.filter(ex => ex.category !== 'warmup' && ex.category !== 'cooldown' && ex.category !== 'gpp').map((ex, gi, garr) => {
+          const fullIdx = gi;
+          const groupLen = garr.length;
           return (
           <ExerciseCard
             key={ex.id}
@@ -6037,7 +6059,7 @@ export default function TodayScreen() {
             onMoveUp={() => handleDirectOrder(ex.id, 'up')}
             onMoveDown={() => handleDirectOrder(ex.id, 'down')}
             canMoveUp={fullIdx > 0}
-            canMoveDown={fullIdx < exercises.length - 1}
+            canMoveDown={fullIdx < groupLen - 1}
             onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
             exerciseNote={notesByExercise[ex.id] ?? ''}
             onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
@@ -6071,8 +6093,9 @@ export default function TodayScreen() {
         {exercises.filter(ex => ex.category === 'gpp').length > 0 && (
           <>
             <Text style={s.sectionLabel}>CONDITIONING</Text>
-            {exercises.filter(ex => ex.category === 'gpp').map(ex => {
-              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+            {exercises.filter(ex => ex.category === 'gpp').map((ex, gi, garr) => {
+              const fullIdx = gi;
+              const groupLen = garr.length;
               return (
                 <ExerciseCard
                   key={ex.id}
@@ -6108,7 +6131,7 @@ export default function TodayScreen() {
                   onMoveUp={() => handleDirectOrder(ex.id, 'up')}
                   onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                   canMoveUp={fullIdx > 0}
-                  canMoveDown={fullIdx < exercises.length - 1}
+                  canMoveDown={fullIdx < groupLen - 1}
                   onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
                   onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
@@ -6127,8 +6150,9 @@ export default function TodayScreen() {
         {exercises.filter(ex => ex.category === 'cooldown').length > 0 && (
           <>
             <Text style={s.sectionLabel}>COOLDOWN</Text>
-            {exercises.filter(ex => ex.category === 'cooldown').map(ex => {
-              const fullIdx = exercises.findIndex(e => e.id === ex.id);
+            {exercises.filter(ex => ex.category === 'cooldown').map((ex, gi, garr) => {
+              const fullIdx = gi;
+              const groupLen = garr.length;
               return (
               <ExerciseCard
                 key={ex.id}
@@ -6164,7 +6188,7 @@ export default function TodayScreen() {
                 onMoveUp={() => handleDirectOrder(ex.id, 'up')}
                 onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                 canMoveUp={fullIdx > 0}
-                canMoveDown={fullIdx < exercises.length - 1}
+                canMoveDown={fullIdx < groupLen - 1}
                 onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
                 exerciseNote={notesByExercise[ex.id] ?? ''}
                 onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
@@ -6259,9 +6283,11 @@ export default function TodayScreen() {
       {/* ── KEBAB MENU MODAL — Phase 2: 3-level sheet (main → subcat / adjust weight) ── */}
       {(() => {
         const kebabEx  = kebabMenuExId ? exercises.find(e => e.id === kebabMenuExId) : null;
-        const kebabIdx = kebabMenuExId ? exercises.findIndex(e => e.id === kebabMenuExId) : -1;
-        const canMoveUp   = kebabIdx > 0;
-        const canMoveDown = kebabIdx >= 0 && kebabIdx < exercises.length - 1;
+        const kebabGroup = kebabEx ? displayGroupOf(kebabEx.category) : null;
+        const kebabGroupList = kebabGroup ? exercises.filter(e => displayGroupOf(e.category) === kebabGroup) : [];
+        const kebabGroupPos = kebabEx ? kebabGroupList.findIndex(e => e.id === kebabEx.id) : -1;
+        const canMoveUp   = kebabGroupPos > 0;
+        const canMoveDown = kebabGroupPos >= 0 && kebabGroupPos < kebabGroupList.length - 1;
 
         const TOP_CATS = [
           { key: 'warmup',   label: 'Warm-up',   icon: 'run' },
