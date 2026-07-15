@@ -10,7 +10,11 @@ import time
 
 sys.path.insert(0, "/app/backend")
 
-os.environ.setdefault("EMERGENT_LLM_KEY", "sk-emergent-fAd8f9eB10a2fA81f7")
+# Read the key from the real environment only — never embed a literal.
+if not os.environ.get("EMERGENT_LLM_KEY"):
+    print("SKIP: EMERGENT_LLM_KEY is not set in the environment; "
+          "set it (e.g. in backend/.env) before running this test.")
+    sys.exit(0)
 
 from services.plan_extractor import extract_plan_from_text, build_annual_plan
 
