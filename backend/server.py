@@ -3960,7 +3960,12 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     # server-side. Supplied by the app; treated as the source of truth for "right now".
     _live_ctx_str = ""
     if request.current_session:
-        _live = _sanitize_text(request.current_session, 3000)
+        # Preserve line breaks (the client snapshot is a multi-line list); strip
+        # markup/control chars and collapse only intra-line whitespace. Cap length.
+        _live = request.current_session[:3000]
+        _live = re.sub(r"<[^>]*>", "", _live)
+        _live = re.sub(r"[^\S\n]+", " ", _live)          # collapse spaces/tabs, keep newlines
+        _live = re.sub(r"[\x00-\x09\x0b\x1f\x7f]", "", _live).strip()
         if _live:
             _live_ctx_str = (
                 "\n\nTHE ATHLETE'S SESSION RIGHT NOW (live — includes exercises they added, "
@@ -4216,11 +4221,22 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
 
     # Only send last 5 history messages to save tokens
     limited_history = request.conversation_history[-5:] if len(request.conversation_history) > 5 else request.conversation_history
-    for msg in limited_history:
-        if msg.role == "user":
-            await chat.send_message(UserMessage(text=msg.content))
-
-    response_text = await chat.send_message(UserMessage(text=request.message))
+    try:
+        for msg in limited_history:
+            if msg.role == "user":
+                await chat.send_message(UserMessage(text=msg.content))
+        response_text = await chat.send_message(UserMessage(text=request.message))
+    except Exception as _llm_err:
+        # LLM/proxy auth, timeout, or budget errors must not 500 the chat.
+        logger.error(f"[CoachChat] LLM call failed for user={userId}: {_llm_err}")
+        return {
+            "response": "I'm having trouble reaching my brain right now — please try again in a moment.",
+            "sources": [],
+            "conversation_id": request.conversation_id,
+            "has_program_change": False,
+            "program_change": None,
+            "added_exercise": None,
+        }
 
     # ── 10. Parse <PROGRAM_CHANGE> block ──────────────────────────────────────
     import re as _re, json as _json

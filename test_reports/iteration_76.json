@@ -1,0 +1,31 @@
+{
+  "summary": "Re-ran the full AI coach add-exercise test surface after EMERGENT_LLM_KEY was rotated and the two hardening fixes (try/except around chat.send_message returning a graceful added_exercise:null fallback, and newline-preserving current_session sanitiser) were applied. E2E LLM suite (test_coach_add_exercise.py) → 7/7 PASSED on first attempt (no retries needed). Pure-function validator suite (test_coach_add_exercise_validator.py) → 18/18 PASSED. Every behavioural case from the review request is now green: (1) happy path add face pulls 3x12 emits added_exercise with id starting 'added-ex-', valid category, sets=3, reps containing '12', name matching Face Pulls; response text has NO <ADD_EXERCISE> / </ADD_EXERCISE> / <PROGRAM_CHANGE> tag leaks and confirms naturally. (2) Prehab-style shoulder dislocates add → added_exercise present with a category coerced into the allowed COACH_EXERCISE_CATEGORIES set. (3) Malformed / no-name add → HTTP 200, added_exercise is null (no phantom fabrication). (4) 'How should I warm up before squats?' → HTTP 200, added_exercise null, no tag leak. (5) current_session snapshot with both an added Face Pulls exercise and a logged Back Squat 315x5 → coach response references both items (newline preservation working). (6) Regression on a plain educational message → response shape intact (response/sources/conversation_id/has_program_change/program_change/added_exercise), added_exercise null. (7) <PROGRAM_CHANGE> swap on flat bench → floor press still fires with has_program_change=true and a well-shaped program_change dict. Total wall-clock for the LLM suite was 31s — no 500s, no timeouts, no retries triggered. Backend logs remained clean during the run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_add_exercise.py",
+    "/app/backend/tests/test_coach_add_exercise_validator.py",
+    "/app/test_reports/pytest/iter76_coach_add_exercise.xml",
+    "/app/test_reports/pytest/iter76_coach_validator.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~7900 lines — well over the 700-line guideline. Consider splitting the coach chat / plan generator / calendar modules into their own routers. Not blocking, but the file is becoming a merge-conflict magnet.",
+    "@app.on_event('startup')/('shutdown') at server.py:3587 and :7874 emit DeprecationWarnings — migrate to FastAPI lifespan handlers at some point."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (25/25 across both suites)", "frontend": "not tested (backend-only scope)"},
+  "seed_data_creation": "None. Used the pre-seeded user_a@theprogram.app account. No writes to persistent state — coach_chat does not mutate today_added_exercises server-side (that persistence is frontend AsyncStorage per the request note).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "EMERGENT_LLM_KEY in /app/backend/.env is valid and the try/except fallback around chat.send_message is in place, so POST /api/coach/chat should always return HTTP 200 with the full response schema (including added_exercise). If any future coach test 500s, first check backend.err log for the LLM error and confirm the fallback path is still returning JSON. The login field is `token`, not `access_token`.",
+  "rca_of_issue": "N/A — iteration 75 failure was purely the invalid placeholder EMERGENT_LLM_KEY. With the key rotated and the graceful fallback wrapper added, the coach endpoint no longer 500s on transient LLM errors, and all behavioural + validator tests pass cleanly."
+}
