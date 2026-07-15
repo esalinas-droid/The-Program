@@ -1,0 +1,28 @@
+{
+  "summary": "Verified two frontend-only changes to program-mode Today screen: (1) Hero mode removed — Primary/main-lift exercise (Boxing, User A) now renders ALL sets simultaneously in the standard all-sets card. Confirmed set-1 log completes and the row remains visible with the logged value (reps=15). An 'Edit logged' chip is available to re-edit completed set values. Sets 2,3,4 remain visible throughout. (2) Up/down (↑/↓) arrows removed from program-mode ExerciseCard header. DOM scan of the Boxing PRIMARY card and all warm-up/support/accessory cards found NO arrow-up (mdi F005D) or arrow-down (mdi F0045) glyphs — only chevron-up/chevron-down (F0143/F0140) for the expand toggle, and the ⋮ dots-vertical kebab (F01D9) plus a drag handle icon in the header. Kebab menu opens correctly and shows a REORDER section with 'Move Up' (disabled for first primary) and 'Move Down' (enabled) items — reorder path preserved. Code review confirms: all program-mode ExerciseCard call sites (lines 5859, 5952, 6031, 6095 in today.tsx) pass BOTH onKebab and dragHandle, so the arrow branch (line 2500: `!dragHandle && !onKebab`) is unreachable in program mode. Tracker-mode call site (line 5541) passes `onKebab={undefined}` and no dragHandle → arrows correctly still render there. No React Native / deprecated-package regressions introduced by this change.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-av", "issue": "expo-av is deprecated (SDK 54 removal). Warning surfaced during test session. Pre-existing — not caused by this iteration. Reference: package.json expo-av dependency."}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_74.json"],
+  "action_items": [
+    "None for the two changes under test — both verified working as intended.",
+    "(Pre-existing / not blocking) Consider migrating expo-av → expo-audio / expo-video before SDK 54 upgrade."
+  ],
+  "critical_code_review_comments": [
+    "Header logic at today.tsx:2500 correctly gates arrows behind `!dragHandle && !onKebab`, guaranteeing they only render in Tracker mode where kebab and drag handle are absent.",
+    "Standard all-sets rendering path (today.tsx:2583+) is now taken for Primary/Speed as well — hero single-set branch removed as intended."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (all 6 verification points covered)"},
+  "seed_data_creation": "None. Used existing seeded user_a@theprogram.app (Strongman) with active program on Block 1 Week 1 Day 3 (Boxing primary).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "User A's current session shows PRIMARY = Boxing (rounds-based) with 4 sets. To test with a weight-based main lift, either advance the program week (log a full session and re-open Today next training day) or use User B. The kebab menu is opened via a page.mouse.click at the header kebab icon coords (Playwright's .click() through the DOM ancestor role=button failed for some MDI icon buttons because the click handler is on a wrapper without role=button). Use coordinate clicks or query the [role='button'] ancestor via closest(). Drag handle uses long-press reanimated gestures that don't work in the web preview — verify presence only.",
+  "rca_of_issue": "N/A — no bug to RCA. Both changes verified as-designed."
+}

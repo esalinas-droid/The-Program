@@ -2453,8 +2453,7 @@ function ExerciseCard({
     );
   };
 
-  // ── Phase 1: Hero mode for Primary/Speed cards ────────────────────────────
-  const heroMode      = (exercise.category === 'primary' || exercise.category === 'speed') && !inRemoveMode && !inEditMode;
+  // ── Active set tracking (first unlogged set gets the gold "active" border) ──
   const activeSetIdx  = exercise.sets.findIndex(s => !loggedSets.has(s.id));
   const activeSetId   = activeSetIdx >= 0 ? exercise.sets[activeSetIdx].id : null;
 
@@ -2495,27 +2494,32 @@ function ExerciseCard({
           </View>
           {/* ⠿ drag handle — long-press to reorder within section (program mode) */}
           {dragHandle}
-          {/* ↑ reorder arrow */}
-          {onMoveUp && canMoveUp && (
-            <TouchableOpacity
-              onPress={onMoveUp}
-              style={ec.arrowBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-              activeOpacity={0.6}
-            >
-              <MaterialCommunityIcons name="arrow-up" size={16} color={COLORS.text.secondary} />
-            </TouchableOpacity>
-          )}
-          {/* ↓ reorder arrow */}
-          {onMoveDown && canMoveDown && (
-            <TouchableOpacity
-              onPress={onMoveDown}
-              style={ec.arrowBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-              activeOpacity={0.6}
-            >
-              <MaterialCommunityIcons name="arrow-down" size={16} color={COLORS.text.secondary} />
-            </TouchableOpacity>
+          {/* ↑↓ reorder arrows — ONLY when there's no drag handle AND no kebab
+              (i.e. Tracker mode, where arrows are the sole reorder affordance).
+              Program mode reorders via drag + kebab, so arrows are hidden there. */}
+          {!dragHandle && !onKebab && (
+            <>
+              {onMoveUp && canMoveUp && (
+                <TouchableOpacity
+                  onPress={onMoveUp}
+                  style={ec.arrowBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  activeOpacity={0.6}
+                >
+                  <MaterialCommunityIcons name="arrow-up" size={16} color={COLORS.text.secondary} />
+                </TouchableOpacity>
+              )}
+              {onMoveDown && canMoveDown && (
+                <TouchableOpacity
+                  onPress={onMoveDown}
+                  style={ec.arrowBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  activeOpacity={0.6}
+                >
+                  <MaterialCommunityIcons name="arrow-down" size={16} color={COLORS.text.secondary} />
+                </TouchableOpacity>
+              )}
+            </>
           )}
           {/* ⋮ kebab */}
           {onKebab && (
@@ -2577,185 +2581,10 @@ function ExerciseCard({
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              HERO MODE — Primary / Speed: one focused set at a time
+              SET LOGGING — all sets shown (Primary / Speed / Support / Accessory
+              / Prehab / Warm-up / Cooldown). Hero single-set mode was removed so
+              completed sets stay visible and editable.
           ══════════════════════════════════════════════════════════════════ */}
-          {heroMode ? (
-            <View style={ec.heroBody}>
-              {/* Previous-session reference */}
-              {previousData?.[exercise.name]?.length ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A1E', marginBottom: 8 }}>
-                  <MaterialCommunityIcons name="history" size={12} color="#555" />
-                  <Text style={{ fontSize: 11, color: '#555' }}>
-                    Last ({previousData?.[exercise.name]?.[0]?.date?.slice(5)?.replace('-', '/')}):
-                  </Text>
-                  <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>
-                    {previousData?.[exercise.name]?.map(s => `${s.weight}×${s.reps}`).join(' · ')}
-                  </Text>
-                </View>
-              ) : exercise.lastSession !== '—' ? (
-                <View style={[ec.lastRow, { marginBottom: 8 }]}>
-                  <MaterialCommunityIcons name="history" size={12} color={COLORS.text.muted} />
-                  <Text style={ec.lastText}>Last: {exercise.lastSession}</Text>
-                </View>
-              ) : null}
-
-              {/* Coaching cues */}
-              {exercise.cues.length > 0 && (
-                <View style={[ec.cuesRow, { marginBottom: 12 }]}>
-                  <MaterialCommunityIcons name="lightbulb-on-outline" size={12} color={COLORS.accent} style={{ marginTop: 1 }} />
-                  <Text style={ec.cuesText}>{exercise.cues.join('  ·  ')}</Text>
-                </View>
-              )}
-
-              {/* Active set or All Done state */}
-              {activeSetIdx >= 0 ? (
-                <>
-                  {/* Set counter */}
-                  <View style={ec.heroSetCounter}>
-                    <Text style={ec.heroSetLabel}>SET {activeSetIdx + 1}</Text>
-                    <Text style={ec.heroSetTotal}> of {total}</Text>
-                  </View>
-
-                  {/* Inputs: driven by exercise.fields */}
-                  {(() => {
-                    const heroFields = exercise.fields ?? [{ type: 'weight' }, { type: 'reps' }];
-                    const setId = exercise.sets[activeSetIdx].id;
-                    const sv = setValues[setId] ?? { weight: '', reps: '' };
-                    if (heroFields.length === 0) {
-                      return null; // 0-field: LOG SET button handles completion below
-                    }
-                    if (heroFields.length === 1) {
-                      return (
-                        <View style={ec.heroTimedRow}>
-                          <TextInput
-                            style={ec.heroTimedInput}
-                            value={(sv as any)[fieldValueKey(heroFields[0])] ?? ''}
-                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[0]), v)}
-                            keyboardType={fieldKeyboardType(heroFields[0])}
-                            placeholder={fieldPlaceholder(heroFields[0])}
-                            placeholderTextColor={COLORS.text.muted}
-                            editable={true}
-                            selectTextOnFocus
-                            returnKeyType="done"
-                          />
-                        </View>
-                      );
-                    }
-                    return (
-                      <View style={ec.heroInputRow}>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <TextInput
-                            style={ec.heroInput}
-                            value={(sv as any)[fieldValueKey(heroFields[0])] ?? ''}
-                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[0]), v)}
-                            keyboardType={fieldKeyboardType(heroFields[0])}
-                            placeholder={fieldPlaceholder(heroFields[0])}
-                            placeholderTextColor={COLORS.text.muted}
-                            selectTextOnFocus
-                            returnKeyType="next"
-                          />
-                        </View>
-                        <Text style={ec.heroSep}>×</Text>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <TextInput
-                            style={ec.heroInput}
-                            value={(sv as any)[fieldValueKey(heroFields[1])] ?? ''}
-                            onChangeText={(v) => onSetValueChange(setId, fieldValueKey(heroFields[1]), v)}
-                            keyboardType={fieldKeyboardType(heroFields[1])}
-                            placeholder={fieldPlaceholder(heroFields[1])}
-                            placeholderTextColor={COLORS.text.muted}
-                            selectTextOnFocus
-                            returnKeyType="done"
-                          />
-                        </View>
-                      </View>
-                    );
-                  })()}
-
-                  {/* LOG SET button */}
-                  <TouchableOpacity
-                    style={ec.heroLogBtn}
-                    onPress={() => onLog(exercise.sets[activeSetIdx].id, displayName, exercise.sets[activeSetIdx])}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={ec.heroLogBtnText}>LOG SET {activeSetIdx + 1}</Text>
-                    <MaterialCommunityIcons name="check" size={16} color={COLORS.primary} />
-                  </TouchableOpacity>
-                </>
-              ) : (
-                /* All sets done */
-                <View style={ec.heroDoneWrap}>
-                  <MaterialCommunityIcons name="check-decagram" size={34} color={TEAL} />
-                  <Text style={ec.heroDoneText}>ALL SETS COMPLETE</Text>
-                </View>
-              )}
-
-              {/* Set progress dots */}
-              <View style={ec.heroDotsRow}>
-                {exercise.sets.map((s, i) => {
-                  const isDotLogged  = loggedSets.has(s.id);
-                  const isDotActive  = i === activeSetIdx && !isDotLogged;
-                  return (
-                    <View
-                      key={s.id}
-                      style={[ec.heroDot, isDotLogged && ec.heroDotLogged, isDotActive && ec.heroDotActive]}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* Effort + Actions (show once at least 1 set logged) */}
-              {loggedCount > 0 && (
-                <>
-                  {/* ── Phase 6: Off-row effort prompt ─────────────────── */}
-                  {pendingEffortLogId && (
-                    <View style={ec.effortPrompt}>
-                      <Text style={ec.effortPromptLabel}>Reps left in the tank?</Text>
-                      <View style={ec.effortBtnRow}>
-                        {(['0', '1', '2', '3+'] as const).map((label, i) => (
-                          <TouchableOpacity
-                            key={label}
-                            style={ec.effortBtn}
-                            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onEffortSelect?.(i < 3 ? i : 3); }}
-                            activeOpacity={0.75}
-                          >
-                            <Text style={ec.effortBtnText}>{label}</Text>
-                          </TouchableOpacity>
-                        ))}
-                        <TouchableOpacity style={ec.effortSkipBtn} onPress={() => onEffortSelect?.(null)} activeOpacity={0.7}>
-                          <Text style={ec.effortSkipText}>skip</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                  <View style={ec.actionRow}>
-                    <TouchableOpacity style={ec.actionPill} onPress={() => onAdjust(exercise.id, displayName)} activeOpacity={0.75}>
-                      <MaterialCommunityIcons name="swap-horizontal" size={13} color={COLORS.text.muted} />
-                      <Text style={ec.actionPillText}>Swap</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[ec.actionPill, ec.actionPillPain]} onPress={() => onReportPain(displayName)} activeOpacity={0.75}>
-                      <MaterialCommunityIcons name="alert-circle-outline" size={13} color={RED} />
-                      <Text style={[ec.actionPillText, { color: RED }]}>Pain</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[ec.actionPill, ec.actionPillAdd]} onPress={() => onAddSet(exercise.id)} activeOpacity={0.75}>
-                      <MaterialCommunityIcons name="plus" size={13} color={COLORS.accent} />
-                      <Text style={[ec.actionPillText, { color: COLORS.accent }]}>Add Set</Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-
-              {/* ── Phase 6: Per-exercise note (add/edit/remove) ──────── */}
-              {renderNoteSection()}
-
-              {/* Coach notes */}
-              {exercise.notes ? <Text style={ec.notes}>{exercise.notes}</Text> : null}
-            </View>
-
-          ) : (
-          /* ══════════════════════════════════════════════════════════════════
-              NORMAL MODE — Support / Accessory / Prehab / Warm-up / Cooldown
-          ══════════════════════════════════════════════════════════════════ */
           <View style={ec.body}>
           {/* Previous workout reference */}
           {previousData?.[exercise.name]?.length ? (
@@ -2941,7 +2770,6 @@ function ExerciseCard({
             <Text style={ec.notes}>{exercise.notes}</Text>
           ) : null}
         </View>
-          )}
         </>
       )}
 
@@ -3101,24 +2929,6 @@ const ec = StyleSheet.create({
   doneRemoveBtnText: { color: '#EF5350', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
   doneEditBtn:       { marginTop: SPACING.sm, paddingVertical: 10, borderRadius: 8, backgroundColor: '#5B9CF520', borderWidth: 1, borderColor: '#5B9CF540', alignItems: 'center' },
   doneEditBtnText:   { color: '#5B9CF5', fontWeight: FONTS.weights.heavy, fontSize: FONTS.sizes.sm, letterSpacing: 0.5 },
-  // ── Hero mode styles (Primary / Speed)
-  heroBody:       { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg },
-  heroSetCounter: { flexDirection: 'row', alignItems: 'baseline', marginBottom: SPACING.md },
-  heroSetLabel:   { fontSize: 22, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 0.5 },
-  heroSetTotal:   { fontSize: FONTS.sizes.base, color: COLORS.text.muted, fontWeight: FONTS.weights.semibold },
-  heroInputRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginBottom: SPACING.lg },
-  heroInput:      { alignSelf: 'stretch', height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.accent + '50', textAlign: 'center', color: COLORS.text.primary, fontSize: 26, fontWeight: FONTS.weights.heavy },
-  heroSep:        { fontSize: 22, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy, flexShrink: 0 },
-  heroTimedRow:   { marginBottom: SPACING.lg },
-  heroTimedInput: { height: 64, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.accent + '50', textAlign: 'center', color: COLORS.text.primary, fontSize: 22, fontWeight: FONTS.weights.heavy },
-  heroLogBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: COLORS.accent, borderRadius: RADIUS.lg, paddingVertical: 15, marginBottom: SPACING.lg },
-  heroLogBtnText: { color: COLORS.primary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, letterSpacing: 1.2 },
-  heroDoneWrap:   { alignItems: 'center', paddingVertical: SPACING.xl, gap: SPACING.sm },
-  heroDoneText:   { fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.heavy, color: TEAL, letterSpacing: 1 },
-  heroDotsRow:    { flexDirection: 'row', gap: 8, marginBottom: SPACING.md, justifyContent: 'center' },
-  heroDot:        { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.border },
-  heroDotLogged:  { backgroundColor: TEAL },
-  heroDotActive:  { backgroundColor: COLORS.accent, transform: [{ scale: 1.3 }] },
   // ── P2b: field-header row ──────────────────────────────────────────────────
   fieldHeaderRow:      { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border + '40', marginBottom: 2 },
   fieldHeaderSep:      { fontSize: 11, color: COLORS.text.muted, fontWeight: FONTS.weights.heavy },
