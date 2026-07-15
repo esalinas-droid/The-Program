@@ -399,3 +399,10 @@ credentials.json
 # Explicit secret-override files — must never be committed
 backend/.env.local
 frontend/.env.local
+
+# ── backend secrets — never commit (repo is public) ──
+backend/.env
+backend/.env.local
+# but DO track example env files (documented var names, no secrets)
+!.env.example
+!backend/.env.example
