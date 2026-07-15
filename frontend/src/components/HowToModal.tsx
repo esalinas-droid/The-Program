@@ -16,15 +16,19 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../constants/theme';
 interface HowToModalProps {
   visible: boolean;
   exercise: string;
+  videoUrl?: string;
   onClose: () => void;
 }
 
-export default function HowToModal({ visible, exercise, onClose }: HowToModalProps) {
+export default function HowToModal({ visible, exercise, videoUrl, onClose }: HowToModalProps) {
   const [webError, setWebError] = useState(false);
   const showFallback = Platform.OS === 'web' || webError;
   const slideAnim = useRef(new Animated.Value(900)).current;
   const query = encodeURIComponent(`${exercise} form technique tutorial`);
-  const ytUrl  = `https://www.youtube.com/results?search_query=${query}`;
+  // Use a pasted custom link if provided, else auto-generate the YouTube search.
+  const ytUrl  = (videoUrl && videoUrl.trim())
+    ? videoUrl.trim()
+    : `https://www.youtube.com/results?search_query=${query}`;
 
   useEffect(() => {
     if (visible) {

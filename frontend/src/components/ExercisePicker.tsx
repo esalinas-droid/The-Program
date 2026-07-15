@@ -91,6 +91,55 @@ export interface PickedExercise {
   name: string;
   category: string;
   reason?: string; // reason from Suggested Swaps filter if applicable
+  fields?: { type: string }[];   // chosen set-field config (custom exercises)
+  videoUrl?: string;             // optional How-To link (custom exercises)
+}
+
+// Section options for a custom exercise → app display categories used on Today.
+const CATEGORY_OPTIONS: { key: string; label: string }[] = [
+  { key: 'warmup',      label: 'Warm-up' },
+  { key: 'primary',     label: 'Main / Primary' },
+  { key: 'supplemental', label: 'Supplemental' },
+  { key: 'accessory',   label: 'Accessory' },
+  { key: 'gpp',         label: 'Conditioning' },
+  { key: 'cooldown',    label: 'Cooldown' },
+];
+
+// Field-type options — reuse the app's existing set-field / prescriptionType system.
+// Each maps to a prescriptionType (persisted server-side) and a concrete field list.
+const FIELD_TYPE_OPTIONS: { key: string; label: string; prescriptionType: string; fields: { type: string }[] }[] = [
+  { key: 'weighted', label: 'Weight × Reps', prescriptionType: 'weighted', fields: [{ type: 'weight' }, { type: 'reps' }] },
+  { key: 'reps',     label: 'Reps only',     prescriptionType: 'weighted', fields: [{ type: 'reps' }] },
+  { key: 'timed',    label: 'Time (sec)',    prescriptionType: 'timed',    fields: [{ type: 'time' }] },
+  { key: 'distance', label: 'Distance',      prescriptionType: 'distance', fields: [{ type: 'distance' }] },
+  { key: 'calories', label: 'Calories',      prescriptionType: 'calories', fields: [{ type: 'calories' }] },
+];
+
+// Rebuild a field list from a persisted prescriptionType (for saved custom exercises).
+function fieldsFromPrescriptionType(pt?: string | null): { type: string }[] {
+  switch (pt) {
+    case 'timed':    return [{ type: 'time' }];
+    case 'distance': return [{ type: 'distance' }];
+    case 'height':   return [{ type: 'distance' }];
+    case 'calories': return [{ type: 'calories' }];
+    case 'weighted':
+    default:         return [{ type: 'weight' }, { type: 'reps' }];
+  }
+}
+
+// Map a stored category string to a valid Today display category.
+function toDisplayCategory(c?: string | null): string {
+  switch (c) {
+    case 'warmup':   return 'warmup';
+    case 'cooldown': return 'cooldown';
+    case 'gpp':
+    case 'conditioning': return 'gpp';
+    case 'primary':
+    case 'main':     return 'primary';
+    case 'accessory': return 'accessory';
+    case 'prehab':   return 'prehab';
+    default:         return 'supplemental';
+  }
 }
 
 interface ExercisePickerProps {
@@ -167,12 +216,16 @@ export default function ExercisePicker({
   const [showCreate,     setShowCreate]    = useState(false);
   const [newName,        setNewName]       = useState('');
   const [newPrescr,      setNewPrescr]     = useState('');
+  const [newCategory,    setNewCategory]   = useState('supplemental');
+  const [newFieldType,   setNewFieldType]  = useState('weighted');
+  const [newVideoUrl,    setNewVideoUrl]   = useState('');
   const [creating,       setCreating]      = useState(false);
 
   // ── Animate in / out ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (visible) {
       setQuery(''); setSwapReason('All'); setShowCreate(false); setNewName(''); setNewPrescr('');
+      setNewCategory('supplemental'); setNewFieldType('weighted'); setNewVideoUrl('');
       loadCustom();
       Animated.spring(slideAnim, {
         toValue: 0, damping: 22, stiffness: 220, useNativeDriver: true,
@@ -193,9 +246,9 @@ export default function ExercisePicker({
     finally { setLoadingCustom(false); }
   }, []);
 
-  const pick = (name: string, category: string, reason?: string) => {
+  const pick = (name: string, category: string, reason?: string, fields?: { type: string }[], videoUrl?: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onSelect({ name, category, reason });
+    onSelect({ name, category, reason, fields, videoUrl });
     onClose();
   };
 
@@ -223,15 +276,19 @@ export default function ExercisePicker({
   const handleCreate = async () => {
     const trimmed = newName.trim();
     if (!trimmed) { Alert.alert('Name required'); return; }
+    const ft = FIELD_TYPE_OPTIONS.find(f => f.key === newFieldType) || FIELD_TYPE_OPTIONS[0];
+    const videoUrl = newVideoUrl.trim();
     setCreating(true);
     try {
       const created = await userExercisesApi.create({
         name: trimmed,
-        category: 'custom',
+        category: newCategory,               // real display category
         defaultPrescription: newPrescr.trim(),
+        prescriptionType: ft.prescriptionType,
+        videoUrl: videoUrl || undefined,
       });
       await loadCustom();
-      pick(created.name, 'custom');
+      pick(created.name, toDisplayCategory(newCategory), undefined, ft.fields, videoUrl || undefined);
     } catch {
       Alert.alert('Error', 'Could not save exercise. Please try again.');
     } finally {
@@ -302,6 +359,109 @@ export default function ExercisePicker({
             showsVerticalScrollIndicator={false}
           >
 
+            {/* ── CREATE CUSTOM EXERCISE (directly under the search bar) ── */}
+            <View style={p.createSection}>
+              {!showCreate ? (
+                <TouchableOpacity
+                  style={p.createBtn}
+                  onPress={() => setShowCreate(true)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="plus-circle-outline" size={18} color={GOLD} />
+                  <Text style={p.createBtnText}>Create New Exercise</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={p.createForm}>
+                  <Text style={p.createFormTitle}>NEW CUSTOM EXERCISE</Text>
+                  <TextInput
+                    style={p.createInput}
+                    placeholder="Exercise name *"
+                    placeholderTextColor={MUTED}
+                    value={newName}
+                    onChangeText={setNewName}
+                    autoCorrect={false}
+                    returnKeyType="next"
+                  />
+
+                  {/* Section / category */}
+                  <Text style={p.createFieldLabel}>SECTION</Text>
+                  <View style={p.chipRow}>
+                    {CATEGORY_OPTIONS.map(o => {
+                      const active = newCategory === o.key;
+                      return (
+                        <TouchableOpacity
+                          key={o.key}
+                          style={[p.chip, active && p.chipActive]}
+                          onPress={() => setNewCategory(o.key)}
+                          activeOpacity={0.75}
+                        >
+                          <Text style={[p.chipText, active && p.chipTextActive]}>{o.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Field type / what it tracks */}
+                  <Text style={p.createFieldLabel}>TRACKS</Text>
+                  <View style={p.chipRow}>
+                    {FIELD_TYPE_OPTIONS.map(o => {
+                      const active = newFieldType === o.key;
+                      return (
+                        <TouchableOpacity
+                          key={o.key}
+                          style={[p.chip, active && p.chipActive]}
+                          onPress={() => setNewFieldType(o.key)}
+                          activeOpacity={0.75}
+                        >
+                          <Text style={[p.chipText, active && p.chipTextActive]}>{o.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TextInput
+                    style={p.createInput}
+                    placeholder="Default prescription (e.g. 3×10)"
+                    placeholderTextColor={MUTED}
+                    value={newPrescr}
+                    onChangeText={setNewPrescr}
+                    autoCorrect={false}
+                    returnKeyType="next"
+                  />
+                  <TextInput
+                    style={p.createInput}
+                    placeholder="YouTube link (optional — auto-search if blank)"
+                    placeholderTextColor={MUTED}
+                    value={newVideoUrl}
+                    onChangeText={setNewVideoUrl}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    keyboardType="url"
+                    returnKeyType="done"
+                  />
+
+                  <View style={p.createFormActions}>
+                    <TouchableOpacity
+                      style={p.createCancelBtn}
+                      onPress={() => { setShowCreate(false); setNewName(''); setNewPrescr(''); setNewVideoUrl(''); }}
+                    >
+                      <Text style={p.createCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[p.createSaveBtn, !newName.trim() && { opacity: 0.4 }]}
+                      onPress={handleCreate}
+                      disabled={!newName.trim() || creating}
+                    >
+                      {creating
+                        ? <ActivityIndicator color={BG} size="small" />
+                        : <Text style={p.createSaveText}>Save & Use</Text>
+                      }
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+
             {/* ── SUGGESTED SWAPS ── */}
             {!!originalExerciseName && !q && (
               <View style={p.section}>
@@ -363,7 +523,13 @@ export default function ExercisePicker({
                       name={ex.name}
                       sub={ex.defaultPrescription || undefined}
                       isCustom
-                      onPress={() => pick(ex.name, 'custom')}
+                      onPress={() => pick(
+                        ex.name,
+                        toDisplayCategory(ex.category),
+                        undefined,
+                        fieldsFromPrescriptionType(ex.prescriptionType),
+                        ex.videoUrl || undefined,
+                      )}
                     />
                   ))
                 )}
@@ -427,60 +593,6 @@ export default function ExercisePicker({
                   </TouchableOpacity>
                 </View>
               )}
-
-            {/* ── CREATE CUSTOM EXERCISE ── */}
-            <View style={p.createSection}>
-              {!showCreate ? (
-                <TouchableOpacity
-                  style={p.createBtn}
-                  onPress={() => setShowCreate(true)}
-                  activeOpacity={0.8}
-                >
-                  <MaterialCommunityIcons name="plus-circle-outline" size={18} color={GOLD} />
-                  <Text style={p.createBtnText}>Create new exercise</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={p.createForm}>
-                  <Text style={p.createFormTitle}>NEW CUSTOM EXERCISE</Text>
-                  <TextInput
-                    style={p.createInput}
-                    placeholder="Exercise name *"
-                    placeholderTextColor={MUTED}
-                    value={newName}
-                    onChangeText={setNewName}
-                    autoCorrect={false}
-                    returnKeyType="next"
-                  />
-                  <TextInput
-                    style={p.createInput}
-                    placeholder="Default prescription (e.g. 3×10, 4×5@70%)"
-                    placeholderTextColor={MUTED}
-                    value={newPrescr}
-                    onChangeText={setNewPrescr}
-                    autoCorrect={false}
-                    returnKeyType="done"
-                  />
-                  <View style={p.createFormActions}>
-                    <TouchableOpacity
-                      style={p.createCancelBtn}
-                      onPress={() => { setShowCreate(false); setNewName(''); setNewPrescr(''); }}
-                    >
-                      <Text style={p.createCancelText}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[p.createSaveBtn, !newName.trim() && { opacity: 0.4 }]}
-                      onPress={handleCreate}
-                      disabled={!newName.trim() || creating}
-                    >
-                      {creating
-                        ? <ActivityIndicator color={BG} size="small" />
-                        : <Text style={p.createSaveText}>Save & Use</Text>
-                      }
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
 
           </ScrollView>
         </KeyboardAvoidingView>
@@ -609,6 +721,18 @@ const p = StyleSheet.create({
     backgroundColor: BG, borderRadius: 10, borderWidth: 1, borderColor: BORDER,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: TEXT,
   },
+  createFieldLabel: {
+    fontSize: 10, fontWeight: '800', color: MUTED, letterSpacing: 1,
+    textTransform: 'uppercase', marginTop: 4, marginBottom: 2,
+  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+    borderWidth: 1, borderColor: BORDER, backgroundColor: BG,
+  },
+  chipActive: { backgroundColor: GOLD, borderColor: GOLD },
+  chipText: { fontSize: 12, color: TEXT, fontWeight: '600' },
+  chipTextActive: { color: BG, fontWeight: '800' },
   createFormActions: {
     flexDirection: 'row', gap: 8, marginTop: 4,
   },

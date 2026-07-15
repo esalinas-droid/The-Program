@@ -189,6 +189,8 @@ interface Exercise {
   /** P2b: ordered list of ≤2 typed fields driving SetRow inputs.
    *  Set at load time from defaultFields(); changed by the picker. */
   fields: FieldSpec[];
+  /** Optional custom How-To video link (falls back to YouTube search). */
+  videoUrl?: string;
 }
 type SwapInfo = { original: string; replacement: string; reason: string };
 type SwapMap  = Record<string, SwapInfo>;
@@ -3084,7 +3086,9 @@ export default function TodayScreen() {
   // ── Phase 5: How-to modal state ───────────────────────────────────────────
   const [howToVisible,  setHowToVisible]  = useState(false);
   const [howToExercise, setHowToExercise] = useState('');
+  const [howToVideoUrl, setHowToVideoUrl] = useState<string>('');
   const mountRestoreDone  = useRef(false); // Fix 5: prevent mount/focus race
+  const addedExercisesRestored = useRef(false); // guards destructive persist until a restore has run today
   const userEditedSets    = useRef<Set<string>>(new Set()); // Fix: track user-edited set IDs
   // Ref mirror for trainingMode — lets the memoised useFocusEffect callback
   // read the CURRENT mode without a stale closure (loadKey deps never change).
@@ -3448,7 +3452,10 @@ export default function TodayScreen() {
         if (!dateValid) {
           // No valid same-day session data — wipe all related keys to avoid
           // leaking yesterday's weights/reps into today's UI.
-          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, FIELD_OVERRIDES_KEY, ADDED_EXERCISES_KEY]);
+          // NOTE: ADDED_EXERCISES_KEY is intentionally NOT wiped here — it carries
+          // its own date and must survive a cold start even when the user added an
+          // exercise but logged no sets (so LOGGED_SETS_KEY never got written).
+          await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, FIELD_OVERRIDES_KEY]);
           setSetValues({});
         } else {
           // Same-day data — restore both setValues and loggedSets.
@@ -3468,6 +3475,17 @@ export default function TodayScreen() {
         if (savedFinishedDate === todayStr) {
           setSessionFinished(true);
         }
+        // Added exercises carry their OWN date — clear only when genuinely stale
+        // (a prior day), never as collateral of a missing/stale LOGGED_SETS_KEY.
+        try {
+          const savedAddedExsRaw = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+          if (savedAddedExsRaw) {
+            const parsedAE = JSON.parse(savedAddedExsRaw);
+            if (parsedAE?.date !== todayStr) {
+              await AsyncStorage.removeItem(ADDED_EXERCISES_KEY);
+            }
+          }
+        } catch { /* leave key intact on parse error */ }
         // (Added sets are now restored inline in useFocusEffect — no race condition)
         mountRestoreDone.current = true;
         console.log('[Today] Mount restore complete');
@@ -3519,7 +3537,9 @@ export default function TodayScreen() {
     if (addedExs.length > 0) {
       const payload = { date: getLocalDateString(), exercises: addedExs };
       AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify(payload)).catch(() => {});
-    } else {
+    } else if (addedExercisesRestored.current) {
+      // Only clear once a restore has actually run for today — otherwise a cold
+      // start whose exercises array hasn't yet merged saved adds would wipe them.
       AsyncStorage.removeItem(ADDED_EXERCISES_KEY).catch(() => {});
     }
   }, [exercises]);
@@ -3596,6 +3616,7 @@ export default function TodayScreen() {
             }
           }
         } catch (err) { console.warn('[Today] Re-sync added exercises failed:', err); }
+        addedExercisesRestored.current = true;  // restore ran → persist may now prune
 
         try {
           const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
@@ -3865,6 +3886,7 @@ export default function TodayScreen() {
           } catch (err) {
             console.warn('[Today] Failed to restore added exercises:', err);
           }
+          addedExercisesRestored.current = true;  // restore ran → persist may now prune
 
           setExercises(exsWithAdded);
           // Expand only the first exercise by default
@@ -4837,15 +4859,26 @@ export default function TodayScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newExId  = `added-ex-${Date.now()}`;
     const newSetId = `${newExId}-set-0`;
+    // Honour the section the user chose (custom exercises); built-in 'main' → primary.
+    const catMap: Record<string, ExCategory> = {
+      warmup: 'warmup', cooldown: 'cooldown', gpp: 'gpp',
+      primary: 'primary', main: 'primary', speed: 'speed',
+      supplemental: 'supplemental', accessory: 'accessory', prehab: 'prehab',
+    };
+    const displayCat: ExCategory = catMap[picked.category] ?? 'supplemental';
+    const fields: FieldSpec[] = (picked.fields && picked.fields.length
+      ? picked.fields.map(f => ({ type: f.type as FieldType }))
+      : defaultFields(displayCat));
     const newEx: Exercise = {
       id:           newExId,
       name:         picked.name,
-      category:     'supplemental', // renders in main EXERCISES section; not warmup/gpp/cooldown
+      category:     displayCat,
       prescription: '',
       lastSession:  '',
       cues:         [],
       notes:        '',
-      fields:       defaultFields('supplemental'), // weight + reps by default
+      videoUrl:     picked.videoUrl,
+      fields,
       sets: [{
         id:     newSetId,
         type:   'work',
@@ -4858,7 +4891,7 @@ export default function TodayScreen() {
     // Expand the newly added exercise so it's immediately usable
     setExpanded(prev => { const next = new Set(prev); next.add(newExId); return next; });
     setModal(false);
-    console.log('[Today] Added exercise:', picked.name, newExId);
+    console.log('[Today] Added exercise:', picked.name, newExId, displayCat);
   };
 
   // ── Tracker Mode: manually add an exercise via picker (persists as week-0) ──────
@@ -5861,7 +5894,7 @@ export default function TodayScreen() {
                   onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                   canMoveUp={fullIdx > 0}
                   canMoveDown={fullIdx < groupLen - 1}
-                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVideoUrl((ex as any).videoUrl ?? ''); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
                   onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
                       onNoteRemove={() => handleProgramNoteRemove(ex.id)}
@@ -6016,7 +6049,7 @@ export default function TodayScreen() {
                   onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                   canMoveUp={fullIdx > 0}
                   canMoveDown={fullIdx < groupLen - 1}
-                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                  onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVideoUrl((ex as any).videoUrl ?? ''); setHowToVisible(true); }}
                   exerciseNote={notesByExercise[ex.id] ?? ''}
                   onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
                       onNoteRemove={() => handleProgramNoteRemove(ex.id)}
@@ -6635,6 +6668,7 @@ export default function TodayScreen() {
       <HowToModal
         visible={howToVisible}
         exercise={howToExercise}
+        videoUrl={howToVideoUrl}
         onClose={() => setHowToVisible(false)}
       />
 
