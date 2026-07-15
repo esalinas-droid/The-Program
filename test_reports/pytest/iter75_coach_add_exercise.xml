@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="7" time="17.916" timestamp="2026-07-15T19:20:33.817663+00:00" hostname="agent-env-ccde8a06-fc09-44c1-8db6-efeb0841abef"><testcase classname="backend.tests.test_coach_add_exercise.TestAddExerciseHappyPath" name="test_add_face_pulls_3x12" time="6.272"><failure message="AssertionError: Status 500: Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:102: in test_add_face_pulls_3x12
+    assert r.status_code == 200, f"Status {r.status_code}: {r.text[:400]}"
+E   AssertionError: Status 500: Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestCategoryCoercion" name="test_prehab_style_add_yields_valid_category" time="4.359"><failure message="assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:137: in test_prehab_style_add_yields_valid_category
+    assert r.status_code == 200
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestMalformedAdd" name="test_no_name_add_returns_null_added_exercise" time="0.201"><failure message="AssertionError: unexpected 500: Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:159: in test_no_name_add_returns_null_added_exercise
+    assert r.status_code == 200, f"unexpected {r.status_code}: {r.text[:400]}"
+E   AssertionError: unexpected 500: Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestNoFalseTrigger" name="test_warmup_question_does_not_add" time="4.067"><failure message="assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:185: in test_warmup_question_does_not_add
+    assert r.status_code == 200
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestCurrentSessionContext" name="test_coach_sees_live_snapshot" time="2.118"><failure message="AssertionError: 500: Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:214: in test_coach_sees_live_snapshot
+    assert r.status_code == 200, f"{r.status_code}: {r.text[:400]}"
+E   AssertionError: 500: Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestRegression" name="test_response_shape_on_plain_message" time="0.585"><failure message="assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:235: in test_response_shape_on_plain_message
+    assert r.status_code == 200
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_coach_add_exercise.TestRegression" name="test_program_change_swap_still_fires" time="0.211"><failure message="assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_coach_add_exercise.py:259: in test_program_change_swap_still_fires
+    assert r.status_code == 200
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase></testsuite></testsuites>

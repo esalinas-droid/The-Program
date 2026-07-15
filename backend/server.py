@@ -3650,6 +3650,53 @@ class CoachRequest(BaseModel):
     conversation_history: List[ChatMessage] = []
     conversation_id: Optional[str] = None
     source: Optional[str] = "user_typed"  # "user_typed" | "system_seed"
+    current_session: Optional[str] = None  # live client snapshot: manual adds, swaps, sets logged today
+
+
+# ── Coach write-action: add exercise to today's session ───────────────────────
+# The coach (Claude via emergentintegrations) emits a structured
+# <ADD_EXERCISE>{json}</ADD_EXERCISE> tag. That JSON is UNTRUSTED model output, so
+# every field is validated/clamped/sanitised here before it is ever returned to
+# the client. Malformed input is repaired to safe defaults, never raised.
+COACH_EXERCISE_CATEGORIES = {"main", "supplemental", "accessory", "prehab", "warmup", "gpp", "cooldown"}
+
+def _sanitize_text(v, max_len: int) -> str:
+    """Strip markup/control chars and clamp length. Non-str → ''."""
+    if not isinstance(v, str):
+        v = "" if v is None else str(v)
+    v = re.sub(r"<[^>]*>", "", v)                 # strip any markup/tags
+    v = re.sub(r"[\x00-\x1f\x7f]", " ", v)        # strip control chars
+    v = re.sub(r"\s+", " ", v).strip()
+    return v[:max_len]
+
+def validate_coach_added_exercise(raw: dict):
+    """Validate the model-emitted add_exercise payload. Returns a clean dict or
+    None if the request is unusable (e.g. no name)."""
+    if not isinstance(raw, dict):
+        return None
+    name = _sanitize_text(raw.get("name"), 60)
+    if not name:
+        return None  # name is required — reject rather than fabricate
+
+    category = raw.get("category")
+    category = category.strip().lower() if isinstance(category, str) else ""
+    if category not in COACH_EXERCISE_CATEGORIES:
+        category = "accessory"  # sensible default
+
+    # sets: clamp to 1..10, default 3
+    try:
+        sets = int(raw.get("sets", 3))
+    except (TypeError, ValueError):
+        sets = 3
+    sets = max(1, min(10, sets))
+
+    # reps: free-form string (e.g. "8-10", "5", "AMRAP"), default "8-10"
+    reps = _sanitize_text(raw.get("reps", ""), 20) or "8-10"
+
+    notes = _sanitize_text(raw.get("notes", ""), 200)
+
+    return {"name": name, "category": category, "sets": sets, "reps": reps, "notes": notes}
+
 
 class CoachConversation(BaseDocument):
     userId: str = "default"
@@ -3908,6 +3955,19 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     _session_ctx_str = f"\n\nTODAY'S PRESCRIBED SESSION:\n{today_session_context}" if today_session_context else ""
     _block_ctx_str   = f"\n\nCURRENT BLOCK DIRECTIVE:\n{block_directive_context}"   if block_directive_context else ""
 
+    # ── 2b: live client snapshot — reflects the athlete's CURRENT state (manual
+    # adds, swaps, reorders, sets logged so far today) which is not all persisted
+    # server-side. Supplied by the app; treated as the source of truth for "right now".
+    _live_ctx_str = ""
+    if request.current_session:
+        _live = _sanitize_text(request.current_session, 3000)
+        if _live:
+            _live_ctx_str = (
+                "\n\nTHE ATHLETE'S SESSION RIGHT NOW (live — includes exercises they added, "
+                "swaps, reorders, and sets already logged today; this supersedes the prescribed "
+                f"session above where they differ):\n{_live}"
+            )
+
     # ── iii: program overview (lite summary, ≤500 token budget) ───────────
     program_overview = ""
     if _cp:
@@ -4117,11 +4177,30 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "</PROGRAM_CHANGE>\n"
         "Only include for exercise swaps or load changes. NOT for sleep, nutrition, or general advice.\n\n"
 
+        # ── ADD-EXERCISE WRITE ACTION (backend parser depends on this XML block) ──
+        "ADD EXERCISE TO TODAY'S SESSION:\n"
+        "You CAN actually add an exercise to the athlete's session for today. When (and ONLY when) the user "
+        "asks you to add/throw in/include a specific exercise for today, ACTUALLY DO IT by appending this "
+        "EXACTLY at the very end of your response:\n"
+        "<ADD_EXERCISE>"
+        '{"name":"Exercise Name","category":"accessory","sets":3,"reps":"8-10","notes":""}'
+        "</ADD_EXERCISE>\n"
+        "Rules:\n"
+        "- category MUST be one of: main, supplemental, accessory, prehab, warmup, gpp, cooldown. "
+        "Pick the most appropriate; if unsure use \"accessory\".\n"
+        "- sets is an integer (1-10); reps is a short string like \"8-10\", \"5\", or \"30s\". "
+        "Choose sensible values if the user didn't specify.\n"
+        "- Emit AT MOST ONE <ADD_EXERCISE> block per reply, and ONLY when the user clearly wants to add an exercise. "
+        "Do NOT emit it for general questions, warm-up advice, or hypothetical suggestions.\n"
+        "- After the block, confirm in words exactly what you added (name, sets x reps, which section), e.g. "
+        "\"Done — added 3x10 Face Pulls to today's accessories.\" The backend will actually perform the add; "
+        "if it can't, it will tell you, and you must NOT claim success.\n\n"
+
         # ── DYNAMIC ATHLETE CONTEXT (injected per-request) ────────────────────
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
         f"\n\nRECENT SESSIONS:\n{recent_log}"
-        f"{_session_ctx_str}{_block_ctx_str}{_program_ctx_str}"
+        f"{_session_ctx_str}{_live_ctx_str}{_block_ctx_str}{_program_ctx_str}"
         f"{coaching_intelligence}"
         f"{rag_section}{user_doc_rag_section}"
     )
@@ -4157,6 +4236,36 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         except Exception:
             program_change = {"type": "recommendation", "summary": pc_match.group(1).strip(), "details": ""}
         clean_response = response_text[:pc_match.start()].rstrip()
+
+    # ── 10b. Parse <ADD_EXERCISE> write-action (untrusted model JSON) ──────────
+    added_exercise = None
+    ae_match = _re.search(r'<ADD_EXERCISE>(.*?)</ADD_EXERCISE>', clean_response, _re.DOTALL)
+    if ae_match:
+        # Always strip the tag from what the user sees, regardless of validity.
+        clean_response = clean_response[:ae_match.start()].rstrip()
+        raw_ae = None
+        try:
+            raw_ae = _json.loads(ae_match.group(1).strip())
+        except Exception:
+            raw_ae = None
+        validated = validate_coach_added_exercise(raw_ae) if raw_ae is not None else None
+        if validated:
+            added_exercise = {
+                # Same shape the manual "+ Add Exercise" client store uses.
+                "id": f"added-ex-{uuid.uuid4().hex[:12]}",
+                "name": validated["name"],
+                "category": validated["category"],
+                "sets": validated["sets"],
+                "reps": validated["reps"],
+                "notes": validated["notes"],
+                "source": "coach",
+            }
+            logger.info(f"[CoachChat] user={userId} add_exercise '{validated['name']}' [{validated['category']}] {validated['sets']}x{validated['reps']}")
+        else:
+            # The model tried to add but the payload was unusable. Tell it so it
+            # doesn't falsely claim success (append a plain-text note for the user).
+            logger.warning(f"[CoachChat] user={userId} add_exercise rejected (malformed payload): {ae_match.group(1)[:120]!r}")
+            clean_response = (clean_response + "\n\n(I couldn't add that exercise — I didn't catch a valid exercise name. Tell me the exact exercise and I'll add it.)").strip()
 
     # ── 11. Persist conversation to MongoDB (userId-scoped) ───────────────────
     now = datetime.now(timezone.utc)
@@ -4196,6 +4305,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "conversation_id": conversation_id,
         "has_program_change": has_program_change,
         "program_change": program_change,
+        "added_exercise": added_exercise,
     }
 
 

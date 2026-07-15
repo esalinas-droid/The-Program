@@ -6,14 +6,118 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
-import { coachApi } from '../../src/utils/api';
+import { coachApi, logApi } from '../../src/utils/api';
 import { getProfile } from '../../src/utils/storage';
 import { getBlock, getPhase } from '../../src/utils/calculations';
+import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { consumeCoachSeed } from '../../src/store/coachSeedStore';
 import VoiceInputButton from '../../src/components/VoiceInputButton';
 import SpeakerButton from '../../src/components/SpeakerButton';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const ADDED_EXERCISES_KEY = 'today_added_exercises'; // shared with Today screen — same store manual adds use
+
+// Fields config matching today.tsx defaultFields() so coach-added exercises
+// render identically to manual adds.
+function coachDefaultFields(cat: string): { type: string }[] {
+  if (cat === 'gpp') return [{ type: 'weight' }, { type: 'time' }];
+  if (cat === 'warmup' || cat === 'cooldown') return [{ type: 'reps' }];
+  return [{ type: 'weight' }, { type: 'reps' }];
+}
+
+// Map backend coach categories → frontend ExCategory used by Today.
+function mapCoachCategory(cat: string): string {
+  return cat === 'main' ? 'primary' : cat;
+}
+
+/**
+ * Write a coach-added exercise into the SAME `today_added_exercises` AsyncStorage
+ * store the manual "+ Add Exercise" button uses, in the identical full-Exercise
+ * shape (id prefixed `added-ex-`). The Today screen's focus re-sync then merges
+ * it in and its auto-persist effect keeps it across reloads.
+ */
+async function persistCoachAddedExercise(added: {
+  id: string; name: string; category: string; sets: number; reps: string; notes?: string;
+}): Promise<void> {
+  const todayStr = getLocalDateString();
+  const feCat = mapCoachCategory(added.category);
+  const exObj = {
+    id:           added.id,                 // already `added-ex-...` from backend
+    name:         added.name,
+    category:     feCat,
+    prescription: '',
+    lastSession:  '',
+    cues:         [],
+    notes:        added.notes || '',
+    fields:       coachDefaultFields(feCat),
+    sets: Array.from({ length: added.sets }, (_, i) => ({
+      id:     `${added.id}-set-${i}`,
+      type:   'work',
+      weight: 0,
+      reps:   added.reps,
+      label:  `Set ${i + 1}`,
+    })),
+  };
+  try {
+    const raw = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+    let existing: any[] = [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.date === todayStr && Array.isArray(parsed?.exercises)) existing = parsed.exercises;
+    }
+    if (existing.some(e => e?.id === exObj.id)) return; // dedupe
+    const payload = { date: todayStr, exercises: [...existing, exObj] };
+    await AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('[Coach] persistCoachAddedExercise failed:', e);
+    throw e;
+  }
+}
+
+/**
+ * Build a compact snapshot of the athlete's CURRENT session state that the
+ * backend can't fully see server-side: exercises added manually today and sets
+ * logged so far today. Returns null when there's nothing extra to report.
+ */
+async function buildCurrentSessionSnapshot(): Promise<string | null> {
+  const todayStr = getLocalDateString();
+  const lines: string[] = [];
+
+  // Manually / coach-added exercises (client-only store)
+  try {
+    const raw = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length) {
+        lines.push('Exercises the athlete added to today (not in the original prescription):');
+        for (const e of parsed.exercises) {
+          lines.push(`  - ${e.name} [${e.category}] (${e.sets?.length ?? 0} sets)`);
+        }
+      }
+    }
+  } catch {}
+
+  // Sets logged so far today
+  try {
+    const resp: any = await logApi.list({ startDate: todayStr, endDate: todayStr });
+    const logs: any[] = Array.isArray(resp) ? resp : (resp?.logs || []);
+    const done = logs.filter(l => (l.completed === 'yes' || l.completed === true) && (l.exercise));
+    if (done.length) {
+      lines.push('Sets logged so far today:');
+      for (const l of done.slice(0, 40)) {
+        const w = l.weight ? `${l.weight}` : '';
+        const r = (l.reps !== undefined && l.reps !== null) ? `${l.reps}` : '';
+        const detail = [w && `${w}`, r && `x${r}`].filter(Boolean).join(' ');
+        lines.push(`  - ${l.exercise}${detail ? `: ${detail}` : ''}`);
+      }
+    }
+  } catch {}
+
+  return lines.length ? lines.join('\n') : null;
+}
+
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ExerciseSwap {
@@ -260,7 +364,8 @@ export default function CoachScreen() {
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
-      const result = await coachApi.chat(trimmed, history, conversationId, source);
+      const snapshot = await buildCurrentSessionSnapshot();
+      const result = await coachApi.chat(trimmed, history, conversationId, source, snapshot);
 
       // Update conversationId from response
       if (result.conversation_id && result.conversation_id !== conversationId) {
@@ -269,10 +374,21 @@ export default function CoachScreen() {
         loadConversations();
       }
 
+      // ── Coach write-action: persist an added exercise into the SAME store as
+      //    the manual "+ Add Exercise" button so it appears on Today & survives reload.
+      let addFailedNote = '';
+      if (result.added_exercise && result.added_exercise.id) {
+        try {
+          await persistCoachAddedExercise(result.added_exercise);
+        } catch {
+          addFailedNote = '\n\n(Heads up: I hit an error saving that exercise to your session — please try adding it again.)';
+        }
+      }
+
       const assistantMsg: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
-        content: result.response || 'No response received.',
+        content: (result.response || 'No response received.') + addFailedNote,
         sources: result.sources || [],
         timestamp: new Date(),
         hasProgramChange: result.has_program_change || false,

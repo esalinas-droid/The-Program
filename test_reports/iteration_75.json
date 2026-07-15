@@ -1,0 +1,62 @@
+{
+  "summary": "Tested the new AI-coach write-action (POST /api/coach/chat with <ADD_EXERCISE> tag) and the new current_session context field. Wrote two suites: (1) 18 pure-function unit tests for validate_coach_added_exercise + _sanitize_text — ALL 18 PASS, proving name-required, category-coercion-to-accessory, sets clamp 1..10, reps default '8-10', notes cap 200, HTML strip, and case-insensitive category all work correctly. (2) 7 end-to-end LLM tests hitting the real endpoint — ALL 7 FAIL with HTTP 500 because the upstream Emergent proxy rejects EMERGENT_LLM_KEY as 'Invalid API key'. This is a CREDENTIAL/CONFIG issue (the placeholder key 'sk-emergent-fAd8f9eB10a2fA81f7' in /app/backend/.env and .env.local is not valid). Behavioural E2E of the new add-exercise flow, category handling, malformed-input safety, no-false-trigger, current_session freshness, and PROGRAM_CHANGE regression could NOT be verified against the live LLM until the key is fixed. Secondary robustness gap: coach_chat has no try/except around chat.send_message, so upstream LLM auth/timeouts surface as naked 500s to the client instead of a graceful 502/503.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/coach/chat",
+        "issue": "EMERGENT_LLM_KEY in /app/backend/.env and /app/backend/.env.local is 'sk-emergent-fAd8f9eB10a2fA81f7' which the upstream proxy rejects: litellm.AuthenticationError 'Invalid API key'. Every coach call returns HTTP 500 — impossible to E2E-verify the new add-exercise write-action, category handling, current_session honouring, or PROGRAM_CHANGE regression against the real LLM. Backend log evidence: /var/log/supervisor/backend.err.log — 'openai.AuthenticationError: Invalid API key' → 'emergentintegrations.llm.chat.ChatError'.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/coach/chat",
+        "issue": "No try/except around `await chat.send_message(...)` at server.py:4223. Any upstream LLM error (auth, rate-limit, timeout, network) leaks as HTTP 500 instead of a graceful error payload. Should catch ChatError and return 502/503 with {response: 'Coach is temporarily unavailable', added_exercise: null, ...} so the client can degrade instead of showing red-screen.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/coach/chat",
+        "issue": "_sanitize_text() is applied to `current_session` at server.py:3963 via re.sub(r\"[\\x00-\\x1f\\x7f]\", ' ') + re.sub(r'\\s+', ' ') — this collapses ALL newlines/tabs in the client snapshot into single spaces, so the coach receives a run-on line ('Exercises the athlete added to today: - Face Pulls [accessory] (3 sets) Sets logged so far today: - Back Squat: 315 x5') instead of the structured multi-line block the client sent. Still parseable by the LLM but structure is lost; consider a snapshot-specific sanitiser that preserves \\n while stripping other control chars, or increase the 3000-char cap awareness."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_add_exercise.py",
+    "/app/backend/tests/test_coach_add_exercise_validator.py",
+    "/app/test_reports/pytest/iter75_coach_add_exercise.xml",
+    "/app/test_reports/pytest/iter75_coach_validator.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix EMERGENT_LLM_KEY. Current value 'sk-emergent-fAd8f9eB10a2fA81f7' in both /app/backend/.env and /app/backend/.env.local is rejected by the upstream proxy as 'Invalid API key'. Once a valid key is in place, re-run pytest backend/tests/test_coach_add_exercise.py to verify all 6 behavioural scenarios (happy-path add, category, malformed, no-false-trigger, current_session freshness, PROGRAM_CHANGE regression).",
+    "HIGH: Wrap `await chat.send_message(...)` in coach_chat (server.py ~4223) in try/except ChatError → return 200/503 with a safe fallback payload (added_exercise=null, response='Coach is temporarily unavailable, try again') instead of leaking 500 to the client. Same treatment likely wanted at the other 8+ send_message call sites (5585, 5645, 6094, 6586, 7067, 7177, 3032).",
+    "MINOR: Consider a newline-preserving sanitiser for `current_session` so the multi-line client snapshot (added-exercises + logged sets) reaches the LLM with its bullet structure intact — the current _sanitize_text collapses it to one line.",
+    "Once the LLM key is fixed, main agent should self-run: pytest /app/backend/tests/test_coach_add_exercise.py -v — the 7 tests already retry LLM non-determinism up to 3× per scenario."
+  ],
+  "critical_code_review_comments": [
+    "server.py:3672 validate_coach_added_exercise is well-designed — fails closed on missing name, clamps sets to 1..10, coerces unknown category to 'accessory', caps notes at 200 chars. All 18 unit tests pass.",
+    "server.py:4242 <ADD_EXERCISE> parser correctly (a) strips the tag from user-visible text regardless of JSON validity, (b) returns added_exercise=null on malformed JSON, (c) appends a plain-text fallback nudge when payload is unusable so the coach doesn't falsely claim success. Good.",
+    "server.py:4255 id prefix 'added-ex-' + uuid.hex[:12] matches spec and mirrors the client-side manual-add shape.",
+    "server.py:3961-3969 current_session context is guarded (only injected when non-empty after sanitisation) and clearly framed to the LLM as superseding the prescribed session. Good design — but see minor issue about newline collapse.",
+    "server.py:4223 no exception handling around LlmChat.send_message is a robustness gap unrelated to this feature but exposed by the current invalid LLM key.",
+    "The system prompt block at server.py:4180 clearly documents the write-action contract (single block, valid category set, sets 1-10, reps free-form) and instructs the model to confirm what was added in prose — matches backend parser expectations."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coach_add_exercise.py (new — 7 E2E LLM tests, all currently blocked by invalid LLM key)",
+    "/app/backend/tests/test_coach_add_exercise_validator.py (new — 18 pure-function tests, ALL PASS)"
+  ],
+  "success_rate": {
+    "backend": "72% (18/25 tests pass — 18/18 validator + sanitizer unit tests pass; 0/7 E2E tests pass, blocked by invalid EMERGENT_LLM_KEY, not by the new feature code)",
+    "frontend": "n/a (frontend testing skipped per request)"
+  },
+  "seed_data_creation": "None — used existing user_a@theprogram.app account.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Once EMERGENT_LLM_KEY is rotated to a valid emergent proxy key, run: `pytest /app/backend/tests/test_coach_add_exercise.py -v --tb=short`. All 7 tests already build in 3× retry for LLM non-determinism (retry when added_exercise expected present/absent doesn't match on first try). Validator unit tests in test_coach_add_exercise_validator.py should keep passing regardless. Also worth spot-checking that the current_session multi-line snapshot behaviour is acceptable to the LLM even after newline-collapse by _sanitize_text.",
+  "rca_of_issue": "RCA of the 7 E2E failures — NOT a bug in the new add-exercise feature: (1) reproduction: POST /api/coach/chat with any valid message + Bearer token → HTTP 500. (2) backend.err.log shows litellm→openai auth path returning 'Invalid API key'. (3) EMERGENT_LLM_KEY in /app/backend/.env (line 25) and /app/backend/.env.local both equal 'sk-emergent-fAd8f9eB10a2fA81f7' — a short placeholder-looking value that the emergent proxy does not recognise. (4) mitigation: provision a real EMERGENT_LLM_KEY in /app/backend/.env.local (which is gitignored, per .env comment) then `sudo supervisorctl restart backend`. Additionally, adding try/except around chat.send_message would prevent this class of failure from surfacing as HTTP 500 to clients."
+}

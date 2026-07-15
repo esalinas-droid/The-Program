@@ -5968,23 +5968,6 @@ export default function TodayScreen() {
         }}
         />
 
-        {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ────────
-             The "+ Add Exercise" button sits between exercises and conditioning. */}
-        {/* ── ADD EXERCISE BUTTON (program mode, bottom of EXERCISES section) ── */}
-        <TouchableOpacity
-          style={s.addExerciseBtn}
-          onPress={() => {
-            setPickerMode('add');
-            setAdjustKey('');
-            setAdjustName('');
-            setModal(true);
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="plus-circle-outline" size={15} color={COLORS.accent} />
-          <Text style={s.addExerciseBtnText}>Add Exercise</Text>
-        </TouchableOpacity>
-
         {/* ── CONDITIONING SECTION (P2a: category=gpp, orange #FFA726) ──────── */}
         {exercises.filter(ex => ex.category === 'gpp').length > 0 && (
           <>
@@ -6112,6 +6095,21 @@ export default function TodayScreen() {
             />
           </>
         )}
+
+        {/* ── ADD EXERCISE BUTTON (program mode — below all exercise sections) ── */}
+        <TouchableOpacity
+          style={s.addExerciseBtn}
+          onPress={() => {
+            setPickerMode('add');
+            setAdjustKey('');
+            setAdjustName('');
+            setModal(true);
+          }}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="plus-circle-outline" size={15} color={COLORS.accent} />
+          <Text style={s.addExerciseBtnText}>Add Exercise</Text>
+        </TouchableOpacity>
 
         <View style={{ height: SPACING.xl }} />
       </ScrollView>

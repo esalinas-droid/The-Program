@@ -278,7 +278,7 @@ export const seedApi = {
 
 // Coach
 export const coachApi = {
-  chat: (message: string, history: { role: string; content: string }[], conversationId?: string | null, source: string = 'user_typed') =>
+  chat: (message: string, history: { role: string; content: string }[], conversationId?: string | null, source: string = 'user_typed', currentSession?: string | null) =>
     api('/coach/chat', {
       method: 'POST',
       body: JSON.stringify({
@@ -286,6 +286,7 @@ export const coachApi = {
         conversation_history: history,
         conversation_id: conversationId ?? null,
         source,
+        current_session: currentSession ?? null,
       }),
     }),
   activeTrigger: () => api('/coach/active-trigger'),
