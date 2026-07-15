@@ -3979,6 +3979,28 @@ export default function TodayScreen() {
         }
       } catch (err) { console.warn('[Today] API session fetch failed:', err); }
 
+      // ── Path-independent restore of added exercises ──────────────────────────
+      // The inline restore above only runs when the plan API returns exercises.
+      // If getTodaySession 404s (e.g. free-training day) apiExs is empty and the
+      // hardcoded fallback session renders — but stored added exercises must STILL
+      // be re-hydrated on cold start. Merge them into whatever base list exists.
+      try {
+        const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+        if (savedAddedExs) {
+          const parsed = JSON.parse(savedAddedExs);
+          if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length > 0) {
+            setExercises(prev => {
+              const ids = new Set(prev.map((e: any) => e.id));
+              const missing = parsed.exercises.filter((e: any) => !ids.has(e.id));
+              if (!missing.length) return prev;
+              console.log('[Today] Path-independent: restored', missing.length, 'added exercises');
+              return [...prev, ...missing];
+            });
+          }
+        }
+      } catch (err) { console.warn('[Today] Path-independent added-exercise restore failed:', err); }
+      addedExercisesRestored.current = true;  // a restore attempt ran → persist may now prune
+
       // ── Check today's readiness ──────────────────────────────────────────
       try {
         const rResult = await readinessApi.getToday();

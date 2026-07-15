@@ -1,0 +1,32 @@
+{
+  "summary": "PRIMARY REGRESSION FROM ITER77 IS FIXED. Frontend-only retest (backend skipped per instructions). The path-independent restore block added in today.tsx right after the getTodaySession try/catch (~lines 3982-4002) correctly re-hydrates stored added exercises on cold start REGARDLESS of whether the plan API 404s or returns a session. Verified end-to-end for user_a (whose /api/plan/session/today returns 404 'Free training mode' — the exact case that broke iter77): (1) tapped '+ Add Exercise' at the bottom, added Back Squat from library — landed under a primary section; (2) opened the picker again, created custom TEST_QA_ColdRestart_78 with SECTION=Cooldown + TRACKS=Time(sec) — landed under the COOLDOWN section with a Sec unit dropdown + sec text field + LOG button; (3) full page reload — BOTH exercises re-rendered, console printed '[Today] Path-independent: restored 2 added exercises', localStorage today_added_exercises key intact; (4) navigated Today→Tools→Today — both still present exactly once; (5) second full page reload — restore still shows count=2 and DOM contains each name exactly once (dedup by id works); (6) 'Create New Exercise' still renders directly UNDER the search bar in the picker; (7) custom-exercise How-To opens the YouTube search fallback screen with a 'Search: <name>' button when no link was provided. Section order post-reload verified via text-index positions: PRIMARY block first, Back Squat present, then COOLDOWN header, then TEST_QA_ColdRestart_78 immediately below. No red screen, no new console errors introduced by the fix.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-av", "issue": "Pre-existing deprecation warning still firing: 'Expo AV has been deprecated and will be removed in SDK 54. Use the expo-audio and expo-video packages'. Not introduced by this iteration but should be migrated. Reference: any file importing expo-av."},
+      {"component": "testID coverage", "issue": "Zero testID props on the interactive elements exercised in this test (Add Exercise button, Create New Exercise, section chips, tracks chips, Save & Use, exercise cards). All selectors relied on visible text — brittle for future regressions. Reference: /app/frontend/app/(tabs)/today.tsx and /app/frontend/src/components/ExercisePicker.tsx."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "None for the tested regression — the fix is complete and stable across reload, in-app nav, and repeat reload paths.",
+    "Housekeeping (carried over from iter77, still open): (a) add testIDs to today.tsx + ExercisePicker.tsx interactive elements, (b) migrate expo-av → expo-audio + expo-video, (c) consider whether /api/plan/session/today should stop returning 404 for user_a while the client renders a program-mode session — the data-consistency mismatch is not user-visible now that restore is path-independent, but it's still a mismatch worth investigating.",
+    "The lingering TEST_QA_Cooldown_Stretch_77 from iter77 is still in user_a's user_exercises collection (visible in picker under YOUR CUSTOM EXERCISES). Non-disruptive. Now iter78 has also created TEST_QA_ColdRestart_78 which will similarly linger — safe to leave or manually clean via DELETE /api/user-exercises/{id}."
+  ],
+  "critical_code_review_comments": [
+    "today.tsx is now ~7055 lines. Splitting into hooks (useMountRestore, useAddedExercisesPersist, useTodayRestore) and section subcomponents would prevent the exact class of nesting bug that iter77 revealed. Every regression here is compounded by file size.",
+    "The addedExercisesRestored.current=true is now set unconditionally at :4002 — good. Confirm the equivalent flag is also set inside the same-day fast-path re-sync (~:3605-3619) to be belt-and-braces; the mount-restore already fires first so this is defensive-only.",
+    "The Path-independent restore uses setExercises(prev=>...) with an id-based Set for dedup — correct even if the inline restore at :3872 already ran, so the double-restore in the api-success path is idempotent.",
+    "Consider extracting a single ADDED_EXERCISES_KEY hook so the merge logic isn't duplicated in three places (inline restore + fast-path re-sync + path-independent restore)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped per request", "frontend": "100% — all 6 regression checks pass"},
+  "seed_data_creation": "One new custom exercise created via UI for user_a: TEST_QA_ColdRestart_78 (category=cooldown, prescriptionType=timed). Non-disruptive; can be left in place for future re-tests or cleaned via DELETE /api/user-exercises/{id}. iter77's TEST_QA_Cooldown_Stretch_77 is still present as well.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The cold-start regression for user_a on program-mode Today is confirmed fixed at today.tsx:3982-4002. If future work touches the mount/restore/persist trio, always retest with a user whose /api/plan/session/today returns 404 (user_a is perfect for this) — that is the exclusive path that gates the restore. Console must print '[Today] Path-independent: restored N added exercises' after each cold start for any today_added_exercises payload that matches today's date. localStorage today_added_exercises must survive across reloads even when the exercises array starts empty (persist effect at :3534 is guarded by addedExercisesRestored.current). Login token field: `token`. Backend URL env key: EXPO_PUBLIC_BACKEND_URL. No testIDs exist yet — use text selectors and the picker's 'Search exercises…' placeholder input.",
+  "rca_of_issue": "N/A — no bug found this iteration. The iter77 root cause (restore nested inside `if (apiExs.length > 0)`) has been correctly addressed by moving the restore out of the api-success guard and setting the restored-flag unconditionally right after the API try/catch. Verified via console log '[Today] Path-independent: restored 2 added exercises' on every cold start, DOM re-render of both Back Squat and the custom cooldown exercise, and intact localStorage today_added_exercises across reloads."
+}
