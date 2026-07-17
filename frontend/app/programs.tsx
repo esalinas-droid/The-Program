@@ -30,7 +30,14 @@ function weeksBetween(start: string, endOrNull?: string | null): number {
 }
 
 function currentWeekOfPlan(startDate: string): number {
-  return Math.max(1, weeksBetween(startDate) + 1);
+  // Match backend _calculate_current_week: floor(days/7) + 1
+  try {
+    const s = new Date(startDate);
+    const diff = Math.floor((Date.now() - s.getTime()) / (7 * 86400 * 1000));
+    return Math.max(1, diff + 1);
+  } catch {
+    return 1;
+  }
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
