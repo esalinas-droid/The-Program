@@ -8,6 +8,11 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import uuid
 import logging
+import random as _random
+import hashlib as _hashlib
+import math as _math
+import re as _re
+import dataclasses as _dc
 
 from models.schemas import (
     AnnualPlan, Phase, Block, Week, Session, SessionExercise,
@@ -19,7 +24,12 @@ from models.schemas import (
 logger = logging.getLogger(__name__)
 
 
+_RNG = None  # seeded per-plan (from planId) for deterministic id + rotation output
+
+
 def _id():
+    if _RNG is not None:
+        return "%012x" % _RNG.getrandbits(48)
     return str(uuid.uuid4())[:12]
 
 
@@ -122,7 +132,8 @@ def _has_equip(equipment: List[str], key: str) -> bool:
 def _build_me_upper(lifts: CurrentLifts, unit: str,
                     goal: str = "strength",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     injuries = injuries or []
     equipment = equipment or []
     bench_max = lifts.bench or 135
@@ -226,13 +237,14 @@ def _build_me_upper(lifts: CurrentLifts, unit: str,
             notes="Rear delt health — don't skip"
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
 def _build_me_lower(lifts: CurrentLifts, unit: str,
                     goal: str = "strength",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     injuries = injuries or []
     equipment = equipment or []
     squat_max = lifts.squat or 185
@@ -354,13 +366,14 @@ def _build_me_lower(lifts: CurrentLifts, unit: str,
             targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)],
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
 def _build_de_upper(lifts: CurrentLifts, unit: str,
                     goal: str = "strength",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     injuries = injuries or []
     equipment = equipment or []
     bench_max = lifts.bench or 135
@@ -420,13 +433,14 @@ def _build_de_upper(lifts: CurrentLifts, unit: str,
             targetSets=[TargetSet(setNumber=1, targetReps="100 total", setType="work")],
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
 def _build_de_lower(lifts: CurrentLifts, unit: str,
                     goal: str = "strength",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     injuries = injuries or []
     equipment = equipment or []
     squat_max = lifts.squat or 185
@@ -530,11 +544,11 @@ def _build_de_lower(lifts: CurrentLifts, unit: str,
                 targetSets=[TargetSet(setNumber=i, targetReps="40yd", setType="work") for i in range(1, 5)],
             ),
         ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
-def _build_gpp() -> List[SessionExercise]:
-    return [
+def _build_gpp(ctx: "ProgContext" = None) -> List[SessionExercise]:
+    exercises = [
         SessionExercise(sessionExerciseId=_id(), name="Sled Push", category=ExerciseCategory.ACCESSORY, prescription="6×40yd",
             targetSets=[TargetSet(setNumber=i, targetReps="40yd", setType="work") for i in range(1, 7)]),
         SessionExercise(sessionExerciseId=_id(), name="Band Pull-Apart", category=ExerciseCategory.PREHAB, prescription="100 total",
@@ -542,12 +556,14 @@ def _build_gpp() -> List[SessionExercise]:
         SessionExercise(sessionExerciseId=_id(), name="Ab Wheel", category=ExerciseCategory.PREHAB, prescription="3×10-15",
             targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)]),
     ]
+    return _apply_progression(exercises, ctx)
 
 
 def _build_re_upper(lifts: CurrentLifts, unit: str,
                     goal: str = "hypertrophy",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     """Repetition Effort Upper — volume pressing for Hypertrophy / General / Athletic."""
     injuries = injuries or []
     equipment = equipment or []
@@ -626,13 +642,14 @@ def _build_re_upper(lifts: CurrentLifts, unit: str,
             targetSets=[TargetSet(setNumber=i, targetReps="20", setType="work") for i in range(1, 4)],
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
 def _build_re_lower(lifts: CurrentLifts, unit: str,
                     goal: str = "hypertrophy",
                     injuries: List[str] = None,
-                    equipment: List[str] = None) -> List[SessionExercise]:
+                    equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     """Repetition Effort Lower — volume squatting/hinging for Hypertrophy / General."""
     injuries = injuries or []
     equipment = equipment or []
@@ -714,13 +731,14 @@ def _build_re_lower(lifts: CurrentLifts, unit: str,
             targetSets=[TargetSet(setNumber=i, targetReps="10-15", setType="work") for i in range(1, 4)],
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
 def _build_full_body(lifts: CurrentLifts, unit: str,
                      goal: str = "athletic",
                      injuries: List[str] = None,
-                     equipment: List[str] = None) -> List[SessionExercise]:
+                     equipment: List[str] = None,
+                    ctx: "ProgContext" = None) -> List[SessionExercise]:
     """Full Body — compound push + pull + hinge + carry for Athletic / General."""
     injuries = injuries or []
     equipment = equipment or []
@@ -784,8 +802,206 @@ def _build_full_body(lifts: CurrentLifts, unit: str,
             targetSets=[TargetSet(setNumber=i, targetReps="10-12", setType="work") for i in range(1, 4)],
         ),
     ]
-    return _filter_injured(exercises, injuries)
+    return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
+
+
+
+# ─── Progression Engine (week / block / phase aware) ─────────────────────────
+#
+# Progression parameters live here as DATA (per-phase templates), not hardcoded
+# inside the exercise builders. Each session's base exercises are built as before,
+# then _apply_progression() mutates them per the (week, block, phase, deload)
+# context. Only existing fields (name, cues, targetSets) are touched, so the
+# generated plan document schema is unchanged and fully backward compatible.
+
+# Deload reduction (template-level defaults)
+DELOAD_LOAD_MULT = 0.90      # −10% working intensity on deload weeks
+DELOAD_VOLUME_MULT = 0.60    # −40% working-set volume on deload weeks
+
+# Per-phase progression parameters (DATA):
+#   intensity : phase-level multiplier applied to every working load (% of 1RM)
+#   meWave    : Max-Effort top-set multiplier within a block, indexed by week-in-block
+#   deStep    : Dynamic-Effort weekly load step within a block (0.05 = +5%/week)
+#   reStep    : Repetition-Effort weekly load creep within a block
+#   accWave   : accessory volume wave (sets, reps) indexed by week-in-block
+PHASE_PROGRESSION = {
+    "Intro Phase":            {"intensity": 0.82, "meWave": [1.00, 1.025, 1.05, 1.05], "deStep": 0.05, "reStep": 0.025, "accWave": [(3, "12"), (3, "12"), (4, "10"), (4, "10")]},
+    "Base Strength":          {"intensity": 0.88, "meWave": [1.00, 1.03, 1.05, 1.05],  "deStep": 0.05, "reStep": 0.025, "accWave": [(3, "12"), (4, "10"), (4, "10"), (4, "8")]},
+    "Building Phase":         {"intensity": 0.93, "meWave": [1.00, 1.03, 1.06, 1.06],  "deStep": 0.05, "reStep": 0.03,  "accWave": [(3, "10"), (4, "10"), (4, "8"),  (5, "8")]},
+    "Event Specialization":   {"intensity": 0.93, "meWave": [1.00, 1.03, 1.06, 1.06],  "deStep": 0.05, "reStep": 0.03,  "accWave": [(3, "10"), (4, "10"), (4, "8"),  (5, "8")]},
+    "Strength Phase":         {"intensity": 0.97, "meWave": [1.00, 1.03, 1.06, 1.06],  "deStep": 0.06, "reStep": 0.03,  "accWave": [(3, "8"),  (4, "8"),  (4, "6"),  (4, "6")]},
+    "Peaking":                {"intensity": 1.04, "meWave": [1.00, 1.03, 1.06, 1.06],  "deStep": 0.06, "reStep": 0.03,  "accWave": [(3, "6"),  (3, "5"),  (3, "5"),  (3, "5")]},
+    "Competition Prep":       {"intensity": 1.02, "meWave": [1.00, 1.02, 1.04, 1.04],  "deStep": 0.04, "reStep": 0.02,  "accWave": [(2, "5"),  (2, "5"),  (2, "3"),  (2, "3")]},
+    "Strength Consolidation": {"intensity": 0.85, "meWave": [1.00, 1.02, 1.03, 1.03],  "deStep": 0.04, "reStep": 0.02,  "accWave": [(3, "12"), (3, "10"), (3, "10"), (3, "10")]},
+    "Off-Season":             {"intensity": 0.80, "meWave": [1.00, 1.02, 1.03, 1.03],  "deStep": 0.04, "reStep": 0.025, "accWave": [(3, "12"), (4, "12"), (4, "10"), (4, "10")]},
+}
+DEFAULT_PROGRESSION = {"intensity": 0.90, "meWave": [1.00, 1.03, 1.05, 1.05], "deStep": 0.05, "reStep": 0.025, "accWave": [(3, "12"), (3, "12"), (4, "10"), (4, "10")]}
+
+
+def _phase_prog_params(phase_name: str) -> dict:
+    return PHASE_PROGRESSION.get(phase_name, DEFAULT_PROGRESSION)
+
+
+# Max-Effort main-lift variation pools by movement pattern (weekly rotation).
+ROTATION_POOLS = {
+    "Squat": ["Box Squat", "SSB Squat", "Front Squat", "Belt Squat"],
+    "Hinge": ["Block Pull", "Deficit Deadlift", "Romanian Deadlift"],
+    "Push":  ["Floor Press", "2-Board Press", "Close-Grip Bench", "Incline Bench"],
+}
+
+
+@_dc.dataclass
+class ProgContext:
+    week_in_block: int = 1
+    global_week: int = 1
+    block_number: int = 1
+    phase_index: int = 0
+    phase_name: str = ""
+    is_deload: bool = False
+    plan_id: str = ""
+    params: dict = _dc.field(default_factory=lambda: dict(DEFAULT_PROGRESSION))
+    is_speed: bool = False
+    is_max_effort: bool = False
+    blocked: set = _dc.field(default_factory=set)
+
+
+def _blocked_set(injuries) -> set:
+    """Set of exercises contraindicated by the user's injuries (reuses the
+    same contraindication map the builders use for selection)."""
+    blocked: set = set()
+    for inj in (injuries or []):
+        for key, ex_list in _INJURY_CONTRAINDICATIONS.items():
+            if key.lower() in inj.lower() or inj.lower() in key.lower():
+                blocked.update(ex_list)
+    return blocked
+
+
+def _wave(seq, week_in_block):
+    if not seq:
+        return None
+    return seq[min(week_in_block - 1, len(seq) - 1)]
+
+
+def _load_mult(ctx: "ProgContext") -> float:
+    """Multiplier applied to a working load for this session's context."""
+    p = ctx.params
+    m = p.get("intensity", 1.0)
+    if ctx.is_deload:
+        return m * DELOAD_LOAD_MULT
+    if ctx.is_speed:
+        return m * (1 + p.get("deStep", 0.0) * (ctx.week_in_block - 1))
+    if ctx.is_max_effort:
+        return m * (_wave(p.get("meWave"), ctx.week_in_block) or 1.0)
+    return m * (1 + p.get("reStep", 0.0) * (ctx.week_in_block - 1))
+
+
+def _scale_load(val, mult):
+    """Scale a numeric targetLoad string by mult; leave 'Bar'/'Light'/None as-is.
+    Preserves a trailing '+' (e.g. a top-single '405+')."""
+    if not isinstance(val, str):
+        return val
+    s = val.strip()
+    if not s:
+        return val
+    suffix = ""
+    core = s
+    if core.endswith("+"):
+        suffix = "+"
+        core = core[:-1].strip()
+    try:
+        return str(int(round(float(core) * mult))) + suffix
+    except (ValueError, TypeError):
+        return val
+
+
+def _is_plain_rep(sets) -> bool:
+    """True if every set's targetReps is a plain rep count / range (no units like
+    'm', 'yd', 'total', '/side'), so it is safe to apply an accessory volume wave."""
+    if not sets:
+        return False
+    for s in sets:
+        r = str(s.targetReps or "")
+        if not _re.fullmatch(r"\d+(-\d+)?", r):
+            return False
+    return True
+
+
+def _rotate_main(current_name, ctx: "ProgContext"):
+    """Deterministically rotate a Max-Effort main lift to another variation in its
+    movement-pattern pool. Seeded from planId so a plan regenerates identically;
+    injury-blocked variations are excluded."""
+    pat = EXERCISE_DB.get(current_name, {}).get("pattern")
+    pool = ROTATION_POOLS.get(pat)
+    if not pool or current_name not in pool:
+        return None  # only rotate exercises that belong to a rotation pool
+    avail = [x for x in pool if x not in ctx.blocked]
+    if not avail:
+        return None
+    base = int(_hashlib.md5((ctx.plan_id + pat).encode()).hexdigest(), 16)
+    idx = (base + (ctx.global_week - 1)) % len(avail)
+    return avail[idx]
+
+
+def _apply_progression(exercises, ctx):
+    """Apply week/block/phase progression to a base session's exercises.
+
+    - Max-Effort main-lift variation rotation (deterministic, injury-aware)
+    - Load scaling: phase intensity × weekly progression (DE +%/wk, ME top-set
+      wave, RE creep) × deload reduction
+    - Accessory volume waves (sets/reps by week-in-block)
+    - Deload weeks: reduced load AND reduced working-set volume
+    Only existing fields are mutated — schema stays backward compatible.
+    """
+    if ctx is None:
+        return exercises
+
+    p = ctx.params
+
+    # 1. Max-Effort main-lift variation rotation
+    if ctx.is_max_effort:
+        for ex in exercises:
+            if ex.category == ExerciseCategory.MAIN:
+                new_name = _rotate_main(ex.name, ctx)
+                if new_name and new_name != ex.name:
+                    ex.name = new_name
+                    new_cues = EXERCISE_DB.get(new_name, {}).get("cues")
+                    if new_cues:
+                        ex.cues = new_cues
+
+    # 2. Load scaling
+    mult = _load_mult(ctx)
+    for ex in exercises:
+        for st in ex.targetSets:
+            if st.setType in ("work", "ramp"):
+                st.targetLoad = _scale_load(st.targetLoad, mult)
+
+    # 3. Accessory volume wave (training weeks only)
+    if not ctx.is_deload:
+        wave = _wave(p.get("accWave"), ctx.week_in_block)
+        if wave:
+            n_sets, reps = wave
+            for ex in exercises:
+                if ex.category in (ExerciseCategory.SUPPLEMENTAL, ExerciseCategory.ACCESSORY):
+                    ws = [s for s in ex.targetSets if s.setType == "work"]
+                    if _is_plain_rep(ws):
+                        load = ws[0].targetLoad
+                        ex.targetSets = [
+                            TargetSet(setNumber=i + 1, targetLoad=load, targetReps=reps, setType="work")
+                            for i in range(n_sets)
+                        ]
+
+    # 4. Deload volume cut (all exercises)
+    if ctx.is_deload:
+        for ex in exercises:
+            ws = [s for s in ex.targetSets if s.setType == "work"]
+            non_ws = [s for s in ex.targetSets if s.setType != "work"]
+            keep = max(1, _math.ceil(len(ws) * DELOAD_VOLUME_MULT))
+            ex.targetSets = non_ws + ws[:keep]
+            for i, st in enumerate(ex.targetSets):
+                st.setNumber = i + 1
+
+    return exercises
 
 
 
@@ -807,7 +1023,8 @@ WARMUPS = {
 # ─── Session Builder ──────────────────────────────────────────────────────────
 
 def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, week: int, day: int, block_id: str,
-                   goal: str = "strength", injuries: List[str] = None, equipment: List[str] = None) -> Session:
+                   goal: str = "strength", injuries: List[str] = None, equipment: List[str] = None,
+                   base_ctx: "ProgContext" = None) -> Session:
     injuries = injuries or []
     equipment = equipment or []
     type_map = {
@@ -824,10 +1041,21 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
 
     objective, builder, warmup_key = type_map.get(session_type, type_map[SessionType.ME_UPPER])
 
-    if session_type in (SessionType.GPP,):
-        exercises = builder()
+    # Derive the per-session progression context (session-type flags + injury set)
+    if base_ctx is not None:
+        ctx = _dc.replace(
+            base_ctx,
+            is_speed=session_type in (SessionType.DE_UPPER, SessionType.DE_LOWER, SessionType.EVENT_TRAINING),
+            is_max_effort=session_type in (SessionType.ME_UPPER, SessionType.ME_LOWER),
+            blocked=_blocked_set(injuries),
+        )
     else:
-        exercises = builder(lifts, unit, goal=goal, injuries=injuries, equipment=equipment)
+        ctx = None
+
+    if session_type in (SessionType.GPP,):
+        exercises = builder(ctx)
+    else:
+        exercises = builder(lifts, unit, goal=goal, injuries=injuries, equipment=equipment, ctx=ctx)
 
     return Session(
         sessionId=_id(),
@@ -983,8 +1211,14 @@ for goal in [GoalType.POWERLIFTING, GoalType.HYPERTROPHY, GoalType.ATHLETIC, Goa
 
 # ─── Main Generator ──────────────────────────────────────────────────────────
 
-def generate_plan(intake: IntakeRequest) -> AnnualPlan:
-    """Generate a complete 12-month training plan from intake data."""
+def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> AnnualPlan:
+    """Generate a complete 12-month training plan from intake data.
+
+    Passing an explicit `plan_id` makes generation fully deterministic (ids +
+    Max-Effort variation rotation are seeded from it), so regenerating with the
+    same plan_id produces byte-identical output.
+    """
+    global _RNG
 
     # Case-insensitive GoalType lookup: "strongman" matches "Strongman"
     _goal_str = (intake.goal or "").strip()
@@ -992,7 +1226,9 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         (g for g in GoalType if g.value.lower() == _goal_str.lower()),
         GoalType.STRENGTH,
     )
-    plan_id = _id()
+    plan_id = plan_id or _id()
+    # Seed the module RNG from planId so all ids + rotation are deterministic
+    _RNG = _random.Random(plan_id)
     # Use programStartDate from intake (local date from device) if provided
     _start_str = getattr(intake, 'programStartDate', None) or getattr(intake, 'startDate', None)
     if _start_str and len(str(_start_str)) >= 10:
@@ -1060,6 +1296,18 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
                 if is_deload:
                     deload_weeks.append(current_week)
 
+                # Per-week progression context (session-type flags added per session)
+                base_ctx = ProgContext(
+                    week_in_block=w + 1,
+                    global_week=current_week,
+                    block_number=block_num,
+                    phase_index=i,
+                    phase_name=tmpl["name"],
+                    is_deload=is_deload,
+                    plan_id=plan_id,
+                    params=_phase_prog_params(tmpl["name"]),
+                )
+
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)
                 sessions = []
                 for stype, cal_day in day_map:
@@ -1069,6 +1317,7 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
                         goal=goal.value.lower(),          # "strongman", "hypertrophy", "powerlifting", etc.
                         injuries=intake.injuries,
                         equipment=(intake.specialtyEquipment or []) + (intake.gym or []),
+                        base_ctx=base_ctx,
                     )
                     sessions.append(session)
 
@@ -1138,6 +1387,7 @@ def generate_plan(intake: IntakeRequest) -> AnnualPlan:
         status="active",
     )
 
+    _RNG = None  # reset so unrelated _id() calls stay random
     return plan
 
 
