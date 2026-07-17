@@ -516,7 +516,7 @@ export default function SettingsScreen() {
           ) : (
             <View style={{ gap: SPACING.sm, marginBottom: SPACING.sm }}>
               {liveDetails.map(d => (
-                <View key={d.name} style={[s.injDetailCard, d.status === 'past' && s.injDetailCardPast]}>
+                <View key={d.name} testID={`injury-card-${d.name}`} style={[s.injDetailCard, d.status === 'past' && s.injDetailCardPast]}>
                   <View style={s.injDetailHeader}>
                     <Text style={[s.injDetailName, d.status === 'past' && { color: COLORS.text.muted }]}>{d.name}</Text>
                     <TouchableOpacity
@@ -543,6 +543,7 @@ export default function SettingsScreen() {
                     {(['active', 'past'] as const).map(st => (
                       <TouchableOpacity
                         key={st}
+                        testID={`injury-status-${d.name}-${st}`}
                         style={[s.injSegBtn, d.status === st && s.injSegBtnActive]}
                         onPress={() => handleEditInjury(d.name, { status: st })}
                         activeOpacity={0.8}
@@ -558,13 +559,14 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          <TouchableOpacity style={s.addLink} onPress={() => setShowAddInjury(true)}>
+          <TouchableOpacity testID="injury-add-flag" style={s.addLink} onPress={() => setShowAddInjury(true)}>
             <MaterialCommunityIcons name="plus" size={14} color={COLORS.accent} />
             <Text style={s.addLinkText}>Add injury flag</Text>
           </TouchableOpacity>
 
           {injuriesModified && (
             <TouchableOpacity
+              testID="injury-save-btn"
               style={[s.saveInjuriesBtn, (saving || previewLoading) && { opacity: 0.6 }]}
               onPress={handleSaveInjuries}
               disabled={saving || previewLoading}
@@ -930,6 +932,7 @@ export default function SettingsScreen() {
                 {ALL_INJURIES.filter(inj => !liveDetails.some(d => d.name === inj)).map(inj => (
                   <TouchableOpacity
                     key={inj}
+                    testID={`injury-modal-option-${inj}`}
                     style={s.modalChip}
                     onPress={() => {
                       handleAddInjury(inj);
