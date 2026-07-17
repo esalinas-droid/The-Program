@@ -838,6 +838,12 @@ PHASE_PROGRESSION = {
 }
 DEFAULT_PROGRESSION = {"intensity": 0.90, "meWave": [1.00, 1.03, 1.05, 1.05], "deStep": 0.05, "reStep": 0.025, "accWave": [(3, "12"), (3, "12"), (4, "10"), (4, "10")]}
 
+# Per-block deload scheduling (template-level DATA):
+#   The final week of every block is a deload, EXCEPT for blocks that are this
+#   short (they are effectively tapers/short blocks) and phases listed as opting out.
+MIN_WEEKS_FOR_BLOCK_DELOAD = 2          # blocks of ≤2 weeks get no deload week
+PHASE_NO_BLOCK_DELOAD = {"Competition Prep"}  # phases that opt out of per-block deloads
+
 
 def _phase_prog_params(phase_name: str) -> dict:
     return PHASE_PROGRESSION.get(phase_name, DEFAULT_PROGRESSION)
@@ -1285,13 +1291,16 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
         while weeks_remaining > 0:
             block_weeks = min(4, weeks_remaining)
             block_id = _id()
-            is_deload_block = block_num > 0 and block_num % 4 == 0
+            # Per-block deload: the FINAL week of every block is a deload, except
+            # for short blocks (≤2 weeks) and phases that explicitly opt out.
+            phase_allows_deload = tmpl["name"] not in PHASE_NO_BLOCK_DELOAD
+            block_has_deload = block_weeks > MIN_WEEKS_FOR_BLOCK_DELOAD and phase_allows_deload
 
             # Build weeks for this block
             week_objects = []
             for w in range(block_weeks):
                 current_week = block_start_week + w
-                is_deload = is_deload_block and w == block_weeks - 1
+                is_deload = block_has_deload and w == block_weeks - 1
 
                 if is_deload:
                     deload_weeks.append(current_week)

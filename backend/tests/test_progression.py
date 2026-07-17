@@ -178,7 +178,41 @@ def test_generation_is_deterministic():
     assert a == b
 
 
-# ── (f) Injury exclusions hold in rotated variations ──────────────────────────
+# ── Per-block deloads (PART 1) ────────────────────────────────────────────────
+def test_last_week_of_standard_block_is_deload(plan):
+    """The final week of a standard (>2-week, non-opt-out) block is a deload, and
+    the first week of the next block returns to normal (non-deload) loading."""
+    from services.plan_generator import MIN_WEEKS_FOR_BLOCK_DELOAD, PHASE_NO_BLOCK_DELOAD
+
+    checked = 0
+    for ph in plan.phases:
+        for b in ph.blocks:
+            if b.weekCount <= MIN_WEEKS_FOR_BLOCK_DELOAD or ph.phaseName in PHASE_NO_BLOCK_DELOAD:
+                continue
+            weeks = sorted(b.weeks, key=lambda w: w.weekNumber)
+            # last week of the block must be a deload
+            assert weeks[-1].isDeload, (
+                f"{ph.phaseName} {b.blockName}: last week {weeks[-1].weekNumber} not deload"
+            )
+            # all earlier weeks in the block are normal
+            for w in weeks[:-1]:
+                assert not w.isDeload, f"{b.blockName} week {w.weekNumber} unexpectedly deload"
+            checked += 1
+    assert checked >= 3, "expected several standard blocks to carry a deload week"
+
+
+def test_loading_resumes_after_block_deload(plan):
+    """After a block's deload week, the next block's first week resumes normal
+    (heavier) DE loading rather than staying at deload levels."""
+    # Intro block ends week 4 (deload); Base Strength block starts week 5 (normal)
+    w4 = _session(plan, 4, "Speed Upper")
+    w5 = _session(plan, 5, "Speed Upper")
+    assert w4 and w5
+    assert w4[2].isDeload and not w5[2].isDeload
+    load4 = _num(w4[3].exercises[0].targetSets[0].targetLoad)
+    load5 = _num(w5[3].exercises[0].targetSets[0].targetLoad)
+    assert load5 > load4, f"post-deload week5 load {load5} should exceed deload week4 {load4}"
+
 def test_injury_exclusions_hold_after_rotation():
     """With Patellar Tendinitis (blocks Box/Front/Belt squat), no rotated ME lower
     main is ever a contraindicated variation across the whole plan."""
