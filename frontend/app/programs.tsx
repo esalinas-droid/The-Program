@@ -170,6 +170,17 @@ export default function ProgramsScreen() {
           <StatPill icon="dumbbell" value={active.sessions_completed ?? 0} label="sessions" />
           <StatPill icon="trophy-outline" value={active.prs_hit ?? 0} label="PRs" />
         </View>
+
+        {/* View full program */}
+        <TouchableOpacity
+          style={s.viewFullBtn}
+          onPress={() => router.push('/program-overview' as any)}
+          activeOpacity={0.8}
+        >
+          <MaterialCommunityIcons name="calendar-text-outline" size={16} color={COLORS.accent} />
+          <Text style={s.viewFullText}>View full program</Text>
+          <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.accent} />
+        </TouchableOpacity>
       </View>
     );
   };
@@ -365,6 +376,22 @@ const s = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     gap: SPACING.sm,
+  },
+  viewFullBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    marginTop: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+  },
+  viewFullText: {
+    color: COLORS.accent,
+    fontSize: FONTS.sizes.sm,
+    fontWeight: FONTS.weights.semibold,
   },
   statPill: {
     flexDirection: 'row',

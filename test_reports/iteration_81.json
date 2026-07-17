@@ -1,0 +1,55 @@
+{
+  "summary": "Frontend-only validation of the new read-only 'Program Overview' screen (/program-overview) for the migrated account user_b@theprogram.app (userId dab8da9f, currentWeek ~15, 52 weeks, 7 phases). Logged in via /api/auth/login, seeded auth_token+auth_user in localStorage, navigated Programs -> tapped 'View full program' -> /program-overview. Screen renders correctly: 'Full Program' header with back button, plan name, 'You are in Week 15 of 52' banner, deload legend, and all 7 PHASE cards each with correct week ranges, block rows (name, Wk range, goal, colored Heavy/Speed Lower/Upper session dots, and numbered week pills 1..52). Current-week pill (15) is visually highlighted with the accent color (rgb(201,168,76)); deload weeks show the moon icon on wks 16, 20, 24, 28, 32, 38, 42, 46, 50 (per-block deloads on the future portion of the migrated plan, exactly as required). The screen is scrollable through all 7 phases and Off-Season block 4 ends at week 52. Back button returns to /programs. Read-only confirmed: no Edit/Save/Delete/Add controls or pencil icon on the overview. Entry point is reachable directly from the Programs active card (not gated behind today's session state).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/program-overview vs /programs",
+        "issues": [
+          "Current-week arithmetic is inconsistent between the two screens: /programs shows 'Week 16 of 52' (programs.tsx uses Math.round((now-start)/week)+1) while /program-overview banner shows 'Week 15 of 52' (program-overview.tsx uses Math.floor((now-start)/week)+1 in currentWeekOfPlan). Both derive from the same plan.startDate, so the week label should match. Recommend consolidating both to a single helper (or using plan.currentWeek from the backend if available) so the banner, pill highlight, and the programs card are consistent.",
+          "Plan name renders as the literal string 'Apr 11, 2026 → Apr 10, 2027' at the top of the overview (from plan.name), then immediately below 'Started Apr 6, 2026 · 4 days/week' is shown. This is a migrated-account data quirk (name was seeded to a date range) but visually the header duplicates date info and the 'Started Apr 6' date doesn't line up with the name's 'Apr 11'. Consider falling back to plan.planName (e.g. 'Hypertrophy — 52 Week Program') when plan.name looks like an auto-generated date range."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "expo-av (deprecated)",
+        "issue": "Console warns: '[expo-av]: Expo AV has been deprecated and will be removed in SDK 54. Use the `expo-audio` and `expo-video` packages to replace the required functionality.' Not caused by program-overview.tsx, but present app-wide and should be migrated. Reference: package.json / anywhere expo-av is imported."
+      },
+      {
+        "component": "expo-router _layout children mismatch",
+        "issue": "Console warns: 'No route named \"onboarding\" exists in nested children'. The root layout references an 'onboarding' route that doesn't exist in /app/frontend/app/ (only onboarding-intake.tsx and onboarding-path-picker.tsx exist). Reference: /app/frontend/app/_layout.tsx."
+      },
+      {
+        "component": "props.pointerEvents deprecation",
+        "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents'. App-wide (not specific to program-overview)."
+      },
+      {
+        "component": "shadow* style deprecation",
+        "issue": "Console warns: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' App-wide."
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Unify current-week calculation across /programs and /program-overview (single helper or backend-provided plan.currentWeek). Right now programs card says 'Week 16' while overview banner says 'Week 15' for the exact same active plan.",
+    "Consider a nicer fallback for plan.name when it was auto-generated as a date range on migrated accounts (fall back to plan.planName in the ProgramOverview header).",
+    "Migrate expo-av to expo-audio / expo-video before SDK 54 (deprecation warning at runtime).",
+    "Remove the stale 'onboarding' route reference in /app/frontend/app/_layout.tsx (route does not exist under app/).",
+    "Add data-testid/testID props to the ProgramOverview screen (backBtn, nowBanner, phase cards, week pills, current-week pill) to make automated verification more robust; currently there are no testIDs on the new screen."
+  ],
+  "critical_code_review_comments": [
+    "program-overview.tsx defines its own currentWeekOfPlan (Math.floor + 1) that diverges from programs.tsx's version (Math.round + 1). Extract this into src/utils/plan.ts and use everywhere.",
+    "program-overview.tsx has no testID props on any interactive/critical element (back button, banner, phase cards, pills). Adding testIDs is inexpensive and aligned with the project's testing conventions.",
+    "MaterialCommunityIcons name='weather-night' is used as the deload marker. The banner and legend are clear, but the pill uses only the moon icon + week number (no aria-label / accessibility label). Consider accessibilityLabel='Week {n}, deload week' for a11y."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not tested this iteration)", "frontend": "100% for the requested Program Overview validation (all 5 acceptance points verified)"},
+  "seed_data_creation": "None. Used pre-existing migrated user user_b@theprogram.app (userId dab8da9f).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To reach /program-overview: (1) POST /api/auth/login with {email:'user_b@theprogram.app', password:'HypertrophyB123'}, (2) set localStorage.auth_token and localStorage.auth_user, (3) navigate to /programs, (4) tap text 'View full program'. Direct page.goto('/program-overview') also works if auth is seeded first. The migrated plan for user_b has 52 weeks, 7 phases, and per-block deloads (moon icon) on weeks 16, 20, 24, 28, 32, 38, 42, 46, 50. Current-week highlight on the overview is on week 15 (Math.floor); the /programs card labels the same as week 16 (Math.round) — flag if this inconsistency reappears in future iterations.",
+  "rca_of_issue": "Minor UX/consistency issue: 'Week X of 52' differs by 1 between /programs (Math.round) and /program-overview (Math.floor). Both start from the same plan.startDate and Date.now(). Reproduction: log in as user_b, open /programs (shows 'Week 16 of 52'), tap 'View full program' (banner shows 'Week 15 of 52'). Fix: consolidate to one helper in /app/frontend/src/utils/ (recommend Math.floor+1 to match 'weeks completed + current' semantics, or use backend-provided plan.currentWeek) and import in both screens."
+}
