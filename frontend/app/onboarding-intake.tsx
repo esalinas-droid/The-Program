@@ -308,6 +308,8 @@ export default function OnboardingIntake() {
 
   // Step 8 — Injuries
   const [injuries, setInjuries] = useState<string[]>([]);
+  // Per-injury severity + status (defaults: moderate / active)
+  const [injuryMeta, setInjuryMeta] = useState<Record<string, { severity: 'mild' | 'moderate' | 'severe'; status: 'active' | 'past' }>>({});
   const [bodyMapGender, setBodyMapGender] = useState<'male'|'female'>('male');
 
   // Step 11 — Recovery profile (sleep / stress / occupation)
@@ -405,7 +407,16 @@ export default function OnboardingIntake() {
 
         // Step 9 — Injuries (ensure at least 'None' so canContinue passes)
         const inj: string[] = p.injuryFlags || [];
-        setInjuries(inj.length > 0 ? inj : ['None']);
+        const dets: any[] = (p as any).injuryDetails || [];
+        const injNames = Array.from(new Set([...inj, ...dets.map((d: any) => d.name).filter(Boolean)]));
+        setInjuries(injNames.length > 0 ? injNames : ['None']);
+        if (dets.length) {
+          const meta: Record<string, any> = {};
+          dets.forEach((d: any) => {
+            if (d?.name) meta[d.name] = { severity: d.severity || 'moderate', status: d.status || 'active' };
+          });
+          setInjuryMeta(meta);
+        }
 
         // Step 11 — Recovery
         if (p.sleepHours != null) {
@@ -563,6 +574,14 @@ export default function OnboardingIntake() {
       if (lifts.yoke)     currentLifts['yoke']     = parseFloat(lifts.yoke)     || 0;
 
       const cleanInjuries = injuries.includes('None') ? [] : injuries;
+      // Rich injury records — severity + active/past status per injury
+      const injuryDetails = cleanInjuries.map(n => ({
+        name:     n,
+        severity: injuryMeta[n]?.severity || 'moderate',
+        status:   injuryMeta[n]?.status   || 'active',
+      }));
+      // Only ACTIVE injuries feed injuryFlags / plan generation (past = resolved)
+      const activeInjuries = injuryDetails.filter(d => d.status === 'active').map(d => d.name);
       const bwNum         = parseFloat(bodyweight);
       const bw12wNum      = parseFloat(bw12WeekGoal) || 0;
       const sleepNum      = parseFloat(selectedSleep);
@@ -626,7 +645,8 @@ export default function OnboardingIntake() {
         experience,
         basePRs:         currentLifts,
         units:           liftUnit,
-        injuryFlags:     cleanInjuries,
+        injuryFlags:     activeInjuries,
+        injuryDetails,
         gymTypes,
         currentBodyweight: bwNum,
         bw12WeekGoal:    bw12wNum,
@@ -659,7 +679,7 @@ export default function OnboardingIntake() {
         lifts:              currentLifts,
         liftUnit,
         frequency:          trainingDays,
-        injuries:           cleanInjuries,
+        injuries:           activeInjuries,
         gym:                gymTypes,
         bodyweight:         bwNum,
         primaryWeaknesses,
@@ -682,13 +702,21 @@ export default function OnboardingIntake() {
         console.log('[Onboarding Rebuild] Calling planApi.rebuild...');
         await planApi.rebuild(payload);
 
+        // Persist rich injury records (backend derives injuryFlags from these)
+        try {
+          await profileApi.update({ injuryDetails } as any);
+        } catch (e) {
+          console.warn('[Onboarding Rebuild] injuryDetails sync failed (non-critical):', e);
+        }
+
         // Update local profile (keep history fields intact)
         await saveProfile({
           goal:              GOAL_MAP[goal] || goal,
           experience,
           basePRs:           currentLifts,
           units:             liftUnit,
-          injuryFlags:       cleanInjuries,
+          injuryFlags:       activeInjuries,
+          injuryDetails,
           gymTypes,
           currentBodyweight: bwNum,
           bw12WeekGoal:      bw12wNum,
@@ -715,13 +743,13 @@ export default function OnboardingIntake() {
       // ── FREE MODE: save profile only — no plan generated ──────────────────
       if (isFreeMode) {
         console.log('[Onboarding Free] Saving free-mode profile...');
-        const cleanInjFree = (injuries || []).filter(i => i && i.toLowerCase() !== 'none');
         await profileApi.update({
           name: userName.trim(),
           experience,
           currentBodyweight: parseFloat(bodyweight) || undefined,
           units: liftUnit,
-          injuryFlags: cleanInjFree,
+          injuryFlags: activeInjuries,
+          injuryDetails,
           training_mode: 'free',
           has_imported_program: false,
           onboardingComplete: true,
@@ -731,7 +759,8 @@ export default function OnboardingIntake() {
           experience,
           currentBodyweight: parseFloat(bodyweight) || undefined,
           units: liftUnit,
-          injuryFlags: cleanInjFree,
+          injuryFlags: activeInjuries,
+          injuryDetails,
           training_mode: 'free',
           has_imported_program: false,
           onboardingComplete: true,
@@ -774,7 +803,8 @@ export default function OnboardingIntake() {
           currentBodyweight: bwNum,
           bw12WeekGoal:      bw12wNum,
           basePRs:           currentLifts,
-          injuryFlags:       cleanInjuries,
+          injuryFlags:       activeInjuries,
+          injuryDetails,
           gymTypes,
           goal:              GOAL_MAP[goal] || goal,  // Title Case — no toLowerCase
           primaryWeaknesses,
@@ -1331,6 +1361,49 @@ export default function OnboardingIntake() {
           );
         })}
       </View>
+
+      {/* Per-injury severity + status */}
+      {injuries.filter(i => i !== 'None').length > 0 && (
+        <View style={{ marginTop: SPACING.lg, gap: SPACING.sm }}>
+          <Text style={s.injDetailHint}>Set how each one affects you right now</Text>
+          {injuries.filter(i => i !== 'None').map(item => {
+            const meta = injuryMeta[item] || { severity: 'moderate' as const, status: 'active' as const };
+            return (
+              <View key={item} style={s.injDetailCard}>
+                <Text style={s.injDetailName}>{item}</Text>
+                <View style={s.injSegRow}>
+                  {(['mild', 'moderate', 'severe'] as const).map(sev => (
+                    <TouchableOpacity
+                      key={sev}
+                      style={[s.injSegBtn, meta.severity === sev && s.injSegBtnActive]}
+                      onPress={() => { haptic(); setInjuryMeta(prev => ({ ...prev, [item]: { ...meta, severity: sev } })); }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.injSegTxt, meta.severity === sev && s.injSegTxtActive]}>
+                        {sev.charAt(0).toUpperCase() + sev.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={s.injSegRow}>
+                  {(['active', 'past'] as const).map(st => (
+                    <TouchableOpacity
+                      key={st}
+                      style={[s.injSegBtn, meta.status === st && s.injSegBtnActive]}
+                      onPress={() => { haptic(); setInjuryMeta(prev => ({ ...prev, [item]: { ...meta, status: st } })); }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.injSegTxt, meta.status === st && s.injSegTxtActive]}>
+                        {st === 'active' ? 'Current issue' : 'Past / healed'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 
@@ -2294,4 +2367,13 @@ const s = StyleSheet.create({
   bodyMapImages: { flexDirection: 'row', gap: SPACING.lg, justifyContent: 'center', marginBottom: SPACING.sm },
   bodyMapImg: { width: (SCREEN_W - 96) / 2, height: 170 },
   bodyMapCaption: { fontSize: 10, color: COLORS.text.muted, textAlign: 'center', marginTop: 2 },
+  // Per-injury severity + status selectors
+  injDetailHint: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginBottom: 2 },
+  injDetailCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, gap: SPACING.sm },
+  injDetailName: { fontSize: FONTS.sizes.sm, color: COLORS.text.primary, fontWeight: FONTS.weights.semibold },
+  injSegRow:     { flexDirection: 'row', gap: SPACING.xs },
+  injSegBtn:     { flex: 1, paddingVertical: 8, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', minHeight: 34 },
+  injSegBtnActive: { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: COLORS.accent },
+  injSegTxt:       { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  injSegTxtActive: { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
 });

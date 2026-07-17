@@ -265,3 +265,18 @@ Session colors use dark tinted backgrounds + left border:
 4. **Injury-aware system** — Injury flags set in onboarding drive rehab drills (Today screen), warning banners (Today screen), and coach context (RAG system prompt).
 5. **No Lose It data logging** — The Program only reads nutrition data from Lose It. It never logs food. Clear separation of concerns.
 6. **Emergent LLM key** — Single universal key for Claude Sonnet 4.5 across all AI features. No separate API key management for the user.
+
+---
+
+## AI COACH CONTEXT UPGRADE (June 2026 fork — COMPLETE)
+
+Five context upgrades to `/api/coach/chat` (server.py):
+1. **Session notes** — notes from today + last ~10 logged days injected (`ATHLETE'S SESSION NOTES`, ~500-token cap, dedup by date+exercise+text).
+2. **Cross-session memory** — `db.coach_memory` per-user rolling summary (≤120 words), updated via `asyncio.create_task(_update_coach_memory)` after each chat. Folds a conversation when ≥6 unsummarized messages OR any unsummarized messages + 30 min quiet (conversation-end proxy). Progress tracked via `memorySummarizedCount` on each conversation doc.
+3. **Onboarding Q/A** — `_build_onboarding_qa()` injects raw `profile.onboardingAnswers` (persisted at intake + captured on every profile edit via `_onboarding_capture_updates`), falling back to derived profile fields; missing answers flagged "(not captured)" — never fabricated.
+4. **Injury status + severity** — `profile.injuryDetails: [{name, status: active|past, severity: mild|moderate|severe}]` (additive). INVARIANT: `injuryFlags` = ACTIVE injury names, derived/reconciled in the same write everywhere (PUT/POST /profile, apply-injury-update, intake, rebuild, rehab graduate) via `_active_flags_from_details` / `_reconcile_details_with_flags`. Legacy flags w/o details = active/moderate. Coach prompt has INJURY HANDLING rules per status/severity. UI selectors in onboarding step 8 + Settings Injuries card.
+5. **Meet awareness** — `_meet_context()` injects days/weeks-out from `profile.competitionDate`; <3 weeks = explicit taper-protection directive; ≤21 days past = post-meet recovery bias.
+
+Context injection order in system prompt: PROFILE → TRAINING CONTEXT → MEET COUNTDOWN → RECENT SESSIONS → SESSION NOTES → today/live/block/program → readiness/pain/ratings → COACH MEMORY → ONBOARDING INTAKE → RAG.
+
+All verified e2e with test_strongman@test.com (taper answer, note reference, severity-aware pressing advice, memory doc created).

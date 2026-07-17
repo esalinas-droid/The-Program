@@ -1,3 +1,11 @@
+export type InjuryStatus = 'active' | 'past';
+export type InjurySeverity = 'mild' | 'moderate' | 'severe';
+export interface InjuryDetail {
+  name: string;
+  status: InjuryStatus;
+  severity: InjurySeverity;
+}
+
 export interface AthleteProfile {
   name: string;
   experience: string;
@@ -6,6 +14,7 @@ export interface AthleteProfile {
   bwLongRunGoal: number;
   basePRs: Record<string, number>;
   injuryFlags: string[];
+  injuryDetails?: InjuryDetail[];
   avoidMovements: string[];
   weaknesses: string[];
   currentWeek: number;

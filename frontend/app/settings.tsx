@@ -10,11 +10,26 @@ import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
 import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
 import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
-import { AthleteProfile } from '../src/types';
+import { AthleteProfile, InjuryDetail } from '../src/types';
 import { clearAuth, getStoredUser, getAuthToken } from '../src/utils/auth';
 import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+// Merge rich injuryDetails with legacy injuryFlags (flags without a detail
+// entry are treated as active/moderate) into a single editable list.
+function mergeInjuryDetails(p: AthleteProfile | null): InjuryDetail[] {
+  const dets: InjuryDetail[] = (p?.injuryDetails || []).map(d => ({
+    name: d.name,
+    status: d.status || 'active',
+    severity: d.severity || 'moderate',
+  }));
+  const known = new Set(dets.map(d => d.name.toLowerCase()));
+  (p?.injuryFlags || []).forEach(f => {
+    if (f && !known.has(f.toLowerCase())) dets.push({ name: f, status: 'active', severity: 'moderate' });
+  });
+  return dets;
+}
 
 const ALL_INJURIES = [
   'Shoulder (general)',         'Rotator Cuff',
@@ -81,9 +96,11 @@ export default function SettingsScreen() {
   const [marketingOptIn, setMarketingOptIn] = useState(true);
 
   // ── Inline edit state (injuries & weaknesses) ─────────────────────────────
-  const [liveInjuries,   setLiveInjuries]   = useState<string[]>([]);
+  const [liveDetails,    setLiveDetails]    = useState<InjuryDetail[]>([]);
   const [liveWeaknesses, setLiveWeaknesses] = useState<string[]>([]);
   const [injuriesModified, setInjuriesModified] = useState(false);
+  // Active injury names — what injuryFlags / plan generation see
+  const liveInjuries = liveDetails.filter(d => d.status === 'active').map(d => d.name);
 
   // ── Edit profile modal state ───────────────────────────────────────────────
   const [showEditProfile, setShowEditProfile] = useState(false);
@@ -147,7 +164,7 @@ export default function SettingsScreen() {
         }
       } catch {}
       setProfile(p);
-      setLiveInjuries([...(p?.injuryFlags || [])]);
+      setLiveDetails(mergeInjuryDetails(p));
       setLiveWeaknesses([...(p?.primaryWeaknesses || p?.weaknesses || [])]);
       setLoading(false);
     })();
@@ -208,23 +225,34 @@ export default function SettingsScreen() {
   };
 
   // ── Injuries (inline, with preview flow on save) ──────────────────────────
-  const handleRemoveInjury = (flag: string) => {
-    const next = liveInjuries.filter(i => i !== flag);
-    setLiveInjuries(next);
-    const current = (profile?.injuryFlags || []).slice().sort().join();
-    setInjuriesModified(next.slice().sort().join() !== current);
+  const markInjuriesModified = (next: InjuryDetail[]) => {
+    setLiveDetails(next);
+    setInjuriesModified(JSON.stringify(next) !== JSON.stringify(mergeInjuryDetails(profile)));
   };
 
-  const handleAddInjury = (flag: string) => {
-    if (!liveInjuries.includes(flag)) {
-      const next = [...liveInjuries, flag];
-      setLiveInjuries(next);
-      const current = (profile?.injuryFlags || []).slice().sort().join();
-      setInjuriesModified(next.slice().sort().join() !== current);
+  const handleRemoveInjury = (name: string) =>
+    markInjuriesModified(liveDetails.filter(d => d.name !== name));
+
+  const handleAddInjury = (name: string) => {
+    if (!liveDetails.some(d => d.name === name)) {
+      markInjuriesModified([...liveDetails, { name, status: 'active', severity: 'moderate' }]);
     }
   };
 
+  const handleEditInjury = (name: string, patch: Partial<InjuryDetail>) =>
+    markInjuriesModified(liveDetails.map(d => (d.name === name ? { ...d, ...patch } : d)));
+
+  const activeFlagsChanged = () => {
+    const nextActive = liveDetails.filter(d => d.status === 'active').map(d => d.name).sort().join();
+    return nextActive !== (profile?.injuryFlags || []).slice().sort().join();
+  };
+
   const handleSaveInjuries = async () => {
+    // Severity/status-only edits don't change the program — skip preview
+    if (!activeFlagsChanged()) {
+      await doAcceptInjuryChanges();
+      return;
+    }
     setPreviewLoading(true);
     try {
       const preview = await planApi.injuryPreview(liveInjuries);
@@ -248,18 +276,22 @@ export default function SettingsScreen() {
     setSaving(true);
     setShowPreview(false);
     try {
-      const result: any = await planApi.applyInjuryUpdate(liveInjuries);
-      // applyInjuryUpdate already persists injuryFlags to MongoDB.
-      // Update local React state + AsyncStorage directly (no second backend call)
-      // so Fix A's rollback logic doesn't incorrectly fire on a succeeded operation.
-      const updatedProfile = { ...profile!, injuryFlags: liveInjuries };
+      const activeNames = liveDetails.filter(d => d.status === 'active').map(d => d.name);
+      let result: any = null;
+      if (activeFlagsChanged()) {
+        // Swap restricted exercises in the current block for new active injuries
+        result = await planApi.applyInjuryUpdate(activeNames);
+      }
+      // Persist rich details — backend re-derives injuryFlags from these in the same write
+      await profileApi.update({ injuryDetails: liveDetails } as any);
+      const updatedProfile = { ...profile!, injuryFlags: activeNames, injuryDetails: liveDetails };
       setProfile(updatedProfile as AthleteProfile);
       await saveProfile(updatedProfile as AthleteProfile);
       setInjuriesModified(false);
       const swapped = result?.exercises_swapped ?? 0;
       const msg = swapped > 0
         ? `Program updated! ${swapped} exercise${swapped > 1 ? 's' : ''} adjusted for your injuries.`
-        : (result?.message || 'Profile saved. Your program will adapt next session.');
+        : (result?.message || 'Injury details saved. Your coach and program will account for them.');
       Alert.alert('Changes Saved', msg, [{ text: 'Got it' }]);
     } catch {
       Alert.alert('Error', 'Could not apply changes. Please try again.');
@@ -473,25 +505,54 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* ── ACTIVE INJURIES ── */}
-        <SectionHeader title="ACTIVE INJURIES" />
+        {/* ── INJURIES ── */}
+        <SectionHeader title="INJURIES" />
         <View style={s.card}>
-          {liveInjuries.length === 0 ? (
+          {liveDetails.length === 0 ? (
             <View style={s.emptyRow}>
               <MaterialCommunityIcons name="shield-check-outline" size={18} color={COLORS.status.success} />
-              <Text style={s.emptyText}>No active injury flags — all clear</Text>
+              <Text style={s.emptyText}>No injury flags — all clear</Text>
             </View>
           ) : (
-            <View style={s.chipWrap}>
-              {liveInjuries.map(flag => (
-                <View key={flag} style={s.injuryChip}>
-                  <Text style={s.injuryChipText}>{flag}</Text>
-                  <TouchableOpacity
-                    onPress={() => handleRemoveInjury(flag)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MaterialCommunityIcons name="close" size={12} color="rgba(229,87,87,0.8)" />
-                  </TouchableOpacity>
+            <View style={{ gap: SPACING.sm, marginBottom: SPACING.sm }}>
+              {liveDetails.map(d => (
+                <View key={d.name} style={[s.injDetailCard, d.status === 'past' && s.injDetailCardPast]}>
+                  <View style={s.injDetailHeader}>
+                    <Text style={[s.injDetailName, d.status === 'past' && { color: COLORS.text.muted }]}>{d.name}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveInjury(d.name)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialCommunityIcons name="close" size={14} color="rgba(229,87,87,0.8)" />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={s.injSegRow}>
+                    {(['mild', 'moderate', 'severe'] as const).map(sev => (
+                      <TouchableOpacity
+                        key={sev}
+                        style={[s.injSegBtn, d.severity === sev && s.injSegBtnActive]}
+                        onPress={() => handleEditInjury(d.name, { severity: sev })}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[s.injSegTxt, d.severity === sev && s.injSegTxtActive]}>
+                          {sev.charAt(0).toUpperCase() + sev.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <View style={{ width: SPACING.sm }} />
+                    {(['active', 'past'] as const).map(st => (
+                      <TouchableOpacity
+                        key={st}
+                        style={[s.injSegBtn, d.status === st && s.injSegBtnActive]}
+                        onPress={() => handleEditInjury(d.name, { status: st })}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[s.injSegTxt, d.status === st && s.injSegTxtActive]}>
+                          {st === 'active' ? 'Active' : 'Past'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               ))}
             </View>
@@ -521,9 +582,9 @@ export default function SettingsScreen() {
           )}
 
           {/* ── Ask Coach about injuries ── */}
-          {liveInjuries.length > 0 && (
+          {liveDetails.length > 0 && (
             <AskCoachButton
-              seedPrompt={`Given my injury list (${liveInjuries.join(', ')}), what modifications should I make to my training right now?`}
+              seedPrompt={`Given my injury list (${liveDetails.map(d => `${d.name} — ${d.status}, ${d.severity}`).join('; ')}), what modifications should I make to my training right now?`}
               triggerName="injury_modification_inquiry"
               label="Ask Coach about injuries"
               size="sm"
@@ -866,7 +927,7 @@ export default function SettingsScreen() {
             <Text style={s.modalTitle}>Add Injury Flag</Text>
             <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
               <View style={s.modalChipWrap}>
-                {ALL_INJURIES.filter(inj => !liveInjuries.includes(inj)).map(inj => (
+                {ALL_INJURIES.filter(inj => !liveDetails.some(d => d.name === inj)).map(inj => (
                   <TouchableOpacity
                     key={inj}
                     style={s.modalChip}
@@ -1273,6 +1334,16 @@ const s = StyleSheet.create({
   chipWrap:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm },
   injuryChip:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(229,87,87,0.1)', borderRadius: 100, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(229,87,87,0.25)' },
   injuryChipText: { fontSize: FONTS.sizes.xs, color: '#E55757', fontWeight: FONTS.weights.semibold },
+  // Rich injury rows (severity + active/past)
+  injDetailCard:     { backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: 'rgba(229,87,87,0.25)', padding: SPACING.md, gap: SPACING.sm },
+  injDetailCardPast: { borderColor: COLORS.border, opacity: 0.75 },
+  injDetailHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  injDetailName:     { fontSize: FONTS.sizes.sm, color: '#E55757', fontWeight: FONTS.weights.semibold, flex: 1, marginRight: SPACING.sm },
+  injSegRow:         { flexDirection: 'row', gap: SPACING.xs },
+  injSegBtn:         { flex: 1, paddingVertical: 7, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', minHeight: 30 },
+  injSegBtnActive:   { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: COLORS.accent },
+  injSegTxt:         { fontSize: 10, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  injSegTxtActive:   { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
   weaknessChip:   { backgroundColor: 'rgba(201,168,76,0.08)', borderColor: 'rgba(201,168,76,0.2)' },
   weaknessChipText:{ color: COLORS.accent },
 

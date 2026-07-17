@@ -23,6 +23,7 @@ from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from typing import List, Optional, Any, Annotated
 from datetime import datetime, timezone, timedelta
+import asyncio
 import os
 import re
 import json
@@ -133,6 +134,9 @@ class AthleteProfile(BaseDocument):
     bwLongRunGoal: float = 0.0
     basePRs: dict = {}
     injuryFlags: List[str] = []
+    # Rich injury records: [{"name": str, "status": "active"|"past", "severity": "mild"|"moderate"|"severe"}]
+    # injuryFlags is ALWAYS derived from this (flags = active injury names) when details are written.
+    injuryDetails: List[dict] = []
     avoidMovements: List[str] = []
     weaknesses: List[str] = []
     currentWeek: int = 1
@@ -174,6 +178,7 @@ class AthleteProfileUpdate(BaseModel):
     bwLongRunGoal: Optional[float] = None
     basePRs: Optional[dict] = None
     injuryFlags: Optional[List[str]] = None
+    injuryDetails: Optional[List[dict]] = None
     avoidMovements: Optional[List[str]] = None
     weaknesses: Optional[List[str]] = None
     currentWeek: Optional[int] = None
@@ -349,6 +354,136 @@ def _e1rm_or_zero(weight, reps, weight_unit: str = "lbs") -> float:
         w = w * 2.20462
     return epley_e1rm(w, r)
 
+# ── Injury detail helpers (status + severity) ─────────────────────────────────
+_INJ_STATUSES   = ("active", "past")
+_INJ_SEVERITIES = ("mild", "moderate", "severe")
+
+def _clean_injury_details(details) -> list:
+    """Normalize an injuryDetails list: dedupe by name, default active/moderate."""
+    out, seen = [], set()
+    for d in (details or []):
+        if not isinstance(d, dict):
+            continue
+        name = (d.get("name") or "").strip()
+        if not name or name.lower() == "none" or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({
+            "name": name,
+            "status": d.get("status") if d.get("status") in _INJ_STATUSES else "active",
+            "severity": d.get("severity") if d.get("severity") in _INJ_SEVERITIES else "moderate",
+        })
+    return out
+
+def _active_flags_from_details(details) -> list:
+    """injuryFlags = labels of ACTIVE injuries (past = resolved → no plan restriction)."""
+    return [d["name"] for d in _clean_injury_details(details) if d["status"] == "active"]
+
+def _reconcile_details_with_flags(flags, existing_details) -> list:
+    """Keep injuryDetails in sync when a legacy path writes injuryFlags only.
+    - flag with no detail entry     → new active/moderate entry
+    - flag matching a 'past' detail → reactivated
+    - active detail no longer flagged → marked 'past' (resolved, history kept)"""
+    details = _clean_injury_details(existing_details)
+    by_name = {d["name"].lower(): d for d in details}
+    flag_set = {(f or "").strip().lower() for f in (flags or []) if f and f.strip().lower() != "none"}
+    for d in details:
+        if d["status"] == "active" and d["name"].lower() not in flag_set:
+            d["status"] = "past"
+    for f in (flags or []):
+        fl = (f or "").strip()
+        if not fl or fl.lower() == "none":
+            continue
+        if fl.lower() not in by_name:
+            entry = {"name": fl, "status": "active", "severity": "moderate"}
+            details.append(entry)
+            by_name[fl.lower()] = entry
+        elif by_name[fl.lower()]["status"] == "past":
+            by_name[fl.lower()]["status"] = "active"
+    return details
+
+def _injury_context_line(profile_doc) -> str:
+    """Coach-facing injury list with status + severity. Legacy flags without a
+    detail entry are treated as active/moderate."""
+    p = profile_doc or {}
+    details = _clean_injury_details(p.get("injuryDetails"))
+    known = {d["name"].lower() for d in details}
+    for f in (p.get("injuryFlags") or []):
+        fl = (f or "").strip()
+        if fl and fl.lower() != "none" and fl.lower() not in known:
+            details.append({"name": fl, "status": "active", "severity": "moderate"})
+    if not details:
+        return "None"
+    return "; ".join(f"{d['name']} ({d['status']}, {d['severity']})" for d in details)
+
+# ── Raw onboarding-answer capture (persist-forward + capture-on-edit) ─────────
+# Profile-edit field → raw intake answer key. Whenever any of these fields is
+# edited via PUT/POST /profile, the raw answer is captured too, so users who
+# onboarded before raw capture existed backfill organically.
+_ONBOARDING_EDIT_MAP = {
+    "goal": "goal", "experience": "experience", "currentBodyweight": "bodyweight",
+    "basePRs": "lifts", "injuryFlags": "injuries", "gymTypes": "gym",
+    "specialtyEquipment": "specialtyEquipment", "primaryWeaknesses": "primaryWeaknesses",
+    "sleepHours": "sleepHours", "stressLevel": "stressLevel", "occupationType": "occupationType",
+    "hasCompetition": "hasCompetition", "competitionDate": "competitionDate",
+    "competitionType": "competitionType", "trainingDaysCount": "frequency",
+    "preferredDays": "preferredDays", "units": "liftUnit",
+}
+
+def _onboarding_capture_updates(data: dict) -> dict:
+    """Dotted $set keys that mirror profile edits into onboardingAnswers."""
+    dotted = {}
+    for field, ans_key in _ONBOARDING_EDIT_MAP.items():
+        if field in data:
+            dotted[f"onboardingAnswers.{ans_key}"] = data[field]
+    if dotted:
+        dotted["onboardingAnswersUpdatedAt"] = datetime.now(timezone.utc)
+    return dotted
+
+def _intake_raw_answers(intake) -> dict:
+    """Raw onboarding answers persisted verbatim at intake time."""
+    try:
+        lifts = intake.lifts.model_dump() if intake.lifts else {}
+    except Exception:
+        lifts = {}
+    return {
+        "goal": intake.goal, "experience": intake.experience,
+        "lifts": {k: v for k, v in lifts.items() if v},
+        "liftUnit": intake.liftUnit, "frequency": intake.frequency,
+        "injuries": [i for i in (intake.injuries or []) if i and i.lower() != "none"],
+        "gym": intake.gym or [], "bodyweight": intake.bodyweight,
+        "primaryWeaknesses": intake.primaryWeaknesses or [],
+        "specialtyEquipment": intake.specialtyEquipment or [],
+        "sleepHours": intake.sleepHours, "stressLevel": intake.stressLevel,
+        "occupationType": intake.occupationType,
+        "hasCompetition": bool(intake.hasCompetition or intake.competitionDate),
+        "competitionDate": intake.competitionDate, "competitionType": intake.competitionType,
+        "preferredDays": intake.preferredDays or [],
+        "currentProgram": intake.currentProgram,
+    }
+
+def _apply_intake_profile_extras(profile_update: dict, intake, existing_profile: dict, injury_flags: list) -> None:
+    """Persist raw onboarding answers + extra intake fields (previously dropped)
+    into a db.profile update. Used by both /intake and /plans/rebuild."""
+    if injury_flags:
+        profile_update["injuryDetails"] = _reconcile_details_with_flags(
+            injury_flags, (existing_profile or {}).get("injuryDetails"))
+    if intake.sleepHours is not None:
+        profile_update["sleepHours"] = intake.sleepHours
+    if intake.stressLevel:
+        profile_update["stressLevel"] = intake.stressLevel
+    if intake.occupationType:
+        profile_update["occupationType"] = intake.occupationType
+    if intake.gym:
+        profile_update["gymTypes"] = intake.gym
+    if intake.competitionDate:
+        profile_update["hasCompetition"] = True
+        profile_update["competitionDate"] = intake.competitionDate
+        if intake.competitionType:
+            profile_update["competitionType"] = intake.competitionType
+    profile_update["onboardingAnswers"] = _intake_raw_answers(intake)
+    profile_update["onboardingAnswersUpdatedAt"] = datetime.now(timezone.utc)
+
 # ── Profile Endpoints ─────────────────────────────────────────────────────────
 @api_router.get("/profile")
 async def get_profile(userId: str = Depends(get_current_user)):
@@ -364,6 +499,14 @@ async def create_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
     data = {k: v for k, v in profile.model_dump().items() if v is not None}
     data["updatedAt"] = datetime.now(timezone.utc)
     data["userId"] = userId          # always stamp userId
+    # Injury sync: details are source of truth → flags derived in the same write
+    if "injuryDetails" in data:
+        data["injuryDetails"] = _clean_injury_details(data["injuryDetails"])
+        data["injuryFlags"] = _active_flags_from_details(data["injuryDetails"])
+    elif "injuryFlags" in data:
+        data["injuryDetails"] = _reconcile_details_with_flags(
+            data["injuryFlags"], (existing or {}).get("injuryDetails"))
+    data.update(_onboarding_capture_updates(data))  # capture raw answers on edit
     if existing:
         await db.profile.update_one({"_id": existing["_id"]}, {"$set": data})
         doc = await db.profile.find_one({"_id": existing["_id"]})
@@ -380,6 +523,15 @@ async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
     data = {k: v for k, v in profile.model_dump().items() if v is not None}
     data["updatedAt"] = datetime.now(timezone.utc)
     data["userId"] = userId          # keep userId stamped
+    # Injury sync: details are source of truth → flags derived in the same write
+    if "injuryDetails" in data:
+        data["injuryDetails"] = _clean_injury_details(data["injuryDetails"])
+        data["injuryFlags"] = _active_flags_from_details(data["injuryDetails"])
+    elif "injuryFlags" in data:
+        _existing = await db.profile.find_one({"userId": userId}) or {}
+        data["injuryDetails"] = _reconcile_details_with_flags(
+            data["injuryFlags"], _existing.get("injuryDetails"))
+    data.update(_onboarding_capture_updates(data))  # capture raw answers on edit
     # Upsert — create profile if it doesn't exist yet (e.g. during onboarding)
     await db.profile.update_one({"userId": userId}, {"$set": data}, upsert=True)
     doc = await db.profile.find_one({"userId": userId})
@@ -1536,10 +1688,15 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
     now     = datetime.now(timezone.utc)
     current_week = profile.get("currentWeek", 1)
 
-    # ── 2. Update profile ─────────────────────────────────────────────────────
+    # ── 2. Update profile (details kept in sync: dropped flags → 'past') ─────
     await db.profile.update_one(
         {"_id": profile["_id"]},
-        {"$set": {"injuryFlags": new_injuries, "updatedAt": now}}
+        {"$set": {
+            "injuryFlags": new_injuries,
+            "injuryDetails": _reconcile_details_with_flags(new_injuries, profile.get("injuryDetails")),
+            "onboardingAnswers.injuries": new_injuries,
+            "updatedAt": now,
+        }}
     )
 
     # ── 3. Swap exercises in current block for newly-added injuries ───────────
@@ -3706,6 +3863,178 @@ class CoachConversation(BaseDocument):
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+
+# ── Coach context builders ────────────────────────────────────────────────────
+
+def _build_onboarding_qa(profile_doc) -> str:
+    """The athlete's onboarding intake answers in Q/A form. Prefers raw persisted
+    answers (onboardingAnswers, captured at intake / on profile edits); falls back
+    to derived profile fields for users onboarded before raw capture existed.
+    Answers we never captured are flagged '(not captured)' — never fabricated."""
+    p = profile_doc or {}
+    oa = p.get("onboardingAnswers") or {}
+    NC = "(not captured)"
+
+    def pick(*pairs, default=None):
+        for src, k in pairs:
+            v = src.get(k)
+            if v not in (None, "", [], {}):
+                return v
+        return default
+
+    def fmt_list(v):
+        return ", ".join(str(x) for x in v) if isinstance(v, list) and v else (str(v) if v else NC)
+
+    goal      = pick((oa, "goal"), (p, "goal"))
+    exp       = pick((oa, "experience"), (p, "experience"))
+    freq      = pick((oa, "frequency"), (p, "trainingDaysCount"))
+    days      = pick((oa, "preferredDays"), (p, "preferredDays"))
+    bw        = pick((oa, "bodyweight"), (p, "currentBodyweight"))
+    unit      = pick((oa, "liftUnit"), (p, "units"), default="lbs")
+    lifts     = pick((oa, "lifts"), (p, "basePRs"))
+    gym       = pick((oa, "gym"), (p, "gymTypes"))
+    equip     = pick((oa, "specialtyEquipment"), (p, "specialtyEquipment"))
+    weak      = pick((oa, "primaryWeaknesses"), (p, "primaryWeaknesses"))
+    sleep     = pick((oa, "sleepHours"), (p, "sleepHours"))
+    stress    = pick((oa, "stressLevel"), (p, "stressLevel"))
+    occ       = pick((oa, "occupationType"), (p, "occupationType"))
+    comp_date = pick((oa, "competitionDate"), (p, "competitionDate"))
+    comp_type = pick((oa, "competitionType"), (p, "competitionType"))
+    injuries  = pick((oa, "injuries"), (p, "injuryFlags"))
+    prog      = oa.get("currentProgram")
+
+    lifts_str = NC
+    if isinstance(lifts, dict) and any(v for v in lifts.values()):
+        lifts_str = ", ".join(f"{k} {v}{unit}" for k, v in lifts.items() if v)
+
+    lines = [
+        f"Q: Main goal? A: {goal or NC}",
+        f"Q: Experience level? A: {exp or NC}",
+        f"Q: Training days/week? A: {freq or NC}" + (f" ({fmt_list(days)})" if days else ""),
+        f"Q: Bodyweight? A: {f'{bw} {unit}' if bw else NC}",
+        f"Q: Current maxes? A: {lifts_str}",
+        f"Q: Gym / equipment? A: {fmt_list(gym)}" + (f"; specialty: {fmt_list(equip)}" if equip else ""),
+        f"Q: Weak points? A: {fmt_list(weak)}",
+        f"Q: Sleep? A: {f'{sleep}h/night' if sleep else NC} | Stress: {stress or NC} | Job: {occ or NC}",
+        "Q: Competition planned? A: " + (f"Yes — {comp_date}" + (f" ({comp_type})" if comp_type else "") if comp_date else "No / not captured"),
+        f"Q: Injuries reported at intake? A: {fmt_list(injuries) if injuries else 'None reported'}",
+    ]
+    if prog:
+        lines.append(f"Q: Program before joining? A: {str(prog)[:220]}")
+    return "\n".join(lines)[:1400]
+
+
+def _meet_context(profile_doc) -> str:
+    """Weeks-out awareness for the athlete's meet/competition date."""
+    p = profile_doc or {}
+    comp = p.get("competitionDate") or (p.get("onboardingAnswers") or {}).get("competitionDate")
+    if not comp:
+        return ""
+    try:
+        from datetime import date as _date
+        cd = _date.fromisoformat(str(comp)[:10])
+    except Exception:
+        return ""
+    today = datetime.now(timezone.utc).date()
+    days_out = (cd - today).days
+    name = p.get("competitionEventName") or p.get("competitionType") or "meet"
+    if days_out < 0:
+        if days_out >= -21:
+            return (f"The athlete's {name} was {-days_out} day(s) ago ({comp}). Post-meet: "
+                    "bias toward recovery, technique work, and easing back into volume.")
+        return ""
+    weeks_out = days_out / 7.0
+    ctx = f"The athlete's {name} is on {comp} — {days_out} days out (~{weeks_out:.1f} weeks)."
+    if weeks_out < 3:
+        ctx += (" TAPER WINDOW: under 3 weeks out. Protect the taper — no new exercises, no volume "
+                "spikes, no testing maxes, no grinding singles. Bias every answer toward preserving "
+                "performance on meet day; when in doubt, do less. Openers and light speed work only "
+                "in the final week.")
+    elif weeks_out < 8:
+        ctx += " Peaking window: prioritize specificity on the competition lifts and be conservative adding fatigue."
+    return ctx
+
+
+# ── Cross-session coach memory (rolling ~300-token summary) ───────────────────
+_MEMORY_MIN_NEW_MSGS  = 6    # fold a conversation once it accrues this many unsummarized messages...
+_MEMORY_STALE_MINUTES = 30   # ...or once it has ANY unsummarized messages and has gone quiet this long
+
+async def _update_coach_memory(user_id: str):
+    """Background task fired after each coach exchange. Folds unsummarized
+    conversation messages into a per-user rolling memory (db.coach_memory).
+    Short conversations that simply end are picked up by the staleness check
+    on the user's next chat. Never raises — failures retry on the next call."""
+    try:
+        now = datetime.now(timezone.utc)
+        convs = await db.conversations.find({"userId": user_id}).sort("updatedAt", -1).limit(12).to_list(12)
+        to_fold = []
+        for c in convs:
+            msgs = c.get("messages") or []
+            done = int(c.get("memorySummarizedCount") or 0)
+            pending = len(msgs) - done
+            if pending <= 0:
+                continue
+            upd = c.get("updatedAt")
+            if isinstance(upd, datetime):
+                _upd = upd if upd.tzinfo else upd.replace(tzinfo=timezone.utc)
+                stale = (now - _upd).total_seconds() > _MEMORY_STALE_MINUTES * 60
+            else:
+                stale = True
+            if pending >= _MEMORY_MIN_NEW_MSGS or stale:
+                to_fold.append(c)
+        if not to_fold:
+            return
+
+        excerpt_lines = []
+        for c in to_fold:
+            msgs = c.get("messages") or []
+            done = int(c.get("memorySummarizedCount") or 0)
+            for m in msgs[done:]:
+                role = "Athlete" if m.get("role") == "user" else "Coach"
+                excerpt_lines.append(f"{role}: {(m.get('content') or '')[:400]}")
+        excerpts = "\n".join(excerpt_lines)[-6000:]
+        if not excerpts.strip():
+            return
+
+        mem_doc = await db.coach_memory.find_one({"userId": user_id})
+        existing = (mem_doc or {}).get("summary") or "(no memory yet)"
+
+        chat = LlmChat(
+            api_key=os.environ.get('EMERGENT_LLM_KEY', ''),
+            session_id=f"coachmem-{uuid.uuid4().hex[:8]}",
+            system_message=(
+                "You maintain a strength coach's long-term memory about one athlete. "
+                "Merge the EXISTING MEMORY with the NEW CONVERSATION EXCERPTS into an updated memory. "
+                "Keep ONLY durable facts: injuries/pain patterns, goals, meet plans, equipment or gym "
+                "constraints, schedule and life context, exercise preferences (loves/hates), recurring "
+                "struggles, and key PRs. Drop small talk and one-off questions. Keep prior facts unless "
+                "contradicted — if contradicted, keep the newer one. "
+                "Output the memory only, plain text, maximum 120 words."
+            ),
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        new_summary = await chat.send_message(UserMessage(
+            text=f"EXISTING MEMORY:\n{existing}\n\nNEW CONVERSATION EXCERPTS:\n{excerpts}"
+        ))
+        new_summary = (new_summary or "").strip()[:1600]
+        if not new_summary:
+            return
+
+        await db.coach_memory.update_one(
+            {"userId": user_id},
+            {"$set": {"summary": new_summary, "updatedAt": now}},
+            upsert=True,
+        )
+        # Mark folded messages AFTER a successful summary so failures retry later
+        for c in to_fold:
+            await db.conversations.update_one(
+                {"_id": c["_id"]},
+                {"$set": {"memorySummarizedCount": len(c.get("messages") or [])}},
+            )
+        logger.info(f"[CoachMemory] user={user_id}: folded {len(to_fold)} conversation(s) into memory")
+    except Exception as e:
+        logger.warning(f"[CoachMemory] update failed for user={user_id}: {e}")
+
+
 # ── GET /api/coach/active-trigger ────────────────────────────────────────────
 @api_router.get("/coach/active-trigger")
 async def get_coach_active_trigger(userId: str = Depends(get_current_user)):
@@ -3732,7 +4061,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         exp  = profile_doc.get('experience', '') or 'Unknown'
         bw   = profile_doc.get('currentBodyweight', 0)
         bw_str = f"{bw} lbs" if bw and bw > 0 else "Not provided"
-        injuries  = profile_doc.get('injuryFlags', [])
+        injuries_line = _injury_context_line(profile_doc)
         weaknesses = profile_doc.get('weaknesses', []) or profile_doc.get('primaryWeaknesses', [])
         avoid = profile_doc.get('avoidMovements', [])
         goal  = profile_doc.get('goal', 'strength')
@@ -3740,7 +4069,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         profile_text = (
             f"Name: {name} | Experience: {exp} | BW: {bw_str} | Goal: {goal}\n"
             f"Week: {profile_doc.get('currentWeek', 1)} | Sleep: {sleep_hrs}h avg\n"
-            f"Injuries: {', '.join(injuries) if injuries else 'None'}\n"
+            f"Injuries: {injuries_line}\n"
             f"Weaknesses: {', '.join(weaknesses) if weaknesses else 'None'}\n"
             f"Avoid: {', '.join(avoid) if avoid else 'None'}"
         )
@@ -3760,6 +4089,51 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             for d in log_docs
         ]
         recent_log = "\n".join(lines)
+
+    # ── 2c. Athlete's session notes — today + last ~10 logged days (≤500 tok) ──
+    notes_context = ""
+    try:
+        _today_local = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        note_docs = await db.log.find(
+            {"userId": userId, "notes": {"$type": "string", "$nin": [None, ""]}}
+        ).sort("date", -1).limit(60).to_list(60)
+        if note_docs:
+            _by_date: dict = {}
+            for d in note_docs:
+                _by_date.setdefault(str(d.get("date") or "?"), []).append(d)
+            _recent_dates = sorted(_by_date.keys(), reverse=True)[:10]
+            _note_lines, _seen_notes, _total = [], set(), 0
+            for nd in _recent_dates:
+                for d in _by_date[nd]:
+                    note = (d.get("notes") or "").strip()
+                    key = (nd, d.get("exercise"), note.lower())
+                    if not note or key in _seen_notes:
+                        continue
+                    _seen_notes.add(key)
+                    _tag = "TODAY " if nd == _today_local else ""
+                    ln = f"- {_tag}{nd} · {d.get('exercise', '?')}: \"{note[:180]}\""
+                    if _total + len(ln) > 2000:   # ~500 token cap
+                        break
+                    _note_lines.append(ln)
+                    _total += len(ln) + 1
+                if _total > 2000:
+                    break
+            notes_context = "\n".join(_note_lines)
+    except Exception as _nerr:
+        logger.warning(f"[CoachChat] session-notes context failed: {_nerr}")
+
+    # ── 2d. Cross-session coach memory (rolling summary, updated async) ──────
+    memory_context = ""
+    try:
+        _mem_doc = await db.coach_memory.find_one({"userId": userId})
+        if _mem_doc and _mem_doc.get("summary"):
+            memory_context = str(_mem_doc["summary"])[:1300]
+    except Exception as _merr:
+        logger.warning(f"[CoachChat] coach-memory fetch failed: {_merr}")
+
+    # ── 2e. Onboarding intake answers (Q/A form) + meet countdown ────────────
+    onboarding_context = _build_onboarding_qa(profile_doc) if profile_doc else ""
+    meet_context       = _meet_context(profile_doc)
 
     # ── 3. Training week / block / phase ──────────────────────────────────────
     week = profile_doc.get('currentWeek', 1) if profile_doc else 1
@@ -3954,6 +4328,10 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     # Pre-format conditional injection strings (empty → no noise in prompt)
     _session_ctx_str = f"\n\nTODAY'S PRESCRIBED SESSION:\n{today_session_context}" if today_session_context else ""
     _block_ctx_str   = f"\n\nCURRENT BLOCK DIRECTIVE:\n{block_directive_context}"   if block_directive_context else ""
+    _notes_ctx_str      = f"\n\nATHLETE'S SESSION NOTES (their own words, most recent first):\n{notes_context}" if notes_context else ""
+    _memory_ctx_str     = f"\n\nCOACH MEMORY (durable facts learned across past conversations):\n{memory_context}" if memory_context else ""
+    _onboarding_ctx_str = f"\n\nONBOARDING INTAKE (the athlete's actual answers):\n{onboarding_context}" if onboarding_context else ""
+    _meet_ctx_str       = f"\n\nMEET COUNTDOWN:\n{meet_context}" if meet_context else ""
 
     # ── 2b: live client snapshot — reflects the athlete's CURRENT state (manual
     # adds, swaps, reorders, sets logged so far today) which is not all persisted
@@ -4154,6 +4532,13 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "- Use exclamation points or emojis (reserve \"!\" for genuine warnings)\n"
         "- Close responses with motivational platitudes. End on the call to action or with silence.\n\n"
 
+        "INJURY HANDLING\n"
+        "Injuries in ATHLETE PROFILE carry a status (active/past) and severity (mild/moderate/severe). Treat them differently:\n"
+        "- active + severe: do not program loading around it. Keep the area unloaded, urge a doctor or PT, and only discuss clearly pain-free alternatives.\n"
+        "- active + moderate: modify or substitute aggravating movements; reduce load or range of motion before removing a lift entirely.\n"
+        "- active + mild: train around it with small adjustments; monitor and back off if it trends worse.\n"
+        "- past: generally cleared — no default restrictions, but watch for recurrence when they report related aches and reintroduce risky variations gradually.\n\n"
+
         "VOICE-MODE FORMATTING\n"
         "If this conversation is voice-originated (is_voice: true):\n"
         "- Stay under 60 words\n"
@@ -4204,9 +4589,12 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         # ── DYNAMIC ATHLETE CONTEXT (injected per-request) ────────────────────
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
+        f"{_meet_ctx_str}"
         f"\n\nRECENT SESSIONS:\n{recent_log}"
+        f"{_notes_ctx_str}"
         f"{_session_ctx_str}{_live_ctx_str}{_block_ctx_str}{_program_ctx_str}"
         f"{coaching_intelligence}"
+        f"{_memory_ctx_str}{_onboarding_ctx_str}"
         f"{rag_section}{user_doc_rag_section}"
     )
 
@@ -4314,6 +4702,12 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         }
         ins = await db.conversations.insert_one(conv_doc)
         conversation_id = str(ins.inserted_id)
+
+    # ── 12. Fire-and-forget: fold this exchange into cross-session memory ─────
+    try:
+        asyncio.create_task(_update_coach_memory(userId))
+    except Exception as _bg_err:
+        logger.warning(f"[CoachChat] could not schedule memory update: {_bg_err}")
 
     return {
         "response": clean_response,
@@ -5406,6 +5800,7 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
     print(f"[REBUILD] Goal: '{intake.goal}' | Freq: {intake.frequency} | userId: {user_id}")
 
     # Archive the current active plan instead of deleting it
+    profile_doc = {}
     try:
         profile_doc = await db.profile.find_one({"userId": user_id}) or {}
         current_week = int(profile_doc.get("currentWeek", 1))
@@ -5466,6 +5861,7 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
     }
     if injury_flags:
         profile_update["injuryFlags"] = injury_flags
+    _apply_intake_profile_extras(profile_update, intake, profile_doc, injury_flags)
     if intake.bodyweight:
         profile_update["currentBodyweight"] = intake.bodyweight
     if intake.primaryWeaknesses:
@@ -5825,6 +6221,7 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
     print(f"[INTAKE] GOAL FROM FRONTEND: '{intake.goal}' | userId: {user_id}")
 
     # Archive the current active plan (if any) instead of hard-deleting it
+    profile_doc_pre = {}
     try:
         profile_doc_pre = await db.profile.find_one({"userId": user_id}) or {}
         current_week_pre = int(profile_doc_pre.get("currentWeek", 1))
@@ -5897,6 +6294,7 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
     }
     if injury_flags:
         profile_update["injuryFlags"] = injury_flags
+    _apply_intake_profile_extras(profile_update, intake, profile_doc_pre, injury_flags)
     if intake.bodyweight:
         profile_update["currentBodyweight"] = intake.bodyweight
     if intake.primaryWeaknesses:
@@ -6878,7 +7276,9 @@ async def graduate_rehab_phase(userId: str = Depends(get_current_user)):
                         if active["injuryInput"].lower() not in f.lower()]
             await db.profile.update_one(
                 {"userId": userId},
-                {"$set": {"injuryFlags": resolved, "updatedAt": now}},
+                {"$set": {"injuryFlags": resolved,
+                          "injuryDetails": _reconcile_details_with_flags(resolved, profile_doc.get("injuryDetails")),
+                          "updatedAt": now}},
             )
         return {
             "success": True, "graduated": True,

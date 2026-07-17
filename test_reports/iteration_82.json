@@ -1,0 +1,71 @@
+{
+  "summary": "AI Coach Context Upgrade (iter 82) — Backend 13/13 pass, Settings INJURIES UI verified end-to-end. Verified: (1) PUT /api/profile with injuryDetails → injuryFlags derived as ACTIVE-only names (['Hamstring']) with Neck/Cervical past/severe echoed back normalized. (2) Legacy PUT injuryFlags path reconciles into injuryDetails: previously-active injuries dropped from flags become status='past' (kept, never deleted). (3) Capture-on-edit: PUT sleepHours=7.5/stressLevel='low' → onboardingAnswers.sleepHours/stressLevel mirrored (verified via GET /api/profile response). (4) POST /api/plan/apply-injury-update 200 and profile.injuryDetails stays consistent with newInjuryFlags. (5) POST /api/coach/chat 'how many weeks out' returns coherent response referencing weeks/meet/competition (Claude 12–20s). (6) POST /api/coach/chat 'session notes' surfaces seeded shoulder-click / grip-on-log-press notes for test_strongman. (7) Coach chat conversation_id persists across calls after background coach_memory pipeline (no 500s). (8) ADD_EXERCISE regression: 'Add 3x10 face pulls…' returns added_exercise with name='Face Pulls', category, sets=3, reps=10. (9) Intake regression: POST /api/profile/intake (fresh user) success:true and profile.onboardingAnswers populated with goal/experience/lifts/sleepHours/etc. FRONTEND: logged in as test_strongman, navigated /settings; INJURIES section renders two cards (Shoulder general Severe/Active, Knee general Mild/Past); severity chips (Mild/Moderate/Severe) and status chips (Active/Past) render with correct pre-selection; tapping Moderate on Shoulder card visibly toggles selection and reveals 'Save injury changes' button; 'Add injury flag' opens bottom-sheet modal listing all preset injuries (Rotator Cuff, Elbow, Wrist/Forearm, …); picking 'Ankle / Foot' adds a new card defaulted to Moderate/Active (correct new-card defaults). WEAKNESSES & TARGETS and TRAINING PROFILE sections still render (no crash). Deprecated packages detected: expo-av must be migrated to expo-audio/expo-video before SDK 54 (pre-existing, app-wide).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "settings.tsx / handleSaveInjuries",
+        "issue": "After tapping 'Save injury changes' for a severity-only edit (Shoulder severe→moderate), no window.alert/dialog was fired at the browser level (page.on('dialog') captured 0 messages). If the success confirmation is intentionally an in-app toast/modal that's fine, but from a black-box test perspective there is no visible confirmation that the write completed. Consider adding a testID on the toast/confirmation modal (e.g. testID='inj-save-success') so success is verifiable in automated tests. Reference: /app/frontend/app/settings.tsx handleSaveInjuries / doAcceptInjuryChanges (~line 286).",
+        "testID": "N/A (no testID on save-success confirmation)",
+        "priority": "LOW"
+      },
+      {
+        "component": "settings.tsx INJURIES card / severity+status chips",
+        "issue": "No testID/data-testid on any injury card element (card, severity chip, status chip, save button, add-flag link, add-injury modal picker options). This forces text-selector-only automation and is fragile once labels are ever localized. Recommend testID='inj-card-{name}', 'inj-sev-{mild|moderate|severe}-{name}', 'inj-status-{active|past}-{name}', 'inj-save-btn', 'inj-add-flag-link', 'inj-add-flag-modal-{name}'.",
+        "testID": "missing (all interactive injury elements)",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "expo-av (deprecated)",
+        "issue": "Console warns: '[expo-av]: Expo AV has been deprecated and will be removed in SDK 54. Use expo-audio / expo-video.' Pre-existing app-wide. Reference: /app/frontend/package.json (expo-av entry) and any file importing from 'expo-av'."
+      },
+      {
+        "component": "expo-router _layout children mismatch",
+        "issue": "Console warns: 'No route named \"onboarding\" exists in nested children'. Root layout references an 'onboarding' route that doesn't exist in /app/frontend/app/ (only onboarding-intake.tsx and onboarding-path-picker.tsx exist). Reference: /app/frontend/app/_layout.tsx."
+      },
+      {
+        "component": "props.pointerEvents deprecation",
+        "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Pre-existing app-wide."
+      },
+      {
+        "component": "shadow* style prop deprecation",
+        "issue": "Console warns: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Pre-existing app-wide."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_coach_context_upgrade.py",
+    "/app/test_reports/pytest/iter82_coach_context.xml"
+  ],
+  "action_items": [
+    "(Optional / observability) Expose onboardingAnswers explicitly in GET /api/profile response so it can be asserted client-side without a Mongo probe. Currently the field is persisted but not always in the serialized response.",
+    "Add testID props to INJURIES section in /app/frontend/app/settings.tsx: injury card, mild/moderate/severe chips, active/past chips, 'Save injury changes' button, 'Add injury flag' link, add-injury modal picker options. Also add a testID on the save-success confirmation (toast or modal).",
+    "Migrate expo-av → expo-audio / expo-video before SDK 54.",
+    "Remove or replace the stale 'onboarding' route reference in /app/frontend/app/_layout.tsx (route does not exist under app/).",
+    "Refactor style props: replace deprecated shadow* with boxShadow; replace prop pointerEvents with style.pointerEvents."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py PUT /api/profile (line 521-538) correctly ensures 'injuryDetails' is source of truth AND injuryFlags is DERIVED in the same $set (line 528-533). Verified end-to-end: sending injuryDetails always produces active-only injuryFlags, sending injuryFlags reconciles into details without losing history.",
+    "_ONBOARDING_EDIT_MAP + _onboarding_capture_updates (line 423-441) correctly capture-on-edit into dotted onboardingAnswers.* keys with an onboardingAnswersUpdatedAt timestamp — clean, additive, and idempotent.",
+    "/app/frontend/app/settings.tsx: 'Save injury changes' visibility is correctly gated on injuriesModified. However the save handler's success confirmation is not verifiable via automation (no visible testID / no window.alert). Adding a testID on the toast will make future regressions catchable.",
+    "server.py POST /api/coach/chat still returns conversation_id and background _update_coach_memory runs asynchronously without blocking the request path (line ~4708 asyncio.create_task) — verified by two sequential chats both returning 200 with valid conversation_ids."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ai_coach_context_upgrade.py (NEW — 13 tests covering injuryDetails/injuryFlags sync, capture-on-edit, apply-injury-update, coach chat weeks-out + session-note recall + memory, ADD_EXERCISE regression, /api/profile/intake regression, restore of test_strongman injuries)",
+    "/app/test_reports/pytest/iter82_coach_context.xml (pytest JUnit output)",
+    "/app/test_reports/iteration_82.json (this report)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% for Settings injuries UI (5/5 checks: section renders, severity + status chips visible, Save button appears on edit, Add injury modal opens, new card default Moderate/Active)"},
+  "seed_data_creation": "Used pre-existing seeded users test_strongman (2 injury detail entries: Shoulder general severe/active + Knee general mild/past, competitionDate 2026-08-01, session-note history for shoulder click / log press grip) and test_hypertrophy (destructive PUT /profile injury tests targeted this user to avoid disturbing test_strongman). One throwaway user was created for the intake regression via /api/auth/register (email prefixed TEST_intake_…). test_strongman injuryDetails restored to seeded state at end of run (TestRestoreStrongmanInjuries).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && EXPO_PUBLIC_BACKEND_URL=https://the-program-app.preview.emergentagent.com python -m pytest tests/test_ai_coach_context_upgrade.py -v (13 tests, ~30s incl 3 Claude calls at 10–20s each). Frontend Settings injury tests were done manually via Playwright — main agent can add testID props then wire it into a proper Playwright script for CI. When testing PUT /api/profile injury flows destructively, prefer test_hypertrophy since test_strongman's seeded injury/session-note state is used for coach-context assertions. To restore test_strongman injuries: PUT /api/profile with {injuryDetails:[{name:'Shoulder (general)',status:'active',severity:'severe'},{name:'Knee (general)',status:'past',severity:'mild'}]}.",
+  "rca_of_issue": "N/A — no regressions detected. Minor visibility gap: 'Save injury changes' success confirmation is not verifiable via headless dialog capture; add testID on toast/modal to close the gap."
+}
