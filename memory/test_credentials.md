@@ -26,3 +26,12 @@
 ## Social Login (Coming Soon)
 - Google, Apple (iOS only), Facebook — placeholder client IDs
 - Email/password is the working auth flow for now
+
+## Analytics Test Users (seeded by /app/backend/seed_analytics_test_users.py — password: Analytics123)
+| User | Email | Scenario |
+|------|-------|----------|
+| Creep Carl | analytics_creep@test.com | 4 wks bench @185, RPE 7→7.5→8.5→9 (RPE creep flag) |
+| Effective Eddie | analytics_e1rm@test.com | entered bench 300, logs imply e1RM 324 (+8%) |
+| Painful Pat | analytics_injury@test.com | active shoulder injury, rising pain clustered after Overhead Press |
+| Thin Data Tina | analytics_thin@test.com | only ~1 week of logs (low-confidence path) |
+| Empty Evan | analytics_empty@test.com | zero logs / zero analytics |

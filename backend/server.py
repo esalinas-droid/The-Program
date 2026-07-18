@@ -11,6 +11,12 @@ from models.schemas import (
     ProgramChange as _ProgramChange,
 )
 from services.plan_generator import generate_plan as _generate_plan
+from services.training_analytics import (
+    get_training_analytics as _get_training_analytics,
+    refresh_training_analytics as _refresh_training_analytics,
+    build_trends_context as _build_trends_context,
+    get_block_recommendations as _get_block_recommendations,
+)
 from services import image_credits as _image_credits
 from services import supabase_storage as _supabase_storage
 from services import vision_parser as _vision_parser
@@ -1901,6 +1907,8 @@ async def create_log_entry(entry: WorkoutLogCreate, userId: str = Depends(get_cu
     _monday = _now - _td(days=_day_of_week)
     _week_start = _monday.strftime("%Y-%m-%d")
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
+    # Refresh training analytics in the background (non-blocking)
+    asyncio.create_task(_refresh_training_analytics(db, userId))
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(result.inserted_id)}
 
 # ── Per-set commit (Tracker Mode Phase 3) ────────────────────────────────────
@@ -1999,6 +2007,8 @@ async def tracker_commit_set(
         upsert=True,
     )
     upserted = result.upserted_id is not None
+    # Refresh training analytics in the background (non-blocking)
+    asyncio.create_task(_refresh_training_analytics(db, userId))
     return {"status": "committed", "upserted": upserted}
 
 
@@ -2037,6 +2047,8 @@ async def create_session_bulk(body: SessionBulkCreate, userId: str = Depends(get
     _monday = _now - _td(days=_now.weekday())
     _week_start = _monday.strftime("%Y-%m-%d")
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_start})
+    # Refresh training analytics in the background (non-blocking)
+    asyncio.create_task(_refresh_training_analytics(db, userId))
     return {"saved": len(docs_to_insert)}
 
 
@@ -2118,6 +2130,9 @@ async def update_session(
     _monday   = _now - _td(days=_now.weekday())
     _week_key = _monday.strftime("%Y-%m-%d")
     await db.weekly_reviews.delete_one({"userId": userId, "weekStart": _week_key})
+
+    # Refresh training analytics in the background (non-blocking)
+    asyncio.create_task(_refresh_training_analytics(db, userId))
 
     return {"deleted": del_result.deleted_count, "inserted": len(docs_to_insert)}
 @api_router.post("/tracker/parse-session-image")
@@ -4047,6 +4062,33 @@ async def get_coach_active_trigger(userId: str = Depends(get_current_user)):
         return {"triggerName": None}
     return result
 
+# ── Training Analytics endpoints (P3 proactive triggers will also read these) ─
+@api_router.get("/analytics")
+async def get_analytics(refresh: bool = False, userId: str = Depends(get_current_user)):
+    """Structured per-user training analytics (stored doc; recomputed if stale
+    or when ?refresh=true)."""
+    doc = (await _refresh_training_analytics(db, userId)) if refresh \
+        else (await _get_training_analytics(db, userId))
+    if not doc:
+        return {"available": False}
+    doc.pop("_id", None)
+    ca = doc.get("computedAt")
+    if hasattr(ca, "isoformat"):
+        doc["computedAt"] = ca.isoformat()
+    return {"available": True, **doc}
+
+
+@api_router.get("/analytics/block-recommendations")
+async def get_analytics_block_recommendations(userId: str = Depends(get_current_user)):
+    """Block-boundary hook output (advisory only — plan generation does NOT
+    consume this yet; wiring it into rolling generation is a later task)."""
+    rec = await _get_block_recommendations(db, userId)
+    ca = rec.get("computedAt")
+    if hasattr(ca, "isoformat"):
+        rec["computedAt"] = ca.isoformat()
+    return rec
+
+
 # ── POST /api/coach/chat ──────────────────────────────────────────────────────
 @api_router.post("/coach/chat")
 async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_user)):
@@ -4134,6 +4176,16 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     # ── 2e. Onboarding intake answers (Q/A form) + meet countdown ────────────
     onboarding_context = _build_onboarding_qa(profile_doc) if profile_doc else ""
     meet_context       = _meet_context(profile_doc)
+
+    # ── 2f. Training analytics → TRENDS block (advise-first clinician layer) ──
+    # get_training_analytics() recomputes if >24h stale; any failure returns
+    # None and the coach simply works without trends (never breaks chat).
+    trends_context = ""
+    try:
+        _analytics = await _get_training_analytics(db, userId)
+        trends_context = _build_trends_context(_analytics) if _analytics else ""
+    except Exception as _an_err:
+        logger.warning(f"[CoachChat] analytics/trends failed (non-fatal): {_an_err}")
 
     # ── 3. Training week / block / phase ──────────────────────────────────────
     week = profile_doc.get('currentWeek', 1) if profile_doc else 1
@@ -4332,6 +4384,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     _memory_ctx_str     = f"\n\nCOACH MEMORY (durable facts learned across past conversations):\n{memory_context}" if memory_context else ""
     _onboarding_ctx_str = f"\n\nONBOARDING INTAKE (the athlete's actual answers):\n{onboarding_context}" if onboarding_context else ""
     _meet_ctx_str       = f"\n\nMEET COUNTDOWN:\n{meet_context}" if meet_context else ""
+    _trends_ctx_str     = f"\n\nTRENDS (computed from the athlete's logged data — cite these numbers):\n{trends_context}" if trends_context else ""
 
     # ── 2b: live client snapshot — reflects the athlete's CURRENT state (manual
     # adds, swaps, reorders, sets logged so far today) which is not all persisted
@@ -4539,6 +4592,21 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "- active + mild: train around it with small adjustments; monitor and back off if it trends worse.\n"
         "- past: generally cleared — no default restrictions, but watch for recurrence when they report related aches and reintroduce risky variations gradually.\n\n"
 
+        "DATA-DRIVEN ADVISING (TRENDS block)\n"
+        "When a TRENDS section is present below, it is computed from the athlete's actual logs. Rules:\n"
+        "- Deload/fatigue questions (\"should I deload?\", \"why am I so beat up?\") MUST be answered from TRENDS with the "
+        "specific evidence — e.g. \"your bench RPE went 7 to 8.5 to 9 at 185 over three weeks\" or the fatigue-index explanation. "
+        "Never give generic deload advice when trend data exists.\n"
+        "- Effective 1RM: when TRENDS shows an effective 1RM diverging >5% from the entered 1RM, you may PROPOSE updating "
+        "training loads via a PROGRAM_CHANGE block (type \"load_update\") — the athlete must confirm; NEVER present it as already done.\n"
+        "- Clinician mode: for an ACTIVE injury with a RISING pain trend, proactively advise modification in your answer — reduced "
+        "loading on the aggravating patterns, substitutions, prehab emphasis — citing the correlation evidence (which movement the "
+        "pain clusters after, the intensity numbers). For a FALLING trend you may advise cautious progression back. Severity gates "
+        "aggressiveness: severe+active = protective only; mild+falling = progressive.\n"
+        "- Distinguish sources: say \"the data suggests\" for TRENDS-derived claims and \"you told me\" for things the athlete said. "
+        "If TRENDS says the data window is under 3 weeks, state that the sample is thin before drawing conclusions — no overclaiming.\n"
+        "- You ADVISE and PROPOSE. You never apply changes yourself; every change goes through the athlete's confirmation.\n\n"
+
         "VOICE-MODE FORMATTING\n"
         "If this conversation is voice-originated (is_voice: true):\n"
         "- Stay under 60 words\n"
@@ -4565,6 +4633,12 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         '{"type":"exercise_swap","exercises":[{"original":"exact name","replacement":"exact name","reason":"short"}],'
         '"summary":"one sentence","details":"explanation"}'
         "</PROGRAM_CHANGE>\n"
+        "For a training-load / 1RM basis update (e.g. effective 1RM diverging from entered 1RM), use this shape instead:\n"
+        "<PROGRAM_CHANGE>"
+        '{"type":"load_update","lifts":[{"lift":"bench","from":300,"to":325,"unit":"lbs","reason":"short"}],'
+        '"summary":"one sentence","details":"explanation"}'
+        "</PROGRAM_CHANGE>\n"
+        "These are PROPOSALS — the athlete confirms them in the app. Never claim a change was applied. "
         "Only include for exercise swaps or load changes. NOT for sleep, nutrition, or general advice.\n\n"
 
         # ── ADD-EXERCISE WRITE ACTION (backend parser depends on this XML block) ──
@@ -4590,6 +4664,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
         f"{_meet_ctx_str}"
+        f"{_trends_ctx_str}"
         f"\n\nRECENT SESSIONS:\n{recent_log}"
         f"{_notes_ctx_str}"
         f"{_session_ctx_str}{_live_ctx_str}{_block_ctx_str}{_program_ctx_str}"

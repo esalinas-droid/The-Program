@@ -280,3 +280,17 @@ Five context upgrades to `/api/coach/chat` (server.py):
 Context injection order in system prompt: PROFILE → TRAINING CONTEXT → MEET COUNTDOWN → RECENT SESSIONS → SESSION NOTES → today/live/block/program → readiness/pain/ratings → COACH MEMORY → ONBOARDING INTAKE → RAG.
 
 All verified e2e with test_strongman@test.com (taper answer, note reference, severity-aware pressing advice, memory doc created).
+
+---
+
+## ANALYTICS + CLINICIAN LAYER (July 2026 fork — COMPLETE)
+
+**Part 1 — Analytics engine**: `/app/backend/services/training_analytics.py`
+- Metrics: weekly volume (total + squat/hinge/press/pull, 6 wks), intensity distribution (RPE ≤7/8/9+ per week), RPE creep (4–6 comparable-load exposures, ±5% median load, flag Δ≥1.0 at flat load), fatigue index (documented: ACWR (7d vol ÷ 28d weekly baseline) + 7d-vs-28d avg-RPE delta, weighted; explanation string stored), PR progression (best e1RM/week per main lift), effective 1RM (best-set Epley last 28d, stored ALONGSIDE entered basePRs, never overwrites; downward divergence requires best-set RPE ≥8), compliance (distinct log days vs trainingDaysCount×4), pain trends (PAIN DATA EXISTS: log.pain per entry + db.pain_reports — path A used; per-injury rising/stable/falling over 28d halves + movement correlations ≥2 reports).
+- ALL thresholds are named constants at top of the module (Eric tunes there).
+- Storage: `db.training_analytics` per-user doc; refreshed via `asyncio.create_task` after POST /log, /log/session-bulk, /log/session-update, /tracker/commit-set; staleness recompute (>24h) at coach-chat time via `get_training_analytics()`. Endpoints: GET /api/analytics (?refresh=true), GET /api/analytics/block-recommendations.
+- Block-boundary hook: `get_block_recommendations(db, userId, upcoming_block)` → startLoads (effective vs entered basis), volumeModifier (fatigue/compliance gated, clamped 0.8–1.1), painCautions, rationale. NOT wired into plan generator (later task).
+
+**Part 2 — Coach behavior**: TRENDS block injected (~250 tokens, non-neutral signals only); prompt rules: deload answers must cite trend evidence; >5% effective-1RM divergence → PROGRAM_CHANGE proposal type "load_update" (confirm-only, NEVER auto-applied); clinician mode (active+rising pain → advise modification with correlation evidence; severity gates aggressiveness); "data suggests" vs "you told me"; <3 wks data → explicit low-confidence. Analytics failure → chat works as before. ADD_EXERCISE / memory / RAG / voice untouched.
+
+Tests: `tests/test_training_analytics.py` (22 unit tests). Seed: `seed_analytics_test_users.py` (5 scenario users, see test_credentials.md).
