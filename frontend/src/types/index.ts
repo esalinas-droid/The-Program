@@ -4,6 +4,10 @@ export interface InjuryDetail {
   name: string;
   status: InjuryStatus;
   severity: InjurySeverity;
+  /** Current pain 0–10 (optional; captured on onboarding, in Settings, or via coach PAIN_REPORT). */
+  painLevel?: number;
+  /** ISO timestamp of the most recent painLevel report. */
+  painLevelAt?: string;
 }
 
 export interface AthleteProfile {

@@ -374,11 +374,25 @@ def _clean_injury_details(details) -> list:
         if not name or name.lower() == "none" or name.lower() in seen:
             continue
         seen.add(name.lower())
-        out.append({
+        # Preserve optional pain-level fields when present.
+        _pl = d.get("painLevel")
+        try:
+            _pl = int(_pl) if _pl is not None else None
+        except (TypeError, ValueError):
+            _pl = None
+        if _pl is not None:
+            _pl = max(0, min(10, _pl))
+        _pl_at = d.get("painLevelAt") if isinstance(d.get("painLevelAt"), str) else None
+        entry = {
             "name": name,
             "status": d.get("status") if d.get("status") in _INJ_STATUSES else "active",
             "severity": d.get("severity") if d.get("severity") in _INJ_SEVERITIES else "moderate",
-        })
+        }
+        if _pl is not None:
+            entry["painLevel"] = _pl
+        if _pl_at:
+            entry["painLevelAt"] = _pl_at
+        out.append(entry)
     return out
 
 def _active_flags_from_details(details) -> list:
@@ -409,8 +423,8 @@ def _reconcile_details_with_flags(flags, existing_details) -> list:
     return details
 
 def _injury_context_line(profile_doc) -> str:
-    """Coach-facing injury list with status + severity. Legacy flags without a
-    detail entry are treated as active/moderate."""
+    """Coach-facing injury list with status + severity + current pain (when
+    reported). Legacy flags without a detail entry are treated as active/moderate."""
     p = profile_doc or {}
     details = _clean_injury_details(p.get("injuryDetails"))
     known = {d["name"].lower() for d in details}
@@ -420,7 +434,69 @@ def _injury_context_line(profile_doc) -> str:
             details.append({"name": fl, "status": "active", "severity": "moderate"})
     if not details:
         return "None"
-    return "; ".join(f"{d['name']} ({d['status']}, {d['severity']})" for d in details)
+
+    def _fmt(d: dict) -> str:
+        core = f"{d['name']} ({d['status']}, {d['severity']}"
+        _pl = d.get("painLevel")
+        if isinstance(_pl, int) and d["status"] == "active":
+            _at = d.get("painLevelAt") or ""
+            _rel = _relative_age(_at) if _at else ""
+            core += f", pain {_pl}/10"
+            if _rel:
+                core += f" reported {_rel}"
+        return core + ")"
+    return "; ".join(_fmt(d) for d in details)
+
+
+def _relative_age(iso_ts: str) -> str:
+    """'2h ago' / 'yesterday' / '3d ago'. Empty on parse fail."""
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - dt
+        secs = int(delta.total_seconds())
+        if secs < 60:
+            return "just now"
+        if secs < 3600:
+            return f"{secs // 60}m ago"
+        if secs < 86400:
+            return f"{secs // 3600}h ago"
+        days = secs // 86400
+        if days == 1:
+            return "yesterday"
+        if days < 14:
+            return f"{days}d ago"
+        return f"{days // 7}w ago"
+    except Exception:
+        return ""
+
+
+# ── Coach conversation-history trim ──────────────────────────────────────────
+# Coach used to see only the last 5 messages, which made it contradict itself in
+# longer exchanges. Now we use a token-budgeted window: keep as many recent
+# messages as fit ~2000 tokens (≈8000 chars, 4-chars-per-token rough estimate),
+# oldest dropped first, with a floor of the last 10 messages so a decisively
+# recent thread is always intact. Returns (trimmed_list, truncated_bool).
+_COACH_HIST_CHAR_BUDGET = 8000
+_COACH_HIST_MIN_MSGS    = 10
+
+def trim_coach_history(all_hist):
+    total = len(all_hist or [])
+    if total <= _COACH_HIST_MIN_MSGS:
+        return list(all_hist or []), False
+    acc, acc_chars = [], 0
+    for msg in reversed(all_hist):
+        msg_chars = len(getattr(msg, "content", "") or "")
+        if len(acc) < _COACH_HIST_MIN_MSGS:
+            acc.append(msg); acc_chars += msg_chars
+            continue
+        if acc_chars + msg_chars > _COACH_HIST_CHAR_BUDGET:
+            break
+        acc.append(msg); acc_chars += msg_chars
+    trimmed = list(reversed(acc))
+    return trimmed, len(trimmed) < total
+
 
 # ── Raw onboarding-answer capture (persist-forward + capture-on-edit) ─────────
 # Profile-edit field → raw intake answer key. Whenever any of these fields is
@@ -4220,6 +4296,10 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     if not _openai_client or not _supabase_client:
         raise HTTPException(status_code=503, detail="Coach service not ready yet")
 
+    # ── 0. Trim conversation history early so the truncation flag can be shown
+    #      to the model in its system prompt (consistency-rule support).
+    limited_history, history_truncated = trim_coach_history(request.conversation_history or [])
+
     # ── 1. Athlete profile (userId-scoped) ────────────────────────────────────
     profile_doc = await db.profile.find_one({"userId": userId})
     profile_text = "Athlete profile not yet set up."
@@ -4240,6 +4320,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             f"Weaknesses: {', '.join(weaknesses) if weaknesses else 'None'}\n"
             f"Avoid: {', '.join(avoid) if avoid else 'None'}"
         )
+        if history_truncated:
+            profile_text += "\nHISTORY_TRUNCATED: yes — you cannot see all earlier turns in this conversation; do not assert what you previously said outside the window you can see."
 
     # ── 2. Recent training log (userId-scoped only — no cross-user fallback) ──
     log_docs = await db.log.find({"userId": userId}).sort("date", -1).limit(5).to_list(5)
@@ -4711,11 +4793,56 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "- Close responses with motivational platitudes. End on the call to action or with silence.\n\n"
 
         "INJURY HANDLING\n"
-        "Injuries in ATHLETE PROFILE carry a status (active/past) and severity (mild/moderate/severe). Treat them differently:\n"
+        "Injuries in ATHLETE PROFILE carry a status (active/past) and severity (mild/moderate/severe), and — when the "
+        "athlete has reported it — a current pain level 0–10 with a freshness timestamp. Treat them differently:\n"
         "- active + severe: do not program loading around it. Keep the area unloaded, urge a doctor or PT, and only discuss clearly pain-free alternatives.\n"
         "- active + moderate: modify or substitute aggravating movements; reduce load or range of motion before removing a lift entirely.\n"
         "- active + mild: train around it with small adjustments; monitor and back off if it trends worse.\n"
         "- past: generally cleared — no default restrictions, but watch for recurrence when they report related aches and reintroduce risky variations gradually.\n\n"
+
+        "PAIN LEVEL (0–10) — ASK, USE, RECORD\n"
+        "The 0–10 scale drives the aggressiveness of your guidance and is your most important single input on symptom days.\n"
+        "- When the athlete reports a NEW symptom, flare, tweak, stiffness, or worsening — and hasn't already given a number — "
+        "ask ONE concise question: how bad is it 0–10, where, and when it hurts (during load, after, at rest). One question. Not an interrogation.\n"
+        "- Once you have a number (or the athlete already stated one), scale your prescription:\n"
+        "  • 0–3 (mild): proceed with modifications, monitor.\n"
+        "  • 4–6 (moderate): reduce loading on the aggravating pattern — cap intensity (e.g. RPE 6–7), reduce ROM, or substitute the specific variation.\n"
+        "  • 7+ (high): no loading through the painful pattern today. Advise assessment if this persists past a couple of sessions.\n"
+        "- When the athlete states a number in chat, emit the structured PAIN_REPORT write-action below. Do NOT paraphrase it away — it must be recorded.\n\n"
+
+        "INJURY-DAY LOAD APPROPRIATENESS (priority)\n"
+        "When a user reports a new symptom or flare on a day with max-effort, top-set, or high-intensity work programmed, "
+        "your FIRST consideration — before mobility, prehab, or accessory tweaks — is whether today's top-end loading is "
+        "appropriate. Address it explicitly with a clear call: proceed as planned / cap intensity at RPE N / swap the "
+        "variation / move the ME work to another day. Reason from the injury (location, severity, current pain level). "
+        "Mobility and prehab additions come AFTER that call, not instead of it. This applies especially to athletes with "
+        "multiple active injuries — treat their day-of loading decision as the headline of your reply.\n\n"
+
+        "DISPUTE PROTOCOL\n"
+        "If the athlete pushes back on something you said — \"that wasn't removed\", \"that's not what my session shows\", "
+        "\"you didn't do that\" — do this, in order:\n"
+        "1. Look at the current session state in your context (TODAY'S PRESCRIBED SESSION, THE ATHLETE'S SESSION RIGHT NOW). "
+        "That is the ground truth, not your own previous message.\n"
+        "2. State plainly what is actually true now, using the state you can see.\n"
+        "3. If your previous claim was wrong, say so directly and briefly — \"I said I removed it, but the removal didn't go "
+        "through — my mistake.\" A plain correction is always preferred over a retroactive story.\n"
+        "NEVER reinterpret or restate your earlier messages as having meant something different. NEVER tell the athlete they "
+        "misread you when your original message plainly said one thing. If a write-action failed on the previous turn "
+        "(a backend-appended note said so, or the athlete reports the change isn't there), acknowledge the failure and offer to retry.\n\n"
+
+        "CONSISTENCY WITHIN A CONVERSATION\n"
+        "When you change a recommendation you made earlier in this same conversation (\"keep X\" → \"remove X\", \"do X\" → "
+        "\"do Y instead\"), explicitly acknowledge the change and give the reason (\"On reflection, given your shoulder pain "
+        "at 6/10, I'm dropping the OHP suggestion — press flat DB instead\"). Never silently flip. If your ATHLETE PROFILE "
+        "block says HISTORY_TRUNCATED: yes, you cannot see all earlier turns — in that case do NOT assert what you previously "
+        "said; work only from what you can see and from the current state.\n\n"
+
+        "INTENT DETECTION\n"
+        "Distinguish three shapes of question and answer accordingly:\n"
+        "- Permission (\"should I skip X?\", \"can I add Y?\", \"do you think I ought to…\"): a direct call with brief reasoning — no lecture.\n"
+        "- Report of a done fact (\"I skipped X\", \"I dropped the last set\", \"already added Y\"): acknowledge briefly and adjust the rest of the session — do not moralise, do not re-explain why the original was there.\n"
+        "- Hypothetical (\"what if I skipped X?\", \"what happens if…\"): describe consequences without assuming they'll do it, and end with the actual decision point they'd need to consider.\n"
+        "Mid-session questions get short decisive answers, not essays.\n\n"
 
         "DATA-DRIVEN ADVISING (TRENDS block)\n"
         "When a TRENDS section is present below, it is computed from the athlete's actual logs. Rules:\n"
@@ -4766,10 +4893,10 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "These are PROPOSALS — the athlete confirms them in the app. Never claim a change was applied. "
         "Only include for exercise swaps or load changes. NOT for sleep, nutrition, or general advice.\n\n"
 
-        # ── ADD-EXERCISE / REMOVE-EXERCISE / SWAP-EXERCISE WRITE ACTIONS ──────
+        # ── ADD-EXERCISE / REMOVE-EXERCISE / SWAP-EXERCISE / PAIN_REPORT WRITE ACTIONS ─
         "TODAY-SESSION WRITE ACTIONS (what you CAN actually do):\n"
-        "Your full set of write actions on the athlete's session is exactly three, and they only affect TODAY. "
-        "You have no other write powers. If asked for anything outside this set (e.g. \"delete week 3\", "
+        "Your full set of write actions is exactly four, and they only affect TODAY's session state or record a data "
+        "point. You have no other write powers. If asked for anything outside this set (e.g. \"delete week 3\", "
         "\"remove this from my whole program\", \"clear my logs\", \"change next month's block\"), you MUST say what you "
         "can and can't do and offer the real path — e.g. \"I can't modify future weeks; permanent removal is done from the "
         "⋮ menu on the exercise, which affects future sessions too, or I can propose it as a PROGRAM_CHANGE for you to confirm.\"\n\n"
@@ -4781,7 +4908,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "note; do NOT then claim success. Your confirmation text must match what actually happened.\n"
         "- If a request maps to more than one write action (e.g. \"swap X for Y\"), use SWAP_EXERCISE — do NOT emit "
         "separate REMOVE + ADD in the same turn.\n"
-        "- Emit AT MOST ONE write-action tag per reply.\n\n"
+        "- Emit AT MOST ONE session write-action tag (ADD/REMOVE/SWAP) per reply. PAIN_REPORT may accompany a session "
+        "write-action when the athlete both reports pain AND asks for a change.\n\n"
 
         "1) ADD_EXERCISE — add an exercise to TODAY only:\n"
         "<ADD_EXERCISE>"
@@ -4814,6 +4942,18 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "- Leave \"category\" empty to inherit from the removed exercise's section (recommended).\n"
         "- After emitting, confirm both halves plainly, e.g. \"Swapped Overhead Press for Landmine Press in today's main work.\"\n\n"
 
+        "4) PAIN_REPORT — record a stated pain level so it flows into the athlete's pain-trend engine:\n"
+        "<PAIN_REPORT>"
+        '{"area":"shoulder","level":6,"timing":"during","note":"during OHP"}'
+        "</PAIN_REPORT>\n"
+        "- level MUST be an integer 0–10.\n"
+        "- area SHOULD match one of the athlete's active injuries by name/region when possible (e.g. \"shoulder\", \"lower back\"); "
+        "if the pain doesn't match an existing injury, still record it — the athlete manages their own injury list, do not invent new injuries.\n"
+        "- timing is OPTIONAL — \"during\" | \"after\" | \"at rest\" — omit the field entirely if the athlete didn't say. Never guess.\n"
+        "- note is optional free text (short).\n"
+        "- Emit ONCE per turn, only when the athlete states a specific pain level in this message. Do NOT emit for vague "
+        "descriptions (\"it hurts\", \"a bit sore\") without a number — ask for the number instead.\n\n"
+
         # ── DYNAMIC ATHLETE CONTEXT (injected per-request) ────────────────────
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
         f"TRAINING CONTEXT:\nWeek {week} | Block {block} | {phase} Phase"
@@ -4827,13 +4967,32 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         f"{rag_section}{user_doc_rag_section}"
     )
 
-    # ── 9. Build chat with last 5 messages only (token budget) ───────────────
+    # ── 9. Build chat with system prompt + history seeded via initial_messages
+    # Previously the code called chat.send_message() for each historic user
+    # message and never seeded assistant replies — that made N+1 real LLM calls
+    # per turn AND meant the coach literally could not see what it had said.
+    # Now we hand the actual user+assistant transcript to LlmChat.initial_messages
+    # so the model sees the real history in a single LLM call.
     emergent_key = os.environ.get('EMERGENT_LLM_KEY', '')
     session_id   = str(uuid.uuid4())
+
+    seeded_messages: list = [{"role": "system", "content": system_prompt}]
+    for _hm in limited_history:
+        _role = getattr(_hm, "role", "") or ""
+        _txt  = getattr(_hm, "content", "") or ""
+        if not _txt:
+            continue
+        if _role == "user":
+            seeded_messages.append({"role": "user", "content": [{"type": "text", "text": _txt}]})
+        elif _role == "assistant":
+            seeded_messages.append({"role": "assistant", "content": _txt})
+        # any other role is ignored
+
     chat = LlmChat(
         api_key=emergent_key,
         session_id=session_id,
-        system_message=system_prompt
+        system_message=system_prompt,
+        initial_messages=seeded_messages,
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
     # ── 9b. Build today's exercise lists for write-action resolution ──────────
@@ -4880,12 +5039,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     except Exception:
         _today_added = []
 
-    # Only send last 5 history messages to save tokens
-    limited_history = request.conversation_history[-5:] if len(request.conversation_history) > 5 else request.conversation_history
+    # ── 9c. Single LLM call — history is already seeded in initial_messages ──
     try:
-        for msg in limited_history:
-            if msg.role == "user":
-                await chat.send_message(UserMessage(text=msg.content))
         response_text = await chat.send_message(UserMessage(text=request.message))
     except Exception as _llm_err:
         # LLM/proxy auth, timeout, or budget errors must not 500 the chat.
@@ -4899,6 +5054,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             "added_exercise": None,
             "removed_exercise": None,
             "swap_exercise": None,
+            "pain_report": None,
         }
 
     # ── 10. Parse <PROGRAM_CHANGE> block ──────────────────────────────────────
@@ -5057,7 +5213,112 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             logger.warning(f"[CoachChat] user={userId} swap_exercise add-half invalid")
             clean_response = (clean_response + "\n\n(I couldn't complete the swap — the replacement exercise wasn't clear. Tell me the exact replacement and I'll do it.)").strip()
 
-    # ── 10e. Empty-response fallback ─────────────────────────────────────────
+    # ── 10e. Parse <PAIN_REPORT> write-action ─────────────────────────────────
+    # Records a user-stated pain level into db.pain_reports so it flows into the
+    # analytics pain-trend engine, and updates the matching active injury's
+    # painLevel + painLevelAt. Never creates a new injury.
+    pain_report = None
+    pr_match = _re.search(r'<PAIN_REPORT>(.*?)</PAIN_REPORT>', clean_response, _re.DOTALL)
+    if pr_match:
+        clean_response = clean_response[:pr_match.start()].rstrip()
+        raw_pr = None
+        try:
+            raw_pr = _json.loads(pr_match.group(1).strip())
+        except Exception:
+            raw_pr = None
+
+        _area = _sanitize_text(raw_pr.get("area") if isinstance(raw_pr, dict) else "", 60)
+        _level_raw = raw_pr.get("level") if isinstance(raw_pr, dict) else None
+        try:
+            _level = int(_level_raw) if _level_raw is not None else None
+        except (TypeError, ValueError):
+            _level = None
+        _timing_raw = raw_pr.get("timing") if isinstance(raw_pr, dict) else None
+        _timing = (_timing_raw or "").strip().lower() if isinstance(_timing_raw, str) else ""
+        if _timing not in ("during", "after", "at rest"):
+            _timing = ""  # unspecified — don't default to "during"
+        _note = _sanitize_text(raw_pr.get("note") if isinstance(raw_pr, dict) else "", 200)
+
+        if _area and _level is not None and 0 <= _level <= 10:
+            # Fuzzy-match to an active injury (uses the same normalizer as REMOVE resolver)
+            matched_injury_name = None
+            try:
+                _details_now = _clean_injury_details((profile_doc or {}).get("injuryDetails"))
+                _area_key = _normalize_ex_name(_area)
+                for _inj in _details_now:
+                    if _inj.get("status") != "active":
+                        continue
+                    _n = _normalize_ex_name(_inj.get("name", ""))
+                    if not _n:
+                        continue
+                    if _n == _area_key or _area_key in _n or _n in _area_key:
+                        matched_injury_name = _inj["name"]
+                        break
+            except Exception:
+                matched_injury_name = None
+
+            _pr_now = datetime.now(timezone.utc)
+            _pr_date = _pr_now.strftime("%Y-%m-%d")
+            _pr_week = (profile_doc or {}).get("currentWeek", 1) if profile_doc else 1
+
+            # Pattern flag: 3+ reports of the same region in last 7 days
+            try:
+                _seven_ago = (_pr_now - timedelta(days=7)).strftime("%Y-%m-%d")
+                _same_ct = await db.pain_reports.count_documents({
+                    "userId": userId, "bodyRegion": _area, "date": {"$gte": _seven_ago},
+                })
+                _flagged = _same_ct >= 2
+            except Exception:
+                _flagged = False
+
+            _pr_doc = {
+                "userId": userId,
+                "exerciseName": "",
+                "bodyRegion": _area,
+                "painType": "",
+                "intensity": _level,
+                "timing": _timing,  # "" when unspecified — analytics engine tolerates
+                "sessionType": "coach chat",
+                "notes": _note,
+                "date": _pr_date,
+                "week": _pr_week,
+                "flagged": _flagged,
+                "createdAt": _pr_now,
+                "source": "coach",
+            }
+            try:
+                _ins = await db.pain_reports.insert_one(_pr_doc)
+                logger.info(f"[CoachChat] user={userId} pain_report area='{_area}' level={_level} timing='{_timing or 'unspecified'}' matched='{matched_injury_name or '(no match)'}'")
+                # Update matched injury's current painLevel + timestamp
+                if matched_injury_name:
+                    try:
+                        new_details = []
+                        for _d in _clean_injury_details((profile_doc or {}).get("injuryDetails")):
+                            if _d["name"].lower() == matched_injury_name.lower():
+                                _d["painLevel"] = _level
+                                _d["painLevelAt"] = _pr_now.isoformat()
+                            new_details.append(_d)
+                        await db.profile.update_one(
+                            {"userId": userId},
+                            {"$set": {"injuryDetails": new_details}},
+                        )
+                    except Exception as _upd_err:
+                        logger.warning(f"[CoachChat] user={userId} pain_report injury update failed: {_upd_err}")
+                pain_report = {
+                    "id": str(_ins.inserted_id),
+                    "area": _area,
+                    "level": _level,
+                    "timing": _timing or None,
+                    "matchedInjury": matched_injury_name,
+                    "flagged": _flagged,
+                }
+            except Exception as _ins_err:
+                logger.warning(f"[CoachChat] user={userId} pain_report insert failed: {_ins_err}")
+        else:
+            logger.warning(f"[CoachChat] user={userId} pain_report rejected — area='{_area}' level={_level!r}")
+            clean_response = (clean_response + "\n\n(I couldn't record that pain report — I need a body area and a level 0–10.)").strip()
+
+    # ── 10f. Empty-response fallback ─────────────────────────────────────────
     # Claude sometimes emits ONLY a write-action tag with no confirming prose.
     # After tag stripping, clean_response is empty — the client would then show
     # "No response received." Synthesize a canonical confirmation from whatever
@@ -5082,6 +5343,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
                 f"Swapped {_rm['targetName']} for {_ad['sets']}×{_ad['reps']} {_ad['name']} in today's "
                 f"{_ad['category']} (today only — your plan is untouched)."
             )
+        if pain_report and not _bits:
+            _bits.append(f"Noted — {pain_report['area']} pain at {pain_report['level']}/10 recorded.")
         if _bits:
             clean_response = " ".join(_bits)
 
@@ -5132,6 +5395,7 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "added_exercise": added_exercise,
         "removed_exercise": removed_exercise,
         "swap_exercise": swap_exercise,
+        "pain_report": pain_report,
     }
 
 

@@ -310,6 +310,8 @@ export default function OnboardingIntake() {
   const [injuries, setInjuries] = useState<string[]>([]);
   // Per-injury severity + status (defaults: moderate / active)
   const [injuryMeta, setInjuryMeta] = useState<Record<string, { severity: 'mild' | 'moderate' | 'severe'; status: 'active' | 'past' }>>({});
+  // Per-injury current pain level 0–10 (optional; only asked for active injuries)
+  const [injuryPain, setInjuryPain] = useState<Record<string, number>>({});
   const [bodyMapGender, setBodyMapGender] = useState<'male'|'female'>('male');
 
   // Step 11 — Recovery profile (sleep / stress / occupation)
@@ -412,10 +414,13 @@ export default function OnboardingIntake() {
         setInjuries(injNames.length > 0 ? injNames : ['None']);
         if (dets.length) {
           const meta: Record<string, any> = {};
+          const pain: Record<string, number> = {};
           dets.forEach((d: any) => {
             if (d?.name) meta[d.name] = { severity: d.severity || 'moderate', status: d.status || 'active' };
+            if (d?.name && typeof d?.painLevel === 'number') pain[d.name] = d.painLevel;
           });
           setInjuryMeta(meta);
+          if (Object.keys(pain).length) setInjuryPain(pain);
         }
 
         // Step 11 — Recovery
@@ -574,12 +579,23 @@ export default function OnboardingIntake() {
       if (lifts.yoke)     currentLifts['yoke']     = parseFloat(lifts.yoke)     || 0;
 
       const cleanInjuries = injuries.includes('None') ? [] : injuries;
-      // Rich injury records — severity + active/past status per injury
-      const injuryDetails = cleanInjuries.map(n => ({
-        name:     n,
-        severity: injuryMeta[n]?.severity || 'moderate',
-        status:   injuryMeta[n]?.status   || 'active',
-      }));
+      // Rich injury records — severity + active/past status + optional current pain per injury
+      const nowIso = new Date().toISOString();
+      const injuryDetails = cleanInjuries.map(n => {
+        const status = injuryMeta[n]?.status || 'active';
+        const rec: any = {
+          name:     n,
+          severity: injuryMeta[n]?.severity || 'moderate',
+          status,
+        };
+        // Only carry a pain level for ACTIVE injuries — past injuries don't ask.
+        const pl = injuryPain[n];
+        if (status === 'active' && typeof pl === 'number' && pl >= 0 && pl <= 10) {
+          rec.painLevel   = pl;
+          rec.painLevelAt = nowIso;
+        }
+        return rec;
+      });
       // Only ACTIVE injuries feed injuryFlags / plan generation (past = resolved)
       const activeInjuries = injuryDetails.filter(d => d.status === 'active').map(d => d.name);
       const bwNum         = parseFloat(bodyweight);
@@ -1399,6 +1415,35 @@ export default function OnboardingIntake() {
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                {/* Pain level 0–10 — active only, optional, skippable */}
+                {meta.status === 'active' && (
+                  <View style={s.painRow}>
+                    <Text style={s.painLabel}>Pain right now (optional)</Text>
+                    <View style={s.painChipRow}>
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                        const selected = injuryPain[item] === n;
+                        return (
+                          <TouchableOpacity
+                            key={n}
+                            testID={`onboarding-pain-${item}-${n}`}
+                            style={[s.painChip, selected && s.painChipActive]}
+                            onPress={() => {
+                              haptic();
+                              setInjuryPain(prev => {
+                                if (selected) { const { [item]: _, ...rest } = prev; return rest; }
+                                return { ...prev, [item]: n };
+                              });
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[s.painChipTxt, selected && s.painChipTxtActive]}>{n}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
               </View>
             );
           })}
@@ -2376,4 +2421,12 @@ const s = StyleSheet.create({
   injSegBtnActive: { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: COLORS.accent },
   injSegTxt:       { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
   injSegTxtActive: { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  // Pain level 0–10 chip row
+  painRow:           { marginTop: SPACING.xs, gap: 6 },
+  painLabel:         { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.medium, letterSpacing: 0.4, textTransform: 'uppercase' },
+  painChipRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  painChip:          { minWidth: 28, height: 28, paddingHorizontal: 6, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
+  painChipActive:    { backgroundColor: 'rgba(229,87,87,0.18)', borderColor: '#E55757' },
+  painChipTxt:       { fontSize: 12, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  painChipTxtActive: { color: '#E55757', fontWeight: FONTS.weights.bold },
 });

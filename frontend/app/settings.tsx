@@ -19,11 +19,16 @@ import AskCoachButton from '../src/components/AskCoachButton';
 // Merge rich injuryDetails with legacy injuryFlags (flags without a detail
 // entry are treated as active/moderate) into a single editable list.
 function mergeInjuryDetails(p: AthleteProfile | null): InjuryDetail[] {
-  const dets: InjuryDetail[] = (p?.injuryDetails || []).map(d => ({
-    name: d.name,
-    status: d.status || 'active',
-    severity: d.severity || 'moderate',
-  }));
+  const dets: InjuryDetail[] = (p?.injuryDetails || []).map(d => {
+    const out: InjuryDetail = {
+      name: d.name,
+      status: d.status || 'active',
+      severity: d.severity || 'moderate',
+    };
+    if (typeof (d as any).painLevel === 'number') out.painLevel   = (d as any).painLevel;
+    if (typeof (d as any).painLevelAt === 'string') out.painLevelAt = (d as any).painLevelAt;
+    return out;
+  });
   const known = new Set(dets.map(d => d.name.toLowerCase()));
   (p?.injuryFlags || []).forEach(f => {
     if (f && !known.has(f.toLowerCase())) dets.push({ name: f, status: 'active', severity: 'moderate' });
@@ -294,6 +299,22 @@ export default function SettingsScreen() {
 
   const handleEditInjury = (name: string, patch: Partial<InjuryDetail>) =>
     markInjuriesModified(liveDetails.map(d => (d.name === name ? { ...d, ...patch } : d)));
+
+  /** Set current pain level 0–10 for an injury; null clears it. Stamps painLevelAt. */
+  const handleSetPainLevel = (name: string, level: number | null) => {
+    markInjuriesModified(liveDetails.map(d => {
+      if (d.name !== name) return d;
+      const next: InjuryDetail = { ...d };
+      if (level === null) {
+        delete (next as any).painLevel;
+        delete (next as any).painLevelAt;
+      } else {
+        next.painLevel   = Math.max(0, Math.min(10, Math.round(level)));
+        next.painLevelAt = new Date().toISOString();
+      }
+      return next;
+    }));
+  };
 
   const activeFlagsChanged = () => {
     const nextActive = liveDetails.filter(d => d.status === 'active').map(d => d.name).sort().join();
@@ -607,6 +628,29 @@ export default function SettingsScreen() {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* Pain level 0–10 — active injuries only, optional, skippable */}
+                  {d.status === 'active' && (
+                    <View style={s.painRow}>
+                      <Text style={s.painLabel}>Pain right now (optional)</Text>
+                      <View style={s.painChipRow}>
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                          const selected = d.painLevel === n;
+                          return (
+                            <TouchableOpacity
+                              key={n}
+                              testID={`injury-pain-${d.name}-${n}`}
+                              style={[s.painChip, selected && s.painChipActive]}
+                              onPress={() => handleSetPainLevel(d.name, selected ? null : n)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[s.painChipTxt, selected && s.painChipTxtActive]}>{n}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  )}
                 </View>
               ))}
             </View>
@@ -1474,6 +1518,14 @@ const s = StyleSheet.create({
   injSegBtnActive:   { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: COLORS.accent },
   injSegTxt:         { fontSize: 10, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
   injSegTxtActive:   { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  // Pain-level 0-10 row (active injuries only)
+  painRow:           { marginTop: SPACING.xs, gap: 6 },
+  painLabel:         { fontSize: 10, color: COLORS.text.muted, fontWeight: FONTS.weights.medium, letterSpacing: 0.4, textTransform: 'uppercase' },
+  painChipRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  painChip:          { minWidth: 26, height: 26, paddingHorizontal: 6, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
+  painChipActive:    { backgroundColor: 'rgba(229,87,87,0.18)', borderColor: '#E55757' },
+  painChipTxt:       { fontSize: 11, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  painChipTxtActive: { color: '#E55757', fontWeight: FONTS.weights.bold },
   // Coach memory transparency card
   memoryText: { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 21 },
   memoryConfirmRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.sm },
