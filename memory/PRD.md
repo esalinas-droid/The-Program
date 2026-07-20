@@ -310,3 +310,25 @@ Tests: `tests/test_training_analytics.py` (22 unit tests). Seed: `seed_analytics
 - **Settings → "WHAT YOUR COACH KNOWS ABOUT YOU"**: renders coach_memory summary; "Correct this" → POST /api/coach/memory/correction (authoritative correction folded via memory summarizer, overrides conflicts, returns updated summary, "Your coach will remember that." confirm); "Clear coach memory" → confirm dialog → DELETE /api/coach/memory (conversations keep memorySummarizedCount so cleared content never refolds); friendly empty state.
 - **/trends screen** (entry: Programs tab → "Training trends" row): read-only render of db.training_analytics — fatigue (Fresh/Normal/Elevated/High + engine explanation), RPE creep (flag-only), strength (entered vs effective 1RM, trend arrows, diverge note), weekly volume stacked custom bars by pattern (session-type theme colors), pain trends (active injuries, neutral tone), compliance. Cards render only when data exists; empty state for no-data users; lowConfidence banner; "updated Xm ago"; GET /api/analytics recomputes >24h stale on open.
 - Endpoints: GET/POST-correction/DELETE /api/coach/memory — all JWT-scoped to own user (401 unauth). No hardcoded hex in new screens (theme tokens only). Verified: test_reports/iteration_84.json (9/9 backend + full frontend pass).
+
+---
+
+## COACH WRITE-ACTIONS: REMOVE + SWAP + HONESTY (July 2026 — COMPLETE)
+
+**FIX 1 — Honesty rule** (`server.py` system prompt): coach may only claim add/remove/swap when the corresponding XML tag is emitted; for out-of-capability requests ("delete week 3", "clear my logs") it MUST state the limitation and offer the real path (⋮ menu for permanent removal, PROGRAM_CHANGE for proposals). At most one write-action tag per reply. Backend-appended failure notes prohibit false success claims.
+
+**FIX 2 — Two new write-actions** (both today-only; plan and future weeks are NEVER touched by these):
+- `<REMOVE_EXERCISE>{"name":"..."}</REMOVE_EXERCISE>` — resolves target name against today's session (prescribed exercises from `_fs` + coach-/manually-added parsed from `current_session` snapshot).
+  - `kind: "prescribed"` → client writes `sessionExerciseId` into AsyncStorage `today_skipped_exercises` (`{date, skipped:[{sessionExerciseId,name}]}`). Today filters these out on render. Day-roll auto-purges the key.
+  - `kind: "added"` → client removes matching-name row from AsyncStorage `today_added_exercises` (the existing manual-add store).
+  - Ambiguity guard: multi-match → coach asks "Which one?" and does NOT emit a tag. Not found → coach asks for the exact name.
+- `<SWAP_EXERCISE>{"remove":{"name":"..."},"add":{ADD schema}}</SWAP_EXERCISE>` — atomic; add-half inherits removed's section by default. Same validation + ambiguity rules as REMOVE. If remove-half fails, add is NOT applied.
+- Same server-side sanitization/clamping as ADD_EXERCISE (`resolve_coach_remove_target`, `validate_coach_added_exercise`; category whitelist main/supplemental/accessory/prehab/warmup/gpp/cooldown, sets 1-10, reps as short string).
+- Response schema (`/api/coach/chat`) now includes `removed_exercise` and `swap_exercise` alongside `added_exercise` / `program_change`.
+- Existing manual kebab-menu Remove (`DELETE /api/programs/.../exercises/…`) is UNCHANGED — that endpoint still permanently removes from current+future weeks of the session type. The coach's REMOVE explicitly does NOT reuse it.
+
+**FIX 3 — Today cache invalidation** (targeted): Coach screen writes AsyncStorage `today_pending_invalidation = timestamp` after any successful mutation (Add / Remove / Swap / applied PROGRAM_CHANGE). Today's `useFocusEffect` consumes the flag at the top, clears it, resets `initialLoadDone`, and forces a full session rebuild. All other Today caches (added sets, logged state, set values) still restore normally.
+
+**Empty-response fallback**: when Claude emits only a tag with no prose, backend synthesizes a canonical confirmation ("Removed X from today's session (today only — your plan and future weeks are untouched)." / add / swap variants).
+
+Tests: `/app/backend/tests/test_iter85_coach_writeactions.py` (11 passing). Frontend Playwright verified via testing_agent (iteration 85): remove-prescribed flow drops the exercise from Today without pull-to-refresh; skip-list survives reload; day-roll purges stale entries; ADD regression preserved; ambiguity + honesty behaviors confirmed. Report: `/app/test_reports/iteration_85.json`.
