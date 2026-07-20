@@ -17,7 +17,9 @@ import VoiceInputButton from '../../src/components/VoiceInputButton';
 import SpeakerButton from '../../src/components/SpeakerButton';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const ADDED_EXERCISES_KEY = 'today_added_exercises'; // shared with Today screen — same store manual adds use
+const ADDED_EXERCISES_KEY  = 'today_added_exercises';  // shared with Today screen — same store manual adds use
+const SKIPPED_EXERCISES_KEY = 'today_skipped_exercises'; // shared with Today — today-only prescribed skip list
+const TODAY_INVALIDATE_KEY  = 'today_pending_invalidation'; // set to a timestamp to force Today re-load on next focus
 
 // Fields config matching today.tsx defaultFields() so coach-added exercises
 // render identically to manual adds.
@@ -74,6 +76,61 @@ async function persistCoachAddedExercise(added: {
     console.warn('[Coach] persistCoachAddedExercise failed:', e);
     throw e;
   }
+}
+
+/**
+ * Today-only skip for a PRESCRIBED exercise. Writes the sessionExerciseId into
+ * the shared date-scoped skip list so Today filters it out for this day only.
+ * The plan document and all future weeks are untouched.
+ */
+async function persistCoachRemovePrescribed(sessionExerciseId: string, name: string): Promise<void> {
+  if (!sessionExerciseId) throw new Error('coach remove: missing sessionExerciseId');
+  const todayStr = getLocalDateString();
+  try {
+    const raw = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+    let existing: any[] = [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.date === todayStr && Array.isArray(parsed?.skipped)) existing = parsed.skipped;
+    }
+    if (existing.some((s: any) => s?.sessionExerciseId === sessionExerciseId)) return; // dedupe
+    const next = [...existing, { sessionExerciseId, name }];
+    await AsyncStorage.setItem(SKIPPED_EXERCISES_KEY, JSON.stringify({ date: todayStr, skipped: next }));
+  } catch (e) {
+    console.warn('[Coach] persistCoachRemovePrescribed failed:', e);
+    throw e;
+  }
+}
+
+/**
+ * Remove a coach-/manually-added exercise (added-ex-*) from today. Matches by
+ * name because the coach only knows names, not IDs.
+ */
+async function persistCoachRemoveAdded(targetName: string): Promise<boolean> {
+  const todayStr = getLocalDateString();
+  const wanted = (targetName || '').trim().toLowerCase();
+  if (!wanted) return false;
+  try {
+    const raw = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (parsed?.date !== todayStr || !Array.isArray(parsed?.exercises)) return false;
+    const before = parsed.exercises.length;
+    const next = parsed.exercises.filter((e: any) => (e?.name || '').trim().toLowerCase() !== wanted);
+    if (next.length === before) return false;
+    await AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify({ date: todayStr, exercises: next }));
+    return true;
+  } catch (e) {
+    console.warn('[Coach] persistCoachRemoveAdded failed:', e);
+    throw e;
+  }
+}
+
+/** Tell Today to skip its focus early-return and rebuild the session next time. */
+async function markTodayNeedsRefresh(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(TODAY_INVALIDATE_KEY, String(Date.now()));
+  } catch {}
 }
 
 /**
@@ -336,6 +393,8 @@ export default function CoachScreen() {
       if (result) {
         setAppliedResults(prev => ({ ...prev, [message.id]: result }));
       }
+      // Applied PROGRAM_CHANGEs mutate the plan → Today must rebuild on next focus.
+      try { await markTodayNeedsRefresh(); } catch {}
       const successMsg = result.exercises_swapped > 0
         ? `✓ ${result.exercises_swapped} exercise${result.exercises_swapped !== 1 ? 's' : ''} updated in current block`
         : '✓ Recommendation logged to your changelog';
@@ -377,18 +436,76 @@ export default function CoachScreen() {
       // ── Coach write-action: persist an added exercise into the SAME store as
       //    the manual "+ Add Exercise" button so it appears on Today & survives reload.
       let addFailedNote = '';
+      let anyMutation = false;
       if (result.added_exercise && result.added_exercise.id) {
         try {
           await persistCoachAddedExercise(result.added_exercise);
+          anyMutation = true;
         } catch {
           addFailedNote = '\n\n(Heads up: I hit an error saving that exercise to your session — please try adding it again.)';
         }
       }
 
+      // ── Coach write-action: remove an exercise from TODAY only ──────────────
+      // For "added" (added-ex-*) exercises → drop from the AsyncStorage store.
+      // For "prescribed" exercises → today-only skip list (plan is untouched).
+      let removeFailedNote = '';
+      if (result.removed_exercise && result.removed_exercise.kind) {
+        try {
+          if (result.removed_exercise.kind === 'prescribed') {
+            if (result.removed_exercise.sessionExerciseId) {
+              await persistCoachRemovePrescribed(
+                result.removed_exercise.sessionExerciseId,
+                result.removed_exercise.targetName || ''
+              );
+              anyMutation = true;
+            } else {
+              removeFailedNote = '\n\n(I tried to remove that from today but couldn\'t identify the exact exercise — please tell me the exact name.)';
+            }
+          } else if (result.removed_exercise.kind === 'added') {
+            const ok = await persistCoachRemoveAdded(result.removed_exercise.targetName || '');
+            if (ok) anyMutation = true;
+            else removeFailedNote = '\n\n(I couldn\'t find that added exercise in today\'s session — it may already be gone.)';
+          }
+        } catch {
+          removeFailedNote = '\n\n(Heads up: I hit an error removing that from today — please try again.)';
+        }
+      }
+
+      // ── Coach write-action: SWAP (atomic remove + add for today only) ───────
+      let swapFailedNote = '';
+      if (result.swap_exercise && result.swap_exercise.removed && result.swap_exercise.added) {
+        try {
+          // Do the remove half first; only proceed with add if remove succeeds
+          const rm = result.swap_exercise.removed;
+          let removeOk = false;
+          if (rm.kind === 'prescribed' && rm.sessionExerciseId) {
+            await persistCoachRemovePrescribed(rm.sessionExerciseId, rm.targetName || '');
+            removeOk = true;
+          } else if (rm.kind === 'added') {
+            removeOk = await persistCoachRemoveAdded(rm.targetName || '');
+          }
+          if (removeOk) {
+            await persistCoachAddedExercise(result.swap_exercise.added);
+            anyMutation = true;
+          } else {
+            swapFailedNote = '\n\n(I couldn\'t complete the swap — the exercise to remove wasn\'t found in today\'s session. Nothing was changed.)';
+          }
+        } catch {
+          swapFailedNote = '\n\n(Heads up: I hit an error swapping that in today\'s session — nothing was changed. Please try again.)';
+        }
+      }
+
+      // If we mutated Today's client-side state, invalidate its focus-cache so
+      // the next visit to Today rebuilds from the plan + the updated stores.
+      if (anyMutation) {
+        await markTodayNeedsRefresh();
+      }
+
       const assistantMsg: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
-        content: (result.response || 'No response received.') + addFailedNote,
+        content: (result.response || 'No response received.') + addFailedNote + removeFailedNote + swapFailedNote,
         sources: result.sources || [],
         timestamp: new Date(),
         hasProgramChange: result.has_program_change || false,

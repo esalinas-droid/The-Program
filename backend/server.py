@@ -3870,6 +3870,67 @@ def validate_coach_added_exercise(raw: dict):
     return {"name": name, "category": category, "sets": sets, "reps": reps, "notes": notes}
 
 
+def _normalize_ex_name(s: str) -> str:
+    """Loose-match key for exercise names: lowercased, punctuation stripped."""
+    if not isinstance(s, str):
+        return ""
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    return s
+
+
+def resolve_coach_remove_target(raw_name: str, prescribed_exercises: list, added_exercises: list) -> dict:
+    """Resolve a model-supplied exercise name against TODAY's session.
+    Returns one of:
+      {"kind":"prescribed","targetId":..., "name":...}   → client removes via today-only skip
+      {"kind":"added","targetId":..., "name":...}        → client removes from AsyncStorage store
+      {"kind":"ambiguous","matches":[names...]}          → coach must clarify, no action
+      {"kind":"not_found"}                                → nothing to remove
+    prescribed_exercises: list of {"sessionExerciseId":..., "name":...} for today's plan session
+    added_exercises: list of {"id":..., "name":...} for coach-/manually-added exercises today
+    """
+    name = _sanitize_text(raw_name, 80)
+    if not name:
+        return {"kind": "not_found"}
+    key = _normalize_ex_name(name)
+    if not key:
+        return {"kind": "not_found"}
+
+    def _match(cand_name: str) -> bool:
+        ck = _normalize_ex_name(cand_name)
+        if not ck:
+            return False
+        # Exact loose-normalized match OR substring in either direction
+        return ck == key or key in ck or ck in key
+
+    hits = []
+    for e in (prescribed_exercises or []):
+        if _match(e.get("name", "")):
+            hits.append({"kind": "prescribed", "targetId": e.get("sessionExerciseId"), "name": e.get("name")})
+    for e in (added_exercises or []):
+        if _match(e.get("name", "")):
+            hits.append({"kind": "added", "targetId": e.get("id"), "name": e.get("name")})
+
+    if not hits:
+        return {"kind": "not_found"}
+    # Deduplicate exact-name-and-kind duplicates (same exercise listed twice)
+    seen = set()
+    unique = []
+    for h in hits:
+        k = (h["kind"], (h.get("targetId") or "").lower(), (h.get("name") or "").lower())
+        if k in seen:
+            continue
+        seen.add(k)
+        unique.append(h)
+    # Prefer an exact-match if there's exactly one
+    exact = [h for h in unique if _normalize_ex_name(h["name"]) == key]
+    if len(exact) == 1:
+        return exact[0]
+    if len(unique) == 1:
+        return unique[0]
+    return {"kind": "ambiguous", "matches": [h["name"] for h in unique]}
+
+
 class CoachConversation(BaseDocument):
     userId: str = "default"
     title: str = ""
@@ -4705,24 +4766,53 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "These are PROPOSALS — the athlete confirms them in the app. Never claim a change was applied. "
         "Only include for exercise swaps or load changes. NOT for sleep, nutrition, or general advice.\n\n"
 
-        # ── ADD-EXERCISE WRITE ACTION (backend parser depends on this XML block) ──
-        "ADD EXERCISE TO TODAY'S SESSION:\n"
-        "You CAN actually add an exercise to the athlete's session for today. When (and ONLY when) the user "
-        "asks you to add/throw in/include a specific exercise for today, ACTUALLY DO IT by appending this "
-        "EXACTLY at the very end of your response:\n"
+        # ── ADD-EXERCISE / REMOVE-EXERCISE / SWAP-EXERCISE WRITE ACTIONS ──────
+        "TODAY-SESSION WRITE ACTIONS (what you CAN actually do):\n"
+        "Your full set of write actions on the athlete's session is exactly three, and they only affect TODAY. "
+        "You have no other write powers. If asked for anything outside this set (e.g. \"delete week 3\", "
+        "\"remove this from my whole program\", \"clear my logs\", \"change next month's block\"), you MUST say what you "
+        "can and can't do and offer the real path — e.g. \"I can't modify future weeks; permanent removal is done from the "
+        "⋮ menu on the exercise, which affects future sessions too, or I can propose it as a PROGRAM_CHANGE for you to confirm.\"\n\n"
+
+        "HONESTY RULE (non-negotiable):\n"
+        "- You may claim you added / removed / swapped an exercise ONLY when you actually emit the corresponding tag "
+        "in this reply. No narrating a removal or swap in prose without the matching tag.\n"
+        "- If the backend rejects an action (ambiguous target, unusable payload, not found), it will append a plain-text "
+        "note; do NOT then claim success. Your confirmation text must match what actually happened.\n"
+        "- If a request maps to more than one write action (e.g. \"swap X for Y\"), use SWAP_EXERCISE — do NOT emit "
+        "separate REMOVE + ADD in the same turn.\n"
+        "- Emit AT MOST ONE write-action tag per reply.\n\n"
+
+        "1) ADD_EXERCISE — add an exercise to TODAY only:\n"
         "<ADD_EXERCISE>"
         '{"name":"Exercise Name","category":"accessory","sets":3,"reps":"8-10","notes":""}'
         "</ADD_EXERCISE>\n"
-        "Rules:\n"
         "- category MUST be one of: main, supplemental, accessory, prehab, warmup, gpp, cooldown. "
         "Pick the most appropriate; if unsure use \"accessory\".\n"
-        "- sets is an integer (1-10); reps is a short string like \"8-10\", \"5\", or \"30s\". "
-        "Choose sensible values if the user didn't specify.\n"
-        "- Emit AT MOST ONE <ADD_EXERCISE> block per reply, and ONLY when the user clearly wants to add an exercise. "
-        "Do NOT emit it for general questions, warm-up advice, or hypothetical suggestions.\n"
-        "- After the block, confirm in words exactly what you added (name, sets x reps, which section), e.g. "
-        "\"Done — added 3x10 Face Pulls to today's accessories.\" The backend will actually perform the add; "
-        "if it can't, it will tell you, and you must NOT claim success.\n\n"
+        "- sets is an integer (1-10); reps is a short string like \"8-10\", \"5\", or \"30s\".\n"
+        "- Use ONLY when the user clearly wants to add something for today. After the block, confirm exactly what "
+        "you added (name, sets x reps, section), e.g. \"Done — added 3x10 Face Pulls to today's accessories.\"\n\n"
+
+        "2) REMOVE_EXERCISE — remove an exercise from TODAY only (never touches the plan or future weeks):\n"
+        "<REMOVE_EXERCISE>"
+        '{"name":"Exercise Name"}'
+        "</REMOVE_EXERCISE>\n"
+        "- Use the exact name as it appears in TODAY'S PRESCRIBED SESSION or in the live session snapshot.\n"
+        "- If the name matches more than one exercise in today's session, DO NOT emit the tag — ask which one.\n"
+        "- This is today-only. Permanent removal from future weeks is NOT one of your powers — for that, tell the user "
+        "to use the ⋮ menu on the exercise on the Today screen (which removes it from this week + all future weeks of "
+        "that session type), or you may PROPOSE it as a PROGRAM_CHANGE.\n\n"
+
+        "3) SWAP_EXERCISE — atomic remove + add for TODAY only (same today-only semantics; the added exercise inherits "
+        "the removed one's section unless you specify a category):\n"
+        "<SWAP_EXERCISE>"
+        '{"remove":{"name":"Exercise To Remove"},"add":{"name":"Replacement","category":"","sets":3,"reps":"8-10","notes":""}}'
+        "</SWAP_EXERCISE>\n"
+        "- Same validation as ADD (category whitelist, sets/reps clamps) and same ambiguity rule as REMOVE (if the "
+        "remove target matches multiple exercises, DO NOT emit — ask which one).\n"
+        "- If the remove half fails, the add is NOT applied and you must NOT claim the swap happened.\n"
+        "- Leave \"category\" empty to inherit from the removed exercise's section (recommended).\n"
+        "- After emitting, confirm both halves plainly, e.g. \"Swapped Overhead Press for Landmine Press in today's main work.\"\n\n"
 
         # ── DYNAMIC ATHLETE CONTEXT (injected per-request) ────────────────────
         f"ATHLETE PROFILE:\n{profile_text}\n\n"
@@ -4746,6 +4836,50 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         system_message=system_prompt
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
+    # ── 9b. Build today's exercise lists for write-action resolution ──────────
+    # Prescribed: from today's session in the plan (has sessionExerciseId).
+    # Added: parsed from the client's live snapshot (client is source-of-truth for added).
+    _today_prescribed: list = []
+    try:
+        if _fs is not None:
+            for _ex in (_fs.exercises or []):
+                _cat = _ex.category.value if hasattr(_ex.category, "value") else str(_ex.category)
+                _today_prescribed.append({
+                    "sessionExerciseId": getattr(_ex, "sessionExerciseId", "") or "",
+                    "name": _ex.name,
+                    "category": _cat,
+                })
+    except Exception:
+        _today_prescribed = []
+
+    _today_added: list = []
+    try:
+        if request.current_session:
+            # Snapshot lines look like: "  - Face Pulls [accessory] (3 sets)" under the
+            # "Exercises the athlete added to today" header. Names only — the client
+            # keeps the id→name map.
+            _in_added_block = False
+            for _ln in (request.current_session or "").splitlines():
+                _low = _ln.lower()
+                if "exercises the athlete added" in _low:
+                    _in_added_block = True
+                    continue
+                if _in_added_block:
+                    _stripped = _ln.strip()
+                    if not _stripped:
+                        _in_added_block = False
+                        continue
+                    if _stripped.startswith("- "):
+                        _body = _stripped[2:]
+                        # strip "[cat] (n sets)" tail
+                        _name_only = re.split(r"\s*\[", _body, 1)[0].strip()
+                        if _name_only:
+                            _today_added.append({"name": _name_only, "category": ""})
+                    else:
+                        _in_added_block = False
+    except Exception:
+        _today_added = []
+
     # Only send last 5 history messages to save tokens
     limited_history = request.conversation_history[-5:] if len(request.conversation_history) > 5 else request.conversation_history
     try:
@@ -4763,6 +4897,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             "has_program_change": False,
             "program_change": None,
             "added_exercise": None,
+            "removed_exercise": None,
+            "swap_exercise": None,
         }
 
     # ── 10. Parse <PROGRAM_CHANGE> block ──────────────────────────────────────
@@ -4810,6 +4946,117 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             logger.warning(f"[CoachChat] user={userId} add_exercise rejected (malformed payload): {ae_match.group(1)[:120]!r}")
             clean_response = (clean_response + "\n\n(I couldn't add that exercise — I didn't catch a valid exercise name. Tell me the exact exercise and I'll add it.)").strip()
 
+    # ── 10c. Parse <REMOVE_EXERCISE> write-action ─────────────────────────────
+    # Today-only. Never mutates the plan or future weeks. Ambiguous / not-found
+    # targets are surfaced as a clarifying note; no action is emitted.
+    removed_exercise = None
+    re_match = _re.search(r'<REMOVE_EXERCISE>(.*?)</REMOVE_EXERCISE>', clean_response, _re.DOTALL)
+    if re_match:
+        clean_response = clean_response[:re_match.start()].rstrip()
+        raw_re = None
+        try:
+            raw_re = _json.loads(re_match.group(1).strip())
+        except Exception:
+            raw_re = None
+        _tname = ""
+        if isinstance(raw_re, dict):
+            _tname = raw_re.get("name") or raw_re.get("target") or ""
+        elif isinstance(raw_re, str):
+            _tname = raw_re
+        resolved = resolve_coach_remove_target(_tname, _today_prescribed, _today_added)
+        if resolved.get("kind") == "prescribed":
+            removed_exercise = {
+                "kind": "prescribed",
+                "targetName": resolved["name"],
+                "sessionExerciseId": resolved.get("targetId") or "",
+                "source": "coach",
+            }
+            logger.info(f"[CoachChat] user={userId} remove_exercise (today-only skip) prescribed '{resolved['name']}'")
+        elif resolved.get("kind") == "added":
+            removed_exercise = {
+                "kind": "added",
+                "targetName": resolved["name"],
+                "sessionExerciseId": "",
+                "source": "coach",
+            }
+            logger.info(f"[CoachChat] user={userId} remove_exercise (today-only) added '{resolved['name']}'")
+        elif resolved.get("kind") == "ambiguous":
+            _names = ", ".join(resolved.get("matches", [])[:5])
+            logger.warning(f"[CoachChat] user={userId} remove_exercise ambiguous: {_names!r}")
+            clean_response = (clean_response + f"\n\n(I found more than one exercise matching that in today's session — {_names}. Which one did you mean?)").strip()
+        else:
+            logger.warning(f"[CoachChat] user={userId} remove_exercise not_found: {_tname!r}")
+            clean_response = (clean_response + "\n\n(I couldn't find that exercise in today's session — tell me the exact name and I'll remove it just for today.)").strip()
+
+    # ── 10d. Parse <SWAP_EXERCISE> write-action ───────────────────────────────
+    # Atomic remove-half + add-half for TODAY only. If either half is invalid,
+    # nothing is applied and the coach must not claim success.
+    swap_exercise = None
+    sw_match = _re.search(r'<SWAP_EXERCISE>(.*?)</SWAP_EXERCISE>', clean_response, _re.DOTALL)
+    if sw_match:
+        clean_response = clean_response[:sw_match.start()].rstrip()
+        raw_sw = None
+        try:
+            raw_sw = _json.loads(sw_match.group(1).strip())
+        except Exception:
+            raw_sw = None
+
+        _rm_name = ""
+        _add_raw = None
+        if isinstance(raw_sw, dict):
+            _rm = raw_sw.get("remove") or {}
+            if isinstance(_rm, dict):
+                _rm_name = _rm.get("name") or _rm.get("target") or ""
+            elif isinstance(_rm, str):
+                _rm_name = _rm
+            _add_raw = raw_sw.get("add")
+
+        resolved = resolve_coach_remove_target(_rm_name, _today_prescribed, _today_added) if _rm_name else {"kind": "not_found"}
+        add_validated = validate_coach_added_exercise(_add_raw) if isinstance(_add_raw, dict) else None
+
+        if resolved.get("kind") in ("prescribed", "added") and add_validated:
+            # Category inheritance: if the model left category blank, inherit
+            # from the removed exercise's section (prescribed only — added
+            # exercises don't always know their category server-side).
+            if (not add_validated.get("category")) or add_validated["category"] == "accessory":
+                # Only overwrite the default fallback if we have the source category
+                if resolved["kind"] == "prescribed":
+                    _src_cat = next((p.get("category") for p in _today_prescribed if p.get("sessionExerciseId") == resolved.get("targetId")), "")
+                    _src_cat = (_src_cat or "").strip().lower()
+                    # Map plan-side category strings to coach whitelist
+                    _cat_map = {"primary": "main", "speed": "main"}
+                    _src_cat_mapped = _cat_map.get(_src_cat, _src_cat)
+                    if _src_cat_mapped in COACH_EXERCISE_CATEGORIES and (not _add_raw or not (_add_raw.get("category") or "").strip()):
+                        add_validated["category"] = _src_cat_mapped
+
+            added_half = {
+                "id": f"added-ex-{uuid.uuid4().hex[:12]}",
+                "name": add_validated["name"],
+                "category": add_validated["category"],
+                "sets": add_validated["sets"],
+                "reps": add_validated["reps"],
+                "notes": add_validated["notes"],
+                "source": "coach",
+            }
+            removed_half = {
+                "kind": resolved["kind"],
+                "targetName": resolved["name"],
+                "sessionExerciseId": resolved.get("targetId") or "",
+                "source": "coach",
+            }
+            swap_exercise = {"removed": removed_half, "added": added_half}
+            logger.info(f"[CoachChat] user={userId} swap_exercise '{resolved['name']}' → '{add_validated['name']}' [{add_validated['category']}]")
+        elif resolved.get("kind") == "ambiguous":
+            _names = ", ".join(resolved.get("matches", [])[:5])
+            logger.warning(f"[CoachChat] user={userId} swap_exercise ambiguous remove: {_names!r}")
+            clean_response = (clean_response + f"\n\n(I found more than one exercise matching that in today's session — {_names}. Which one did you mean to swap out?)").strip()
+        elif resolved.get("kind") == "not_found":
+            logger.warning(f"[CoachChat] user={userId} swap_exercise remove not_found: {_rm_name!r}")
+            clean_response = (clean_response + "\n\n(I couldn't find the exercise you wanted to swap out in today's session — tell me the exact name and I'll swap it just for today.)").strip()
+        elif not add_validated:
+            logger.warning(f"[CoachChat] user={userId} swap_exercise add-half invalid")
+            clean_response = (clean_response + "\n\n(I couldn't complete the swap — the replacement exercise wasn't clear. Tell me the exact replacement and I'll do it.)").strip()
+
     # ── 11. Persist conversation to MongoDB (userId-scoped) ───────────────────
     now = datetime.now(timezone.utc)
     conversation_id = request.conversation_id
@@ -4855,6 +5102,8 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
         "has_program_change": has_program_change,
         "program_change": program_change,
         "added_exercise": added_exercise,
+        "removed_exercise": removed_exercise,
+        "swap_exercise": swap_exercise,
     }
 
 

@@ -3103,6 +3103,8 @@ export default function TodayScreen() {
   const FINISHED_DATE_KEY   = 'today_finished_date';
   const FIELD_OVERRIDES_KEY = 'today_field_overrides'; // P2b: "just today" field choices
   const ADDED_EXERCISES_KEY = 'today_added_exercises'; // exercises added via "Add Exercise"
+  const SKIPPED_EXERCISES_KEY = 'today_skipped_exercises'; // today-only prescribed skip list (coach REMOVE/SWAP)
+  const TODAY_INVALIDATE_KEY  = 'today_pending_invalidation'; // set by coach → force re-load on next focus
 
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
@@ -3486,6 +3488,16 @@ export default function TodayScreen() {
             }
           }
         } catch { /* leave key intact on parse error */ }
+        // Same for the today-only skip list — clear when stale (different day).
+        try {
+          const savedSkippedRaw = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+          if (savedSkippedRaw) {
+            const parsedSk = JSON.parse(savedSkippedRaw);
+            if (parsedSk?.date !== todayStr) {
+              await AsyncStorage.removeItem(SKIPPED_EXERCISES_KEY);
+            }
+          }
+        } catch { /* leave key intact on parse error */ }
         // (Added sets are now restored inline in useFocusEffect — no race condition)
         mountRestoreDone.current = true;
         console.log('[Today] Mount restore complete');
@@ -3571,6 +3583,25 @@ export default function TodayScreen() {
         setProfileUnits(profEarly?.units === 'kg' ? 'kgs' : 'lbs');
       } catch {} // non-critical — stale value is worse than a silent skip
 
+      // ── Targeted invalidation (coach mutations) ─────────────────────────────
+      // The Coach screen writes `today_pending_invalidation` after Add / Remove /
+      // Swap / applied PROGRAM_CHANGE. Consume the flag once and force a full
+      // rebuild by clearing the "already loaded today" guard. Nothing else in
+      // the cache is touched (added sets + logged state still restore normally).
+      let forceInvalidate = false;
+      try {
+        const flag = await AsyncStorage.getItem(TODAY_INVALIDATE_KEY);
+        if (flag) {
+          forceInvalidate = true;
+          await AsyncStorage.removeItem(TODAY_INVALIDATE_KEY);
+          console.log('[Today] Focus invalidation flag consumed → forcing rebuild');
+        }
+      } catch {}
+      if (forceInvalidate) {
+        initialLoadDone.current = false;
+        lastLoadDate.current = '';
+      }
+
       if (initialLoadDone.current && lastLoadDate.current === todayStr) {
         // Safety net: re-verify added sets are present in exercises state
         // (On Expo Go, a background/foreground cycle can reset state while
@@ -3611,12 +3642,46 @@ export default function TodayScreen() {
               setExercises(prev => {
                 const existingIds = new Set(prev.map(e => e.id));
                 const newOnes = parsedExs.exercises.filter((e: any) => !existingIds.has(e.id));
-                return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+                // Also drop coach-removed added exercises that are still in prev
+                const addedNamesInStore = new Set(parsedExs.exercises.map((e: any) => (e?.name || '').trim().toLowerCase()));
+                const pruned = prev.filter((e: any) => {
+                  if (!e?.id?.startsWith?.('added-ex-')) return true;
+                  return addedNamesInStore.has((e?.name || '').trim().toLowerCase());
+                });
+                return newOnes.length > 0 ? [...pruned, ...newOnes] : (pruned.length !== prev.length ? pruned : prev);
+              });
+            } else {
+              // The store is empty for today → drop any lingering added-ex-* rows
+              setExercises(prev => {
+                const pruned = prev.filter((e: any) => !e?.id?.startsWith?.('added-ex-'));
+                return pruned.length !== prev.length ? pruned : prev;
               });
             }
+          } else {
+            setExercises(prev => {
+              const pruned = prev.filter((e: any) => !e?.id?.startsWith?.('added-ex-'));
+              return pruned.length !== prev.length ? pruned : prev;
+            });
           }
         } catch (err) { console.warn('[Today] Re-sync added exercises failed:', err); }
         addedExercisesRestored.current = true;  // restore ran → persist may now prune
+
+        // ── Re-sync today-only prescribed skip list ────────────────────────────
+        try {
+          const savedSkipped = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+          if (savedSkipped) {
+            const parsedSk = JSON.parse(savedSkipped);
+            if (parsedSk?.date === todayStr && Array.isArray(parsedSk?.skipped) && parsedSk.skipped.length > 0) {
+              const skipIds = new Set(parsedSk.skipped.map((s: any) => s?.sessionExerciseId).filter(Boolean));
+              if (skipIds.size > 0) {
+                setExercises(prev => {
+                  const next = prev.filter((e: any) => !skipIds.has(e.id));
+                  return next.length !== prev.length ? next : prev;
+                });
+              }
+            }
+          }
+        } catch (err) { console.warn('[Today] Re-sync skip list failed:', err); }
 
         try {
           const logsResp = await logApi.list({ startDate: todayStr, endDate: todayStr });
@@ -3887,6 +3952,28 @@ export default function TodayScreen() {
             console.warn('[Today] Failed to restore added exercises:', err);
           }
           addedExercisesRestored.current = true;  // restore ran → persist may now prune
+
+          // ── Apply today-only skip list (coach REMOVE / SWAP remove-half) ────
+          // Filters out prescribed exercises the coach has removed for today.
+          // Plan-side data is never touched; the list clears itself at day roll.
+          try {
+            const savedSkipped = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+            if (savedSkipped) {
+              const parsedSk = JSON.parse(savedSkipped);
+              if (parsedSk?.date === todayStr && Array.isArray(parsedSk?.skipped) && parsedSk.skipped.length > 0) {
+                const skipIds = new Set(
+                  parsedSk.skipped.map((s: any) => s?.sessionExerciseId).filter(Boolean)
+                );
+                if (skipIds.size > 0) {
+                  const before = exsWithAdded.length;
+                  exsWithAdded = exsWithAdded.filter((e: any) => !skipIds.has(e.id));
+                  console.log('[Today] Full-rebuild: skipped', before - exsWithAdded.length, 'coach-removed exercise(s) for today');
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[Today] Failed to apply skip list:', err);
+          }
 
           setExercises(exsWithAdded);
           // Expand only the first exercise by default
