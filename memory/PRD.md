@@ -332,3 +332,28 @@ Tests: `tests/test_training_analytics.py` (22 unit tests). Seed: `seed_analytics
 **Empty-response fallback**: when Claude emits only a tag with no prose, backend synthesizes a canonical confirmation ("Removed X from today's session (today only — your plan and future weeks are untouched)." / add / swap variants).
 
 Tests: `/app/backend/tests/test_iter85_coach_writeactions.py` (11 passing). Frontend Playwright verified via testing_agent (iteration 85): remove-prescribed flow drops the exercise from Today without pull-to-refresh; skip-list survives reload; day-roll purges stale entries; ADD regression preserved; ambiguity + honesty behaviors confirmed. Report: `/app/test_reports/iteration_85.json`.
+
+---
+
+## COACH INTEGRITY, CONSISTENCY, INTENT + PAIN 0–10 (July 2026 — COMPLETE)
+
+**1. Token-budgeted history window + true assistant seeding (`server.py`).**
+Old code sent `conversation_history[-5:]` AND replayed each user message through `chat.send_message()` (N+1 real LLM calls) while never seeding assistant replies — so the coach literally could not see its own prior responses, causing self-contradictions. Replaced with `trim_coach_history(all_hist)`: ~8000-char budget (≈2000 tokens), floor of 10 messages, oldest dropped first. The trimmed transcript is now handed to `LlmChat(initial_messages=[system, user, assistant, ...])` and a **single** `send_message()` call is made per turn. When the trim drops messages, the ATHLETE PROFILE block carries `HISTORY_TRUNCATED: yes` so the CONSISTENCY rule can gate its behavior.
+
+**2. System-prompt additions.**
+- **DISPUTE PROTOCOL** — on pushback, check current session state first, state plainly what's true now, admit failure directly, never retcon earlier messages.
+- **CONSISTENCY WITHIN A CONVERSATION** — reversing a prior recommendation requires explicit acknowledgement + reason; under HISTORY_TRUNCATED, must not assert what was said earlier.
+- **INTENT DETECTION** — distinguish permission ("should I skip?"), report ("I skipped"), hypothetical ("what if I skipped?"). Mid-session questions get short decisive answers.
+- **INJURY-DAY LOAD APPROPRIATENESS** — for new symptom/flare on ME days, first response call is proceed/cap RPE/swap/move ME. Mobility comes after.
+
+**3. Pain level (0–10) end-to-end.**
+- **Schema**: `InjuryDetail` gains `painLevel?: 0–10` and `painLevelAt?: ISO` (frontend types + backend `_clean_injury_details` preserves them).
+- **Injury context render**: `_injury_context_line` outputs "Shoulder (active, moderate, pain 6/10 reported 2h ago)" using `_relative_age`.
+- **System-prompt rule**: "PAIN LEVEL (0–10) — ASK, USE, RECORD" — ask ONE concise 0–10 question before prescribing on new/worsening symptoms; scale guidance in 0–3 / 4–6 / 7+ bands.
+- **`<PAIN_REPORT>` write-action** — `{area, level, timing?, note?}`. Timing is OPTIONAL — "during" | "after" | "at rest" — stored as `""` (unspecified) when omitted, NEVER defaulted to "during". Level clamped 0–10, area sanitized. On emit: inserts `db.pain_reports` (`sessionType: "coach chat"`, `source: "coach"`) → feeds analytics pain-trend engine; fuzzy-matches active injuries via `_normalize_ex_name` and updates matched injury's `painLevel` + `painLevelAt`; never creates new injuries. Response includes `pain_report: { id, area, level, timing, matchedInjury, flagged }`.
+- **Onboarding step 8**: per-active-injury "Pain right now (optional)" 0–10 chip row, skippable. Past injuries hide it.
+- **Settings**: same chip row inside each active injury card. Toggle-to-past hides the row; toggle-back restores the stored value.
+
+Tests: `/app/backend/tests/test_iter86_coach_pain_history.py` (10/10 pass) + `test_iter85_coach_writeactions.py` (11/11 regression). Frontend Playwright verified pain-chip persistence, active/past visibility, and behavioral smoke tests for continuity (22-msg conversation, no contradiction), dispute (admits directly, no retcon), and intent detection (permission/report/hypothetical distinguished cleanly). Report: `/app/test_reports/iteration_86.json`.
+
+Optional follow-up (not blocking): pipe `today_skipped_exercises` from the client into `current_session` so the coach can hold its ground on false disputes with client-side state visible.
