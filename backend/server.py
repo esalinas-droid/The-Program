@@ -5057,6 +5057,34 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
             logger.warning(f"[CoachChat] user={userId} swap_exercise add-half invalid")
             clean_response = (clean_response + "\n\n(I couldn't complete the swap — the replacement exercise wasn't clear. Tell me the exact replacement and I'll do it.)").strip()
 
+    # ── 10e. Empty-response fallback ─────────────────────────────────────────
+    # Claude sometimes emits ONLY a write-action tag with no confirming prose.
+    # After tag stripping, clean_response is empty — the client would then show
+    # "No response received." Synthesize a canonical confirmation from whatever
+    # write-action actually landed, so the honesty rule ("confirm what you did")
+    # still holds even if the model forgot to speak.
+    if not clean_response.strip():
+        _bits = []
+        if added_exercise and not swap_exercise:
+            _bits.append(
+                f"Done — added {added_exercise['sets']}×{added_exercise['reps']} "
+                f"{added_exercise['name']} to today's {added_exercise['category']}."
+            )
+        if removed_exercise:
+            _bits.append(
+                f"Removed {removed_exercise['targetName']} from today's session (today only — "
+                f"your plan and future weeks are untouched)."
+            )
+        if swap_exercise:
+            _rm = swap_exercise["removed"]
+            _ad = swap_exercise["added"]
+            _bits.append(
+                f"Swapped {_rm['targetName']} for {_ad['sets']}×{_ad['reps']} {_ad['name']} in today's "
+                f"{_ad['category']} (today only — your plan is untouched)."
+            )
+        if _bits:
+            clean_response = " ".join(_bits)
+
     # ── 11. Persist conversation to MongoDB (userId-scoped) ───────────────────
     now = datetime.now(timezone.utc)
     conversation_id = request.conversation_id
