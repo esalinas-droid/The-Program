@@ -248,6 +248,22 @@ export default function ProgramsScreen() {
         <SectionHeader title="ACTIVE PROGRAM" />
         {renderActiveCard()}
 
+        {/* TRENDS */}
+        <SectionHeader title="TRAINING TRENDS" />
+        <TouchableOpacity
+          style={s.trendsBtn}
+          onPress={() => router.push('/trends' as any)}
+          activeOpacity={0.8}
+          testID="open-trends"
+        >
+          <MaterialCommunityIcons name="chart-line" size={16} color={COLORS.accent} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.trendsBtnTitle}>Training trends</Text>
+            <Text style={s.trendsBtnSub}>Fatigue, strength, volume & more — what your coach sees</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+        </TouchableOpacity>
+
         {/* ARCHIVED */}
         <SectionHeader title="ARCHIVED PROGRAMS" />
         {archived.length === 0 ? (
@@ -290,6 +306,14 @@ export default function ProgramsScreen() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
+  trendsBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+    backgroundColor: COLORS.card, borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: COLORS.border,
+    padding: SPACING.lg, marginBottom: SPACING.md,
+  },
+  trendsBtnTitle: { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.primary },
+  trendsBtnSub: { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 1 },
   screen: {
     flex: 1,
     backgroundColor: COLORS.background,

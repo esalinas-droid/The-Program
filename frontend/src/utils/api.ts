@@ -298,6 +298,11 @@ export const coachApi = {
       method: 'POST',
       body: JSON.stringify({ conversation_id: conversationId, summary, details, exercises: exercises || [] }),
     }),
+  // Coach memory transparency (Settings card)
+  getMemory: () => api('/coach/memory'),
+  correctMemory: (correction: string) =>
+    api('/coach/memory/correction', { method: 'POST', body: JSON.stringify({ correction }) }),
+  clearMemory: () => api('/coach/memory', { method: 'DELETE' }),
 };
 
 // ─── Stage 1: Program API ───────────────────────────────────────────────────
@@ -357,6 +362,8 @@ export const analyticsApi = {
   volume:   () => api('/analytics/volume'),
   pain:     () => api('/analytics/pain'),
   compliance: () => api('/analytics/compliance'),
+  // Trends screen — full training_analytics doc (server recomputes if >24h stale)
+  trends: () => api('/analytics'),
   // P4: conditioning progression endpoints
   conditioningMovements: () => api('/analytics/conditioning-movements'),
   conditioningHistory:   (exercise: string) =>

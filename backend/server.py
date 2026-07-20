@@ -3974,6 +3974,18 @@ def _meet_context(profile_doc) -> str:
 _MEMORY_MIN_NEW_MSGS  = 6    # fold a conversation once it accrues this many unsummarized messages...
 _MEMORY_STALE_MINUTES = 30   # ...or once it has ANY unsummarized messages and has gone quiet this long
 
+_MEMORY_SYSTEM_MSG = (
+    "You maintain a strength coach's long-term memory about one athlete. "
+    "Merge the EXISTING MEMORY with the new information into an updated memory. "
+    "Keep ONLY durable facts: injuries/pain patterns, goals, meet plans, equipment or gym "
+    "constraints, schedule and life context, exercise preferences (loves/hates), recurring "
+    "struggles, and key PRs. Drop small talk and one-off questions. Keep prior facts unless "
+    "contradicted — if contradicted, keep the newer one. "
+    "If a USER CORRECTION is provided, it is authoritative: incorporate it and remove or "
+    "rewrite ANY conflicting older content. "
+    "Output the memory only, plain text, maximum 120 words."
+)
+
 async def _update_coach_memory(user_id: str):
     """Background task fired after each coach exchange. Folds unsummarized
     conversation messages into a per-user rolling memory (db.coach_memory).
@@ -4017,15 +4029,7 @@ async def _update_coach_memory(user_id: str):
         chat = LlmChat(
             api_key=os.environ.get('EMERGENT_LLM_KEY', ''),
             session_id=f"coachmem-{uuid.uuid4().hex[:8]}",
-            system_message=(
-                "You maintain a strength coach's long-term memory about one athlete. "
-                "Merge the EXISTING MEMORY with the NEW CONVERSATION EXCERPTS into an updated memory. "
-                "Keep ONLY durable facts: injuries/pain patterns, goals, meet plans, equipment or gym "
-                "constraints, schedule and life context, exercise preferences (loves/hates), recurring "
-                "struggles, and key PRs. Drop small talk and one-off questions. Keep prior facts unless "
-                "contradicted — if contradicted, keep the newer one. "
-                "Output the memory only, plain text, maximum 120 words."
-            ),
+            system_message=_MEMORY_SYSTEM_MSG,
         ).with_model("anthropic", "claude-sonnet-4-5-20250929")
         new_summary = await chat.send_message(UserMessage(
             text=f"EXISTING MEMORY:\n{existing}\n\nNEW CONVERSATION EXCERPTS:\n{excerpts}"
@@ -4087,6 +4091,66 @@ async def get_analytics_block_recommendations(userId: str = Depends(get_current_
     if hasattr(ca, "isoformat"):
         rec["computedAt"] = ca.isoformat()
     return rec
+
+
+# ── Coach memory transparency endpoints (Settings "What your coach knows") ────
+@api_router.get("/coach/memory")
+async def get_coach_memory(userId: str = Depends(get_current_user)):
+    """The requesting user's own rolling coach-memory summary (read-only)."""
+    doc = await db.coach_memory.find_one({"userId": userId})
+    if not doc or not doc.get("summary"):
+        return {"summary": None, "updatedAt": None}
+    upd = doc.get("updatedAt")
+    return {"summary": doc["summary"],
+            "updatedAt": upd.isoformat() if hasattr(upd, "isoformat") else upd}
+
+
+class MemoryCorrectionRequest(BaseModel):
+    correction: str
+
+
+@api_router.post("/coach/memory/correction")
+async def correct_coach_memory(body: MemoryCorrectionRequest, userId: str = Depends(get_current_user)):
+    """User-submitted correction — folded into memory as AUTHORITATIVE content
+    that must override conflicting older facts. Returns the updated summary."""
+    correction = (body.correction or "").strip()[:500]
+    if not correction:
+        raise HTTPException(status_code=400, detail="Correction text required.")
+    mem_doc = await db.coach_memory.find_one({"userId": userId})
+    existing = (mem_doc or {}).get("summary") or "(no memory yet)"
+    try:
+        chat = LlmChat(
+            api_key=os.environ.get('EMERGENT_LLM_KEY', ''),
+            session_id=f"memfix-{uuid.uuid4().hex[:8]}",
+            system_message=_MEMORY_SYSTEM_MSG,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        new_summary = await chat.send_message(UserMessage(text=(
+            f"EXISTING MEMORY:\n{existing}\n\n"
+            f"USER CORRECTION (authoritative — the athlete stated this directly; it MUST be "
+            f"incorporated and MUST override any conflicting older content):\n{correction}"
+        )))
+    except Exception as e:
+        logger.warning(f"[CoachMemory] correction failed for user={userId}: {e}")
+        raise HTTPException(status_code=502, detail="Could not update coach memory — try again.")
+    new_summary = (new_summary or "").strip()[:1600]
+    if not new_summary:
+        raise HTTPException(status_code=502, detail="Could not update coach memory — try again.")
+    now = datetime.now(timezone.utc)
+    await db.coach_memory.update_one(
+        {"userId": userId},
+        {"$set": {"summary": new_summary, "updatedAt": now, "lastCorrectionAt": now}},
+        upsert=True,
+    )
+    return {"summary": new_summary, "updatedAt": now.isoformat()}
+
+
+@api_router.delete("/coach/memory")
+async def clear_coach_memory(userId: str = Depends(get_current_user)):
+    """Permanently delete the requesting user's coach memory. Cannot be undone.
+    Conversations keep their memorySummarizedCount, so cleared content is NOT
+    re-folded — memory rebuilds only from future chats."""
+    r = await db.coach_memory.delete_one({"userId": userId})
+    return {"deleted": r.deleted_count > 0}
 
 
 # ── POST /api/coach/chat ──────────────────────────────────────────────────────

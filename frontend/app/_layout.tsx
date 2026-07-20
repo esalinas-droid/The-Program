@@ -34,6 +34,7 @@ export default function RootLayout() {
         <Stack.Screen name="achievements" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="session-detail" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="trends" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </GestureHandlerRootView>
   );

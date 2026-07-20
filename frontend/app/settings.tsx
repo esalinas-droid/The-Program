@@ -8,7 +8,7 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { getProfile, saveProfile } from '../src/utils/storage';
-import { profileApi, planApi, authApi, InjuryPreviewResult } from '../src/utils/api';
+import { profileApi, planApi, authApi, coachApi, InjuryPreviewResult } from '../src/utils/api';
 import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
 import { AthleteProfile, InjuryDetail } from '../src/types';
 import { clearAuth, getStoredUser, getAuthToken } from '../src/utils/auth';
@@ -102,6 +102,13 @@ export default function SettingsScreen() {
   // Active injury names — what injuryFlags / plan generation see
   const liveInjuries = liveDetails.filter(d => d.status === 'active').map(d => d.name);
 
+  // ── Coach memory transparency ("What your coach knows about you") ─────────
+  const [coachMemory, setCoachMemory] = useState<string | null>(null);
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [correctionText, setCorrectionText] = useState('');
+  const [correctionSaving, setCorrectionSaving] = useState(false);
+  const [correctionDone, setCorrectionDone] = useState(false);
+
   // ── Edit profile modal state ───────────────────────────────────────────────
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [editName,        setEditName]        = useState('');
@@ -167,8 +174,54 @@ export default function SettingsScreen() {
       setLiveDetails(mergeInjuryDetails(p));
       setLiveWeaknesses([...(p?.primaryWeaknesses || p?.weaknesses || [])]);
       setLoading(false);
+      // Coach memory (non-blocking; card shows empty state on failure)
+      try {
+        const mem: any = await coachApi.getMemory();
+        setCoachMemory(mem?.summary || null);
+      } catch {}
     })();
   }, []);
+
+  // ── Coach memory handlers ──────────────────────────────────────────────────
+  const handleSubmitCorrection = async () => {
+    const text = correctionText.trim();
+    if (!text || correctionSaving) return;
+    setCorrectionSaving(true);
+    try {
+      const res: any = await coachApi.correctMemory(text);
+      setCoachMemory(res?.summary || coachMemory);
+      setCorrectionText('');
+      setShowCorrection(false);
+      setCorrectionDone(true);
+      setTimeout(() => setCorrectionDone(false), 4000);
+    } catch {
+      Alert.alert('Error', 'Could not update coach memory. Please try again.');
+    } finally {
+      setCorrectionSaving(false);
+    }
+  };
+
+  const handleClearMemory = () => {
+    Alert.alert(
+      'Clear coach memory?',
+      "This permanently deletes everything your coach has learned about you from past conversations. It can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear memory', style: 'destructive',
+          onPress: async () => {
+            try {
+              await coachApi.clearMemory();
+              setCoachMemory(null);
+              setShowCorrection(false);
+            } catch {
+              Alert.alert('Error', 'Could not clear coach memory. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // ── Profile update helper ─────────────────────────────────────────────────
   async function updateProfile(updates: Partial<AthleteProfile>) {
@@ -686,6 +739,80 @@ export default function SettingsScreen() {
               thumbColor={COLORS.text.primary}
             />
           </View>
+        </View>
+
+        {/* ── WHAT YOUR COACH KNOWS ── */}
+        <SectionHeader title="WHAT YOUR COACH KNOWS ABOUT YOU" />
+        <View style={s.card} testID="coach-memory-card">
+          {coachMemory ? (
+            <>
+              <Text style={s.memoryText} testID="coach-memory-summary">{coachMemory}</Text>
+              {correctionDone && (
+                <View style={s.memoryConfirmRow} testID="coach-memory-confirm">
+                  <MaterialCommunityIcons name="check-circle-outline" size={14} color={COLORS.status.success} />
+                  <Text style={s.memoryConfirmText}>Your coach will remember that.</Text>
+                </View>
+              )}
+              {showCorrection ? (
+                <View style={s.memoryCorrectionWrap}>
+                  <TextInput
+                    style={s.memoryInput}
+                    value={correctionText}
+                    onChangeText={setCorrectionText}
+                    placeholder={'e.g. "my knee is fine now — that was last month"'}
+                    placeholderTextColor={COLORS.text.muted}
+                    multiline
+                    maxLength={500}
+                    testID="coach-memory-correction-input"
+                  />
+                  <View style={s.memoryActionsRow}>
+                    <TouchableOpacity
+                      style={s.memoryGhostBtn}
+                      onPress={() => { setShowCorrection(false); setCorrectionText(''); }}
+                    >
+                      <Text style={s.memoryGhostBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.memorySubmitBtn, (!correctionText.trim() || correctionSaving) && { opacity: 0.5 }]}
+                      onPress={handleSubmitCorrection}
+                      disabled={!correctionText.trim() || correctionSaving}
+                      testID="coach-memory-correction-submit"
+                    >
+                      {correctionSaving
+                        ? <ActivityIndicator size="small" color={COLORS.primary} />
+                        : <Text style={s.memorySubmitBtnText}>Send correction</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={s.memoryActionsRow}>
+                  <TouchableOpacity
+                    style={s.memoryGhostBtn}
+                    onPress={() => setShowCorrection(true)}
+                    testID="coach-memory-correct-btn"
+                  >
+                    <MaterialCommunityIcons name="pencil-outline" size={13} color={COLORS.accent} />
+                    <Text style={[s.memoryGhostBtnText, { color: COLORS.accent }]}>Correct this</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={s.memoryGhostBtn}
+                    onPress={handleClearMemory}
+                    testID="coach-memory-clear-btn"
+                  >
+                    <MaterialCommunityIcons name="delete-outline" size={13} color={COLORS.status.error} />
+                    <Text style={[s.memoryGhostBtnText, { color: COLORS.status.error }]}>Clear memory</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
+          ) : (
+            <View style={s.emptyRow} testID="coach-memory-empty">
+              <MaterialCommunityIcons name="brain" size={18} color={COLORS.text.muted} />
+              <Text style={s.emptyText}>
+                Your coach is still getting to know you — this fills in as you chat.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── NOTIFICATIONS ── */}
@@ -1347,6 +1474,31 @@ const s = StyleSheet.create({
   injSegBtnActive:   { backgroundColor: 'rgba(201,168,76,0.15)', borderColor: COLORS.accent },
   injSegTxt:         { fontSize: 10, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
   injSegTxtActive:   { color: COLORS.accent, fontWeight: FONTS.weights.semibold },
+  // Coach memory transparency card
+  memoryText: { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 21 },
+  memoryConfirmRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.sm },
+  memoryConfirmText: { fontSize: FONTS.sizes.xs, color: COLORS.status.success, fontWeight: FONTS.weights.medium },
+  memoryActionsRow: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.md },
+  memoryGhostBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingVertical: 8, paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border,
+    minHeight: 34,
+  },
+  memoryGhostBtnText: { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, fontWeight: FONTS.weights.medium },
+  memoryCorrectionWrap: { marginTop: SPACING.md },
+  memoryInput: {
+    backgroundColor: COLORS.surfaceHighlight, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: COLORS.border,
+    color: COLORS.text.primary, fontSize: FONTS.sizes.sm,
+    padding: SPACING.md, minHeight: 70, textAlignVertical: 'top',
+  },
+  memorySubmitBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.accent, borderRadius: RADIUS.md,
+    paddingVertical: 8, paddingHorizontal: SPACING.lg, minHeight: 34,
+  },
+  memorySubmitBtnText: { fontSize: FONTS.sizes.xs, color: COLORS.primary, fontWeight: FONTS.weights.bold },
   weaknessChip:   { backgroundColor: 'rgba(201,168,76,0.08)', borderColor: 'rgba(201,168,76,0.2)' },
   weaknessChipText:{ color: COLORS.accent },
 
