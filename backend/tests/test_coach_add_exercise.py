@@ -20,10 +20,11 @@ import time
 import re
 import pytest
 import requests
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_BACKEND_URL", "https://the-program-app.preview.emergentagent.com").rstrip("/")
 EMAIL    = "user_a@theprogram.app"
-PASSWORD = "StrongmanA123"
+PASSWORD = password_for("user_a@theprogram.app")
 
 ALLOWED_CATEGORIES = {"main", "supplemental", "accessory", "prehab", "warmup", "gpp", "cooldown"}
 

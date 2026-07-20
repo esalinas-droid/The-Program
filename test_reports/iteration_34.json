@@ -39,7 +39,7 @@
   "pages_audit": {
     "auth_screen": "PASS — TP logo on dark background, 'Continue with Email' button visible, Google/Facebook marked as 'Soon'",
     "auth_login_form": "PASS — Sign In form loads, email/password inputs work",
-    "auth_login_success": "PASS — Login with user_a@theprogram.app/StrongmanA123 succeeds, redirects to Home tab",
+    "auth_login_success": "PASS — Login with user_a@theprogram.app/<rotated-see-memory-test_credentials> succeeds, redirects to Home tab",
     "home_greeting": "PASS — Shows 'Good evening, User Alpha' (user's name, not 'Athlete')",
     "home_session_card": "PASS — 'Heavy Lower' session type badge visible",
     "home_coach_directive": "PASS — Short 1-2 sentences shown",

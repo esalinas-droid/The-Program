@@ -406,3 +406,7 @@ backend/.env.local
 # but DO track example env files (documented var names, no secrets)
 !.env.example
 !backend/.env.example
+
+# Local credentials / secrets — never commit
+memory/test_credentials.md
+backend/.env.local

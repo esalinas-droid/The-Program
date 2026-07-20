@@ -25,7 +25,7 @@
   "seed_data_creation": "No seed data created",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Login: user_a@theprogram.app / StrongmanA123 using 'Sign in' link then Enter key. Session: Speed Lower (Speed Squat 10×2 @ 165lbs+bands). Two sets logged (200x2, 190x2). Tab nav positions: Today=text 'Today', Track=text 'Track'. All sync fixes verified working.",
+  "context_for_next_testing_agent": "Login: user_a@theprogram.app / <rotated-see-memory-test_credentials> using 'Sign in' link then Enter key. Session: Speed Lower (Speed Squat 10×2 @ 165lbs+bands). Two sets logged (200x2, 190x2). Tab nav positions: Today=text 'Today', Track=text 'Track'. All sync fixes verified working.",
   "test_results": {
     "today_tab_speed_lower_session": "PASS - Speed Lower with Speed Squat exercises visible",
     "set_values_persist_after_tab_switch": "PASS - 200x2 and 190x2 both restored correctly after Track→Today",

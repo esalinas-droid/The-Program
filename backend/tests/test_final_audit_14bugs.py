@@ -6,13 +6,14 @@ and REGRESSION CHECKS for all key endpoints.
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
 USER_C_EMAIL = "fresh_user_c@test.com"
-USER_C_PASS = "TestC123"
+USER_C_PASS = password_for("fresh_user_c@test.com")
 USER_A_EMAIL = "user_a@theprogram.app"
-USER_A_PASS = "StrongmanA123"
+USER_A_PASS = password_for("user_a@theprogram.app")
 
 
 @pytest.fixture(scope="module")

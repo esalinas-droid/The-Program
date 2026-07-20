@@ -11,11 +11,12 @@ Covers the backend items called out in the review request:
 import os
 import pytest
 import requests
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
-USER_A = {"email": "user_a@theprogram.app", "password": "StrongmanA123"}
-USER_B = {"email": "user_b@theprogram.app", "password": "HypertrophyB123"}
+USER_A = {"email": "user_a@theprogram.app", "password": password_for("user_a@theprogram.app")}
+USER_B = {"email": "user_b@theprogram.app", "password": password_for("user_b@theprogram.app")}
 
 
 def _login(creds):

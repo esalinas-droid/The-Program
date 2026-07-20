@@ -9,7 +9,7 @@ Endpoints:
   POST /api/auth/push-token      — register Expo push token
   PUT  /api/auth/preferences     — update marketingOptIn, etc.
   POST /api/auth/logout          — (informational; actual logout is client-side)
-  GET  /api/admin/users          — admin: list all users (ADMIN_SECRET required)
+  GET  /api/admin/users          — admin: list all users (env ADMIN_API_SECRET required; disabled if unset)
 """
 from __future__ import annotations
 
@@ -39,7 +39,9 @@ admin_router = APIRouter(prefix="/api/admin")
 
 RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM      = os.environ.get("RESEND_FROM_EMAIL", "noreply@theprogram.app")
-ADMIN_SECRET     = os.environ.get("ADMIN_SECRET", "")
+# Admin secret: env-only, NO default. If ADMIN_API_SECRET is unset the admin
+# endpoint is disabled (403). Prod must set it in Deployment Secrets.
+ADMIN_API_SECRET = os.environ.get("ADMIN_API_SECRET")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 FACEBOOK_APP_ID  = os.environ.get("FACEBOOK_APP_ID", "")
 
@@ -482,12 +484,15 @@ async def delete_account(authorization: Optional[str] = Header(None)):
 async def list_users(authorization: Optional[str] = Header(None)):
     """
     Admin endpoint — returns all registered users.
-    Requires: Authorization: Bearer {ADMIN_SECRET}
+    Requires: Authorization: Bearer {ADMIN_API_SECRET (env)}.
+    Disabled (403) when the ADMIN_API_SECRET env var is not set.
     """
+    if not ADMIN_API_SECRET:
+        raise HTTPException(status_code=403, detail="Admin endpoint disabled (ADMIN_API_SECRET not configured).")
     if not authorization:
         raise HTTPException(status_code=401, detail="Admin auth required.")
     secret = authorization.removeprefix("Bearer ").strip()
-    if not ADMIN_SECRET or secret != ADMIN_SECRET:
+    if secret != ADMIN_API_SECRET:
         raise HTTPException(status_code=403, detail="Invalid admin secret.")
 
     users = await db.users.find({}, {"passwordHash": 0, "_id": 0}).to_list(10000)

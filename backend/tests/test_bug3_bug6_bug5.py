@@ -4,6 +4,7 @@ Tests for BUG 3 (goal mapping in intake), BUG 6 (changelog API), BUG 5 (log crea
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
@@ -14,7 +15,7 @@ def get_token(email, password):
 
 @pytest.fixture(scope="module")
 def user_a_token():
-    return get_token("user_a@theprogram.app", "StrongmanA123")
+    return get_token("user_a@theprogram.app", password_for("user_a@theprogram.app"))
 
 # BUG 3: Goal mapping tests
 class TestGoalMapping:

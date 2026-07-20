@@ -6,6 +6,7 @@ import pytest
 import requests
 import os
 from datetime import datetime, timedelta
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL') or os.environ.get('EXPO_BACKEND_URL')
 if not BASE_URL:
@@ -17,12 +18,12 @@ AUTH_HEADERS_B = None
 @pytest.fixture(scope="module", autouse=True)
 def setup_auth():
     global AUTH_HEADERS_A, AUTH_HEADERS_B
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email":"user_a@theprogram.app","password":"StrongmanA123"})
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email":"user_a@theprogram.app","password":password_for("user_a@theprogram.app")})
     assert r.status_code == 200, f"Login failed: {r.text}"
     token_a = r.json()["token"]
     AUTH_HEADERS_A = {"Authorization": f"Bearer {token_a}", "Content-Type": "application/json"}
 
-    r2 = requests.post(f"{BASE_URL}/api/auth/login", json={"email":"user_b@theprogram.app","password":"HypertrophyB123"})
+    r2 = requests.post(f"{BASE_URL}/api/auth/login", json={"email":"user_b@theprogram.app","password":password_for("user_b@theprogram.app")})
     if r2.status_code == 200:
         token_b = r2.json()["token"]
         AUTH_HEADERS_B = {"Authorization": f"Bearer {token_b}", "Content-Type": "application/json"}

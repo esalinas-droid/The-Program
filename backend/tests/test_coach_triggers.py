@@ -6,6 +6,7 @@ import pytest
 import requests
 import os
 from datetime import datetime, timezone, timedelta
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
@@ -14,7 +15,7 @@ BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 def auth_token():
     resp = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": "user_a@theprogram.app",
-        "password": "StrongmanA123"
+        "password": password_for("user_a@theprogram.app")
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     token = resp.json().get("token") or resp.json().get("access_token")

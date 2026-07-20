@@ -26,7 +26,7 @@
     "backend": "100% (16/16)",
     "frontend": "N/A (not tested)"
   },
-  "seed_data_creation": "Registered fresh_user_c@test.com / TestC123 as new user. Called POST /api/profile/intake to create their profile. Called POST /api/plan/apply-injury-update to set Lower Back injury.",
+  "seed_data_creation": "Registered fresh_user_c@test.com / <rotated-see-memory-test_credentials> as new user. Called POST /api/profile/intake to create their profile. Called POST /api/plan/apply-injury-update to set Lower Back injury.",
   "retest_needed": false,
   "should_main_agent_self_test": false,
   "context_for_next_testing_agent": "All 14 bug fixes confirmed working. Key schema: IntakeRequest fields are goal/experience/injuries/gym (not trainingGoal/experienceLevel/injuryFlags/equipment). apply-injury-update key is 'newInjuryFlags'. BUG 2 fix (upsert=True) confirmed: new user profile.userId is NOT 'user_001'. BUG 5+6+14: knee injury does not produce Box Squat; shoulder injury does not produce Floor Press. BUG 8: apply-injury-update returns 200 after intake. All regression endpoints (weekly-review, deload/check, rehab/status, competition/status, rotation/check, warmup/today, coach/change-log, plan/session/today) return 200.",

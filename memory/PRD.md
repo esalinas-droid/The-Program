@@ -294,3 +294,12 @@ All verified e2e with test_strongman@test.com (taper answer, note reference, sev
 **Part 2 — Coach behavior**: TRENDS block injected (~250 tokens, non-neutral signals only); prompt rules: deload answers must cite trend evidence; >5% effective-1RM divergence → PROGRAM_CHANGE proposal type "load_update" (confirm-only, NEVER auto-applied); clinician mode (active+rising pain → advise modification with correlation evidence; severity gates aggressiveness); "data suggests" vs "you told me"; <3 wks data → explicit low-confidence. Analytics failure → chat works as before. ADD_EXERCISE / memory / RAG / voice untouched.
 
 Tests: `tests/test_training_analytics.py` (22 unit tests). Seed: `seed_analytics_test_users.py` (5 scenario users, see test_credentials.md).
+
+---
+
+## SECURITY CLEANUP (July 2026 — COMPLETE)
+- `memory/test_credentials.md` removed from git tracking (`git rm --cached`) + gitignored (also `backend/.env.local`). File kept locally; tests read it via `backend/tests/creds.py`.
+- Admin endpoint GET /api/admin/users: env-only `ADMIN_API_SECRET` (no default). Unset ⇒ 403 "disabled". Strong value set in local `backend/.env.local`. **PROD: must set ADMIN_API_SECRET in Deployment Secrets or the endpoint stays disabled.**
+- All 10 test-account passwords rotated (5 analytics + user_a/user_b/strongman/hypertrophy/fresh_user_c); new values only in the untracked credentials file. `seed_analytics_test_users.py` now generates a random password per run (printed + auto-synced into the credentials file) and rotates on reseed.
+- 35+ test files migrated from hardcoded passwords → `creds.password_for(email)`; remaining literals are throwaway registration passwords only. Tracked test_reports/test_result.md scrubbed of old literals.
+- DEFAULT_USER (user_001): no-JWT fallback already removed from middleware.get_current_user — requests without a valid JWT get 401 in ALL environments (verified live). Constant retained for legacy log lines only; no user_001 login account exists. NOT exploitable in prod.

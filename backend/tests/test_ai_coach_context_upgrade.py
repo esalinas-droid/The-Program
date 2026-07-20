@@ -14,11 +14,13 @@ import uuid
 import pytest
 import requests
 
+from creds import password_for
+
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 STRONGMAN_EMAIL = "test_strongman@test.com"
-STRONGMAN_PASS = "TestPass123"
+STRONGMAN_PASS = password_for(STRONGMAN_EMAIL)      # from untracked memory/test_credentials.md
 HYPERTROPHY_EMAIL = "test_hypertrophy@test.com"
-HYPERTROPHY_PASS = "TestPass123"
+HYPERTROPHY_PASS = password_for(HYPERTROPHY_EMAIL)
 
 
 def _login(email: str, password: str):

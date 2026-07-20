@@ -53,7 +53,7 @@ def fresh_user_token():
     """Register a brand-new user and return the JWT."""
     email = f"TEST_prog_{uuid.uuid4().hex[:10]}@theprogram.app"
     r = requests.post(f"{BASE_URL}/api/auth/register", json={
-        "email": email, "password": "TestPass123", "name": "TEST_ProgUser",
+        "email": email, "password": "Throwaway-Reg-1!", "name": "TEST_ProgUser",
     }, timeout=30)
     assert r.status_code == 200, f"register failed: {r.status_code} {r.text}"
     data = r.json()

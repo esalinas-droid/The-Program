@@ -5,13 +5,14 @@ Also tests: Bug 5 Fallback (strongman + shoulder injury exercise selection)
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
     BASE_URL = "https://the-program-app.preview.emergentagent.com"
 
 TEST_EMAIL = "test_strongman@test.com"
-TEST_PASSWORD = "TestPass123"
+TEST_PASSWORD = password_for("test_strongman@test.com")
 
 
 @pytest.fixture(scope="module")

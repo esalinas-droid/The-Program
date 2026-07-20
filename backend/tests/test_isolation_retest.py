@@ -4,18 +4,19 @@ Retest: Profile userId scoping + injury_preview isolation for fresh users
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = "https://the-program-app.preview.emergentagent.com"
 
 @pytest.fixture(scope="module")
 def user_a_token():
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_a@theprogram.app", "password": "StrongmanA123"})
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_a@theprogram.app", "password": password_for("user_a@theprogram.app")})
     assert r.status_code == 200, f"user_a login failed: {r.text}"
     return r.json()["token"]
 
 @pytest.fixture(scope="module")
 def user_b_token():
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_b@theprogram.app", "password": "HypertrophyB123"})
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_b@theprogram.app", "password": password_for("user_b@theprogram.app")})
     assert r.status_code == 200, f"user_b login failed: {r.text}"
     return r.json()["token"]
 
@@ -24,7 +25,7 @@ def fresh_user_token():
     # Register fresh user
     email = "test_iso@theprogram.app"
     r = requests.post(f"{BASE_URL}/api/auth/register", json={"email": email, "password": "IsoTest999"})
-    if r.status_code == 400 and "already" in r.text.lower():
+    if r.status_code in (400, 409) and ("already" in r.text.lower() or "exists" in r.text.lower()):
         # Login instead
         r2 = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": "IsoTest999"})
         assert r2.status_code == 200, f"fresh user login failed: {r2.text}"

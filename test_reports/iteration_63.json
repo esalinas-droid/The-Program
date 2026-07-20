@@ -28,7 +28,7 @@
   "seed_data_creation": "Logged 13 sets via API (POST /api/log) for user_a to pre-fill backend history. Also logged 17 sets via UI to enable FINISH SESSION (>=50% threshold).",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Session complete fix is working. The today screen for user_a shows DE Upper session with 25 total sets. Test credentials: user_a@theprogram.app / StrongmanA123.",
+  "context_for_next_testing_agent": "Session complete fix is working. The today screen for user_a shows DE Upper session with 25 total sets. Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>.",
   "test_results": {
     "TEST_1_celebration_modal_visible": "PASSED — SESSION COMPLETE celebration modal appeared fully without ReadinessModal covering it. ReadinessModal was confirmed invisible during celebration.",
     "TEST_2_checkin_after_dismiss": "PASSED — After clicking DONE button, app navigated to /review screen correctly. No ReadinessModal overlap during celebration.",

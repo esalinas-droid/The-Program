@@ -61,5 +61,5 @@
   "seed_data_creation": "None",
   "retest_needed": false,
   "should_main_agent_self_test": true,
-  "context_for_next_testing_agent": "user_a@theprogram.app / StrongmanA123 is the primary test user. Current week is Apr 16, 2026 (THU). THIS WEEK shows MON/WED (Missed) and THU (Today). Calendar has training events on Mon/Wed/Thu. Notifications modal works but expo-notifications has web limitations for Save & Enable flow. Add testID to THIS WEEK cards for reliable routing tests."
+  "context_for_next_testing_agent": "user_a@theprogram.app / <rotated-see-memory-test_credentials> is the primary test user. Current week is Apr 16, 2026 (THU). THIS WEEK shows MON/WED (Missed) and THU (Today). Calendar has training events on Mon/Wed/Thu. Notifications modal works but expo-notifications has web limitations for Save & Enable flow. Add testID to THIS WEEK cards for reliable routing tests."
 }

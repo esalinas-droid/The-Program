@@ -4,6 +4,7 @@ Tests for BUG 2 fixes: goal mapping, profile reset endpoint, and change-log endp
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_BACKEND_URL', '').rstrip('/')
 
@@ -14,11 +15,11 @@ def get_token(email, password):
 
 @pytest.fixture(scope="module")
 def user_a_token():
-    return get_token("user_a@theprogram.app", "StrongmanA123")
+    return get_token("user_a@theprogram.app", password_for("user_a@theprogram.app"))
 
 @pytest.fixture(scope="module")
 def user_b_token():
-    return get_token("user_b@theprogram.app", "HypertrophyB123")
+    return get_token("user_b@theprogram.app", password_for("user_b@theprogram.app"))
 
 
 class TestProfileReset:

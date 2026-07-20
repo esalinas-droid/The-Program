@@ -8,12 +8,13 @@ Tests for Phase 1 features:
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
 # Credentials
-USER_A = {"email": "user_a@theprogram.app", "password": "StrongmanA123"}
-USER_B = {"email": "user_b@theprogram.app", "password": "HypertrophyB123"}
+USER_A = {"email": "user_a@theprogram.app", "password": password_for("user_a@theprogram.app")}
+USER_B = {"email": "user_b@theprogram.app", "password": password_for("user_b@theprogram.app")}
 
 
 @pytest.fixture(scope="module")

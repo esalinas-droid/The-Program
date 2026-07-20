@@ -2,11 +2,12 @@
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
 EMAIL = "user_a@theprogram.app"
-PASSWORD = "StrongmanA123"
+PASSWORD = password_for("user_a@theprogram.app")
 
 
 @pytest.fixture(scope="module")

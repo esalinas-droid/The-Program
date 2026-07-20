@@ -1,10 +1,12 @@
 """
 Seed script: analytics test users for the AI-coach analytics/clinician layer.
-Idempotent — re-running clears and re-seeds each user's logs/pain reports.
+Idempotent — re-running clears and re-seeds each user's logs/pain reports and
+ROTATES their password to a fresh random value (printed to console and synced
+into /app/memory/test_credentials.md, which is untracked/gitignored).
 
-Users (password for all: Analytics123):
+Users:
   analytics_creep@test.com   — 4 weeks of bench @185 with RPE 7→7.5→8.5→9 (RPE creep)
-  analytics_e1rm@test.com    — entered bench 1RM 300; best sets imply e1RM ~325 (+8%)
+  analytics_e1rm@test.com    — entered bench 1RM 300; best sets imply e1RM ~324 (+8%)
   analytics_injury@test.com  — active shoulder injury; pain reports clustering after Overhead Press, rising
   analytics_thin@test.com    — only 1 week of logs (low-confidence path)
   analytics_empty@test.com   — zero logs / zero analytics (coach must work normally)
@@ -13,6 +15,8 @@ Run:  cd /app/backend && python seed_analytics_test_users.py
 """
 import asyncio
 import os
+import re
+import secrets
 import sys
 from datetime import datetime, timezone, timedelta
 
@@ -25,8 +29,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from services.training_analytics import refresh_training_analytics
 
-PASSWORD = "Analytics123"
+# Generated fresh on every run — NEVER hardcoded. Printed at the end and synced
+# into the local (untracked) credentials file.
+PASSWORD = secrets.token_urlsafe(10)
 SEED_TAG = "analytics_seed"
+CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "..", "memory", "test_credentials.md")
 
 
 def _day(days_ago: int) -> str:
@@ -46,11 +53,13 @@ def _log(uid, days_ago, exercise, weight, reps, rpe, sets=3, pain=0, session="He
 
 
 async def ensure_user(db, email, name):
+    pw_hash = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt()).decode()
     doc = await db.users.find_one({"email": email})
     if doc:
+        # Rotate password on every reseed (fresh random value each run)
+        await db.users.update_one({"userId": doc["userId"]}, {"$set": {"passwordHash": pw_hash}})
         return doc["userId"]
     import uuid
-    pw_hash = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt()).decode()
     uid = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.users.insert_one({
@@ -164,6 +173,22 @@ async def main():
     }}, upsert=True)
     print(f"empty user seeded: {uid}")
 
+    # Sync the rotated password into the local untracked credentials file
+    try:
+        with open(CREDENTIALS_FILE) as f:
+            content = f.read()
+        content = re.sub(
+            r"(\| analytics_[a-z0-9_]+@test\.com \| )[^|]+(\|)",
+            lambda m: f"{m.group(1)}{PASSWORD} {m.group(2)}",
+            content,
+        )
+        with open(CREDENTIALS_FILE, "w") as f:
+            f.write(content)
+        print(f"credentials file updated: {os.path.abspath(CREDENTIALS_FILE)}")
+    except FileNotFoundError:
+        print("NOTE: memory/test_credentials.md not found — record the password manually.")
+
+    print(f"\nPassword for ALL analytics users (this run): {PASSWORD}")
     print("done.")
 
 

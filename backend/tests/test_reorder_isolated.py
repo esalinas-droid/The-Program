@@ -13,6 +13,7 @@ import os
 import copy
 import pytest
 import requests
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
@@ -23,8 +24,8 @@ if not BASE_URL:
 assert BASE_URL, "EXPO_PUBLIC_BACKEND_URL not set"
 
 CANDIDATE_USERS = [
-    ("user_a@theprogram.app", "StrongmanA123"),
-    ("user_b@theprogram.app", "HypertrophyB123"),
+    ("user_a@theprogram.app", password_for("user_a@theprogram.app")),
+    ("user_b@theprogram.app", password_for("user_b@theprogram.app")),
 ]
 
 

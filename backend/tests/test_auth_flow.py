@@ -5,16 +5,17 @@ import pytest
 import requests
 import os
 import uuid
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
 USER_A_EMAIL = "user_a@theprogram.app"
-USER_A_PASS  = "StrongmanA123"
+USER_A_PASS  = password_for("user_a@theprogram.app")
 USER_B_EMAIL = "user_b@theprogram.app"
-USER_B_PASS  = "HypertrophyB123"
+USER_B_PASS  = password_for("user_b@theprogram.app")
 
 TEST_EMAIL = f"TEST_{uuid.uuid4().hex[:8]}@theprogram.app"
-TEST_PASS  = "TestPass123"
+TEST_PASS  = "Throwaway-Reg-1!"
 TEST_NAME  = "TEST_User"
 
 _registered_token = None
@@ -243,7 +244,7 @@ class TestOtherEndpoints:
 def cleanup_test_user(session):
     yield
     # Delete the test-registered user if possible via admin
-    admin_secret = os.environ.get("ADMIN_SECRET", "admin_secret_change_in_production")
+    admin_secret = os.environ.get("ADMIN_API_SECRET")  # env-only; no default — test skips if unset
     try:
         users_r = session.get(
             f"{BASE_URL}/api/admin/users",

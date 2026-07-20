@@ -9,6 +9,7 @@ import pytest
 import requests
 import os
 import sys
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
@@ -23,7 +24,7 @@ def get_token(email, password):
 
 @pytest.fixture(scope="module")
 def auth_headers():
-    token = get_token("user_b@theprogram.app", "HypertrophyB123")
+    token = get_token("user_b@theprogram.app", password_for("user_b@theprogram.app"))
     if not token:
         pytest.skip("Login failed — cannot run authenticated tests")
     return {"Authorization": f"Bearer {token}"}

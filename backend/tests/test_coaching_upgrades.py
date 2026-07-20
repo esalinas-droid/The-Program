@@ -10,6 +10,7 @@ import pytest
 import requests
 import os
 import time
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
@@ -18,7 +19,7 @@ def auth_token():
     """Get JWT token for user_a"""
     resp = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": "user_a@theprogram.app",
-        "password": "StrongmanA123"
+        "password": password_for("user_a@theprogram.app")
     })
     if resp.status_code != 200:
         pytest.skip(f"Login failed: {resp.status_code} {resp.text}")
@@ -249,7 +250,7 @@ class TestCoachChatScoping:
         # Login as User B
         resp_b = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_b@theprogram.app",
-            "password": "HypertrophyB123"
+            "password": password_for("user_b@theprogram.app")
         })
         if resp_b.status_code != 200:
             pytest.skip("User B login failed")
@@ -259,7 +260,7 @@ class TestCoachChatScoping:
         # Login as User A to get their conversations
         resp_a = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_a@theprogram.app",
-            "password": "StrongmanA123"
+            "password": password_for("user_a@theprogram.app")
         })
         token_a = resp_a.json().get("token") or resp_a.json().get("access_token")
         headers_a = {"Authorization": f"Bearer {token_a}"}

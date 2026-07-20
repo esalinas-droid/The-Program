@@ -12,6 +12,7 @@ import copy
 import pytest
 import requests
 from datetime import datetime, date
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
@@ -22,8 +23,8 @@ assert BASE_URL, "EXPO_PUBLIC_BACKEND_URL not set"
 
 # user_b has 52-week Hypertrophy plan — ideal for propagation tests.
 CANDIDATE_USERS = [
-    ("user_b@theprogram.app", "HypertrophyB123"),
-    ("user_a@theprogram.app", "StrongmanA123"),
+    ("user_b@theprogram.app", password_for("user_b@theprogram.app")),
+    ("user_a@theprogram.app", password_for("user_a@theprogram.app")),
 ]
 
 

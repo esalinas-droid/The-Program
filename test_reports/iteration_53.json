@@ -35,5 +35,5 @@
   "seed_data_creation": "None",
   "retest_needed": false,
   "should_main_agent_self_test": true,
-  "context_for_next_testing_agent": "Tested with user_a@theprogram.app / StrongmanA123. THIS WEEK section shows MON/WED as MISSED (dark bg, alert icon), THU 16 as TODAY (gold tint, arrow-right icon). Notification modal opens via bell icon at top-right of calendar screen. On web, Save & Enable behavior cannot be fully tested (notifications not supported on web platform). The '8 weeks' text bug in notification modal description is the only issue found."
+  "context_for_next_testing_agent": "Tested with user_a@theprogram.app / <rotated-see-memory-test_credentials>. THIS WEEK section shows MON/WED as MISSED (dark bg, alert icon), THU 16 as TODAY (gold tint, arrow-right icon). Notification modal opens via bell icon at top-right of calendar screen. On web, Save & Enable behavior cannot be fully tested (notifications not supported on web platform). The '8 weeks' text bug in notification modal description is the only issue found."
 }

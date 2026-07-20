@@ -789,7 +789,7 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "All MongoDB queries use get_current_user dependency to scope by userId. Fallback to DEFAULT_USER (user_001) if no JWT provided. Test users: user_a@theprogram.app (StrongmanA123), user_b@theprogram.app (HypertrophyB123)."
+        comment: "All MongoDB queries use get_current_user dependency to scope by userId. Fallback to DEFAULT_USER (user_001) if no JWT provided. Test users: user_a@theprogram.app (<rotated-see-memory-test_credentials>), user_b@theprogram.app (<rotated-see-memory-test_credentials>)."
 
   - task: "Apple Sign-In frontend - graceful fallback"
     implemented: true
@@ -849,8 +849,8 @@ agent_communication:
       Alert: "Apple Sign-In requires a standalone build. Please use email for now."
       
       TEST CREDENTIALS:
-      - user_a@theprogram.app / StrongmanA123
-      - user_b@theprogram.app / HypertrophyB123
+      - user_a@theprogram.app / <rotated-see-memory-test_credentials>
+      - user_b@theprogram.app / <rotated-see-memory-test_credentials>
       - DEFAULT_USER fallback: user_001 (has completed onboarding)
       
       Please test:
@@ -1004,7 +1004,7 @@ agent_communication:
       4. DELETE /api/calendar/reschedule/{original_date} — verify undo works
       5. PUT /api/profile/preferred-days {preferredDays:["monday","thursday","saturday"],notificationHour:9}
       
-      Credentials: user_a@theprogram.app / StrongmanA123
+      Credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
 
       
       Backend changes (schemas.py + plan_generator.py):
@@ -1033,7 +1033,7 @@ agent_communication:
       3. POST /api/profile/reset, then POST /api/profile/intake {goal:"Powerlifting", frequency:4, hasCompetition:false}
          — plan.trainingDays should be 4, no competition phase
       
-      Credentials: user_a@theprogram.app / StrongmanA123
+      Credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
 
 
 frontend:
@@ -1252,7 +1252,7 @@ agent_communication:
       17. Volume computation: weight × reps per logged set, formatted with commas
       18. Avg RPE: average of all effortRating > 0 per exercise
 
-      Test credentials: user_a@theprogram.app / StrongmanA123
+      Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
       
       Navigate to Log tab and verify:
       - Page loads with today's exercises from API (NOT Floor Press/Pendlay Row hardcoded data)
@@ -1304,7 +1304,7 @@ agent_communication:
       - today.tsx: category badges (Primary/Speed/Support/Accessory/Injury Prevention) ✅
       
       Expo restarted. Run the full QA test now using test credentials:
-      user_a@theprogram.app / StrongmanA123 (POST /api/seed first)
+      user_a@theprogram.app / <rotated-see-memory-test_credentials> (POST /api/seed first)
       
       WHAT CHANGED:
       1. _layout.tsx: "Log" tab → "Schedule" tab with calendar-month-outline icon
@@ -1325,7 +1325,7 @@ agent_communication:
       - calendarApi.getEvents(startDate, endDate) → week's sessions
       - logApi.list() → history + stats (READ ONLY - never writes)
       
-      Expo restarted. Test credentials: user_a@theprogram.app / StrongmanA123
+      Expo restarted. Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
       
       Please test:
       1. Tab bar shows "Schedule" with calendar icon (not "Log" with "+" icon)
@@ -1362,7 +1362,7 @@ agent_communication:
       7. Added timerTarget + timerExerciseName state
       8. CustomRestModal added to JSX for custom rest entry
       
-      Test credentials: user_a@theprogram.app / StrongmanA123
+      Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
       
       Navigate to Today tab and verify:
       - Each exercise card shows REST chip row when expanded (3:00, 5:00✓, 7:00, 10:00 for Primary)
@@ -1398,7 +1398,7 @@ agent_communication:
       13. RestTimerBar moved OUTSIDE ScrollView (sticky between content and bottom bar)
       14. FINISH SESSION button: disabled until loggedCount >= totalSets/2 (50% requirement)
 
-      Test credentials: user_a@theprogram.app / StrongmanA123
+      Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
       
       Navigate to Today tab and verify:
       - Page loads with session data (Heavy Lower / Heavy Upper / etc.)
@@ -1496,19 +1496,19 @@ agent_communication:
          - Backend startup now shows "[MIGRATION] No orphan log entries found." ✅
 
       HOW TO TEST:
-      1. POST /api/auth/login {email: "user_a@theprogram.app", password: "StrongmanA123"} → get JWT
+      1. POST /api/auth/login {email: "user_a@theprogram.app", password: "<rotated-see-memory-test_credentials>"} → get JWT
       2. GET /api/bodyweight with Authorization: Bearer <token> → should return list of {date, weight} entries
       3. GET /api/checkin with token → should return checkin list (scoped to user_a)
       4. POST /api/checkin with token + body {week, sessionType, setsLogged, totalSets, avgEffort, coachNote} → should save with userId
       5. GET /api/checkin/week/1 with token → should return week 1 checkin for user_a only
       6. POST /api/substitutions with token + body {date, week, day, sessionType, originalExercise, replacementExercise, reason} → should save with userId
       7. GET /api/substitutions with token → should return substitutions for user_a only
-      8. Test data isolation: Login as user_b@theprogram.app (HypertrophyB123), call same endpoints → should return different (empty) results
+      8. Test data isolation: Login as user_b@theprogram.app (<rotated-see-memory-test_credentials>), call same endpoints → should return different (empty) results
       9. Log a set on Today page (as user_a) → verify Home Week Review, Home stats, PR board all show data for user_a
 
       Test credentials:
-      - user_a@theprogram.app / StrongmanA123 (has 128 backfilled log entries)
-      - user_b@theprogram.app / HypertrophyB123 (fresh, no log entries)
+      - user_a@theprogram.app / <rotated-see-memory-test_credentials> (has 128 backfilled log entries)
+      - user_b@theprogram.app / <rotated-see-memory-test_credentials> (fresh, no log entries)
 
   - agent: "main"
     message: >
@@ -1582,7 +1582,7 @@ agent_communication:
       6. Home tab: sessionsCompleted should match Schedule tab Sessions count.
       7. All existing endpoints still return 200.
 
-      Test credentials: user_a@theprogram.app / StrongmanA123
+      Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
 
   - agent: "main"
     message: >
@@ -1601,7 +1601,7 @@ agent_communication:
       TEST 4: Log failure shows alert in airplane mode (alert appears + green check rolls back)
       TEST 5: Force quit + reopen AsyncStorage survives (logged sets still shown)
 
-      Test credentials: user_a@theprogram.app / StrongmanA123
+      Test credentials: user_a@theprogram.app / <rotated-see-memory-test_credentials>
       Active test user userId: 3f772246-75fc-46c0-b951-765879ded605
 
 

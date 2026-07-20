@@ -8,6 +8,7 @@ import pytest
 import requests
 import os
 import time
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
@@ -17,8 +18,8 @@ def tokens():
     """Login both users and return their tokens"""
     tokens = {}
     for email, password, key in [
-        ("user_a@theprogram.app", "StrongmanA123", "user_a"),
-        ("user_b@theprogram.app", "HypertrophyB123", "user_b"),
+        ("user_a@theprogram.app", password_for("user_a@theprogram.app"), "user_a"),
+        ("user_b@theprogram.app", password_for("user_b@theprogram.app"), "user_b"),
     ]:
         r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": password})
         assert r.status_code == 200, f"Login failed for {email}: {r.text}"
@@ -45,7 +46,7 @@ class TestAuth:
         suffix = random.randint(10000, 99999)
         r = requests.post(f"{BASE_URL}/api/auth/register", json={
             "email": f"TEST_qa_{suffix}@theprogram.app",
-            "password": "TestPass123",
+            "password": "Throwaway-Reg-1!",
             "name": "TEST QA User"
         })
         assert r.status_code in (200, 201), f"Register failed: {r.text}"
@@ -56,7 +57,7 @@ class TestAuth:
     def test_login_user_a(self):
         r = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_a@theprogram.app",
-            "password": "StrongmanA123"
+            "password": password_for("user_a@theprogram.app")
         })
         assert r.status_code == 200
         assert "token" in r.json()
@@ -65,7 +66,7 @@ class TestAuth:
     def test_login_user_b(self):
         r = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_b@theprogram.app",
-            "password": "HypertrophyB123"
+            "password": password_for("user_b@theprogram.app")
         })
         assert r.status_code == 200
         assert "token" in r.json()

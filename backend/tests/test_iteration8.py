@@ -5,6 +5,7 @@ Tests: injury-preview, apply-injury-update, session/today, auth, profile isolati
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
@@ -12,7 +13,7 @@ BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 def user_a_token():
     resp = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": "user_a@theprogram.app",
-        "password": "StrongmanA123"
+        "password": password_for("user_a@theprogram.app")
     })
     assert resp.status_code == 200, f"user_a login failed: {resp.text}"
     return resp.json()["token"]
@@ -21,7 +22,7 @@ def user_a_token():
 def user_b_token():
     resp = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": "user_b@theprogram.app",
-        "password": "HypertrophyB123"
+        "password": password_for("user_b@theprogram.app")
     })
     assert resp.status_code == 200, f"user_b login failed: {resp.text}"
     return resp.json()["token"]
@@ -34,7 +35,7 @@ class TestAuth:
     def test_login_user_a(self):
         resp = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_a@theprogram.app",
-            "password": "StrongmanA123"
+            "password": password_for("user_a@theprogram.app")
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -44,7 +45,7 @@ class TestAuth:
     def test_login_user_b(self):
         resp = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "user_b@theprogram.app",
-            "password": "HypertrophyB123"
+            "password": password_for("user_b@theprogram.app")
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -64,7 +65,7 @@ class TestAuth:
         email = f"TEST_fresh_{int(time.time())}@theprogram.app"
         resp = requests.post(f"{BASE_URL}/api/auth/register", json={
             "email": email,
-            "password": "TestPass123!"
+            "password": "Throwaway-Reg-1!"
         })
         assert resp.status_code in [200, 201]
         data = resp.json()

@@ -5,11 +5,12 @@ Tests 7 bug fixes in server.py
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
 USER_A_EMAIL = "user_a@theprogram.app"
-USER_A_PASS = "StrongmanA123"
+USER_A_PASS = password_for("user_a@theprogram.app")
 
 @pytest.fixture(scope="module")
 def user_a_token():
@@ -116,7 +117,7 @@ class TestLifts:
 
     def test_lifts_no_cross_user_data(self):
         """Login as user_b and verify different lifts returned"""
-        resp_b = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_b@theprogram.app", "password": "HypertrophyB123"})
+        resp_b = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "user_b@theprogram.app", "password": password_for("user_b@theprogram.app")})
         if resp_b.status_code != 200:
             pytest.skip("user_b login failed")
         token_b = resp_b.json()["token"]

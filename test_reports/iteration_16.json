@@ -25,7 +25,7 @@
     "backend": "100% (7/7)",
     "frontend": "N/A (not tested)"
   },
-  "seed_data_creation": "Used existing test_strongman@test.com / TestPass123 (already registered)",
+  "seed_data_creation": "Used existing test_strongman@test.com / <rotated-see-memory-test_credentials> (already registered)",
   "retest_needed": false,
   "should_main_agent_self_test": false,
   "context_for_next_testing_agent": "Bug 8 fixed: upsert=True in POST /api/profile/intake creates profile for new users so apply-injury-update no longer returns 404. Bug 5 fallback: strongman + shoulder injury plan generates successfully (Close-Grip Bench fallback logic in place). Token field in login response is 'token' (not 'access_token').",

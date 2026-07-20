@@ -7,6 +7,7 @@ import pytest
 import requests
 import os
 from datetime import datetime, timedelta
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_BACKEND_URL').rstrip('/')
 
@@ -18,11 +19,11 @@ def login(email, password):
 
 @pytest.fixture(scope="module")
 def token_a():
-    return login("user_a@theprogram.app", "StrongmanA123")
+    return login("user_a@theprogram.app", password_for("user_a@theprogram.app"))
 
 @pytest.fixture(scope="module")
 def token_b():
-    return login("user_b@theprogram.app", "HypertrophyB123")
+    return login("user_b@theprogram.app", password_for("user_b@theprogram.app"))
 
 @pytest.fixture(scope="module")
 def headers_a(token_a):
@@ -147,7 +148,7 @@ class TestLogCacheInvalidation:
         """Clean up test log entry"""
         if TestLogCacheInvalidation._created_id:
             try:
-                headers = {"Authorization": f"Bearer {login('user_a@theprogram.app', 'StrongmanA123')}"}
+                headers = {"Authorization": f"Bearer {login('user_a@theprogram.app', password_for('user_a@theprogram.app'))}"}
                 requests.delete(f"{BASE_URL}/api/log/{TestLogCacheInvalidation._created_id}", headers=headers)
             except Exception:
                 pass

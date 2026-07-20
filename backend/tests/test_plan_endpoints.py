@@ -7,11 +7,12 @@ Tests for new MongoDB-backed plan endpoints:
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
 
 TEST_EMAIL = "user_a@theprogram.app"
-TEST_PASSWORD = "StrongmanA123"
+TEST_PASSWORD = password_for("user_a@theprogram.app")
 
 
 @pytest.fixture(scope="module")

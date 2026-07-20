@@ -10,6 +10,7 @@ import pytest
 import requests
 import os
 from datetime import datetime, timedelta
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
@@ -26,7 +27,7 @@ def auth_token(session):
     """Get JWT token for user_a"""
     r = session.post(f"{BASE_URL}/api/auth/login", json={
         "email": "user_a@theprogram.app",
-        "password": "StrongmanA123"
+        "password": password_for("user_a@theprogram.app")
     })
     if r.status_code != 200:
         pytest.skip(f"Login failed: {r.status_code} {r.text}")

@@ -7,14 +7,15 @@ Bug regression tests for Bugs 2, 5, 6, 8, 14
 import pytest
 import requests
 import os
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_BACKEND_URL", "").rstrip("/")
 
 # Test user credentials
 STRONGMAN_EMAIL = "test_strongman@test.com"
-STRONGMAN_PASS = "TestPass123"
+STRONGMAN_PASS = password_for("test_strongman@test.com")
 HYPERTROPHY_EMAIL = "test_hypertrophy@test.com"
-HYPERTROPHY_PASS = "TestPass123"
+HYPERTROPHY_PASS = password_for("test_hypertrophy@test.com")
 
 
 @pytest.fixture(scope="module")

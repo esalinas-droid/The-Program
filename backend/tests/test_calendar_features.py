@@ -10,15 +10,16 @@ import pytest
 import requests
 import os
 from datetime import datetime, timedelta
+from creds import password_for  # passwords live in untracked memory/test_credentials.md
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 
 EMAIL = "user_a@theprogram.app"
-PASSWORD = "StrongmanA123"
+PASSWORD = password_for("user_a@theprogram.app")
 
 # Fresh user for intake test
 FRESH_EMAIL = "fresh_user_c@test.com"
-FRESH_PASSWORD = "TestC123"
+FRESH_PASSWORD = password_for("fresh_user_c@test.com")
 
 
 @pytest.fixture(scope="module")
