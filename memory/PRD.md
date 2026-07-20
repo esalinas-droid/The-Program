@@ -303,3 +303,10 @@ Tests: `tests/test_training_analytics.py` (22 unit tests). Seed: `seed_analytics
 - All 10 test-account passwords rotated (5 analytics + user_a/user_b/strongman/hypertrophy/fresh_user_c); new values only in the untracked credentials file. `seed_analytics_test_users.py` now generates a random password per run (printed + auto-synced into the credentials file) and rotates on reseed.
 - 35+ test files migrated from hardcoded passwords → `creds.password_for(email)`; remaining literals are throwaway registration passwords only. Tracked test_reports/test_result.md scrubbed of old literals.
 - DEFAULT_USER (user_001): no-JWT fallback already removed from middleware.get_current_user — requests without a valid JWT get 401 in ALL environments (verified live). Constant retained for legacy log lines only; no user_001 login account exists. NOT exploitable in prod.
+
+---
+
+## TRANSPARENCY SCREENS (July 2026 — COMPLETE)
+- **Settings → "WHAT YOUR COACH KNOWS ABOUT YOU"**: renders coach_memory summary; "Correct this" → POST /api/coach/memory/correction (authoritative correction folded via memory summarizer, overrides conflicts, returns updated summary, "Your coach will remember that." confirm); "Clear coach memory" → confirm dialog → DELETE /api/coach/memory (conversations keep memorySummarizedCount so cleared content never refolds); friendly empty state.
+- **/trends screen** (entry: Programs tab → "Training trends" row): read-only render of db.training_analytics — fatigue (Fresh/Normal/Elevated/High + engine explanation), RPE creep (flag-only), strength (entered vs effective 1RM, trend arrows, diverge note), weekly volume stacked custom bars by pattern (session-type theme colors), pain trends (active injuries, neutral tone), compliance. Cards render only when data exists; empty state for no-data users; lowConfidence banner; "updated Xm ago"; GET /api/analytics recomputes >24h stale on open.
+- Endpoints: GET/POST-correction/DELETE /api/coach/memory — all JWT-scoped to own user (401 unauth). No hardcoded hex in new screens (theme tokens only). Verified: test_reports/iteration_84.json (9/9 backend + full frontend pass).
