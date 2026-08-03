@@ -1,0 +1,30 @@
+# Keeps the Supabase knowledge base (Pocket Coach's 25k-chunk RAG library) awake.
+# Free-tier Supabase projects auto-pause after ~7 days without API activity;
+# a pause was found on Aug 3, 2026 and had silently disabled coach book-search
+# in production. This pings a dedicated keepalive_ping() RPC twice a week.
+#
+# The key below is the Supabase ANON (public client) key — safe to commit by
+# design. It can only execute keepalive_ping(); all data tables deny it.
+name: Supabase keep-awake
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # Mondays and Thursdays 06:17 UTC
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping keepalive_ping RPC
+        run: |
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVnbG1obHlycGR3cXNmdWxpb2J0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MzQ3NjQsImV4cCI6MjA4OTUxMDc2NH0.J7ip9qpLqLXe5GPH-NftO_ve71ivtJd5NzRiwqjM6vY"
+          CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+            "https://eglmhlyrpdwqsfuliobt.supabase.co/rest/v1/rpc/keepalive_ping" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" -d '{}')
+          cat /tmp/resp.txt
+          if [ "$CODE" != "200" ]; then
+            echo "Keepalive failed with HTTP $CODE — Supabase project may be paused or broken."
+            exit 1
+          fi
