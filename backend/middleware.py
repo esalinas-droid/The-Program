@@ -31,7 +31,17 @@ logger = logging.getLogger(__name__)
 # reference it directly (e.g. one-off scripts, fixtures). It is no longer
 # used as a fallback by get_current_user.
 DEFAULT_USER = "user_001"
-JWT_SECRET    = os.environ.get("JWT_SECRET", "fallback-dev-secret-change-in-prod")
+# Fail closed: never sign/verify tokens with a hardcoded default. If JWT_SECRET
+# is unset, anyone who reads this repo could forge a login for any user, so we
+# refuse to start rather than run with a known key. (Prod verified to have a
+# real secret set; this only bites if a deploy forgets to configure it.)
+JWT_SECRET    = os.environ.get("JWT_SECRET", "")
+if not JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET is not set. Refusing to start with a default signing key. "
+        "Set JWT_SECRET in the environment (Emergent Deployment Secrets in prod, "
+        "backend/.env locally)."
+    )
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "30"))
 
