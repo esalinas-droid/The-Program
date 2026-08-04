@@ -159,6 +159,12 @@ def _extract_image_text(file_path: str) -> tuple[str, int]:
     """Run OCR on a single image file."""
     import pytesseract
     from PIL import Image
+    try:
+        # iPhones shoot HEIC by default; Pillow can't open it without this.
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except ImportError:
+        pass
 
     img = Image.open(file_path)
     # Convert HEIC or unusual modes to RGB so tesseract is happy

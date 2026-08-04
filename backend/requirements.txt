@@ -36,3 +36,4 @@ pdfplumber>=0.11.0
 pdf2image>=1.17.0
 pytesseract>=0.3.13
 python-docx>=1.2.0
+pillow-heif>=0.18.0   # HEIC decoding — iPhones shoot HEIC by default

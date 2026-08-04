@@ -222,11 +222,44 @@ async def _openai_parse(image_bytes: bytes, model: str) -> Dict:
     }
 
 
+# Formats the vision APIs accept directly. iPhones shoot HEIC by default, which
+# is NOT in this list — an un-converted HEIC upload fails at the vision call.
+_VISION_OK_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
+
+
+def _normalize_image_bytes(image_bytes: bytes) -> bytes:
+    """Convert images the vision APIs can't read (notably HEIC) to JPEG.
+
+    Returns the original bytes when the format is already supported, or when
+    conversion isn't possible — the caller's error handling still applies.
+    """
+    try:
+        import io
+        from PIL import Image
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except ImportError:
+            pass  # HEIC support unavailable; non-HEIC images still normalize
+
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.format in _VISION_OK_FORMATS:
+            return image_bytes
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+    except Exception:
+        return image_bytes
+
+
 async def parse_workout_image(image_bytes: bytes, model: str = "claude-sonnet-4-5") -> Dict:
     """
     Returns a dict with {session_title, session_date, confidence, exercises}.
     Caller is responsible for credit management and refund-on-empty-result.
     """
+    image_bytes = _normalize_image_bytes(image_bytes)
     if model.startswith("claude"):
         return await _claude_parse(image_bytes, model)
     if model.startswith("gpt"):
