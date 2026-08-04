@@ -460,21 +460,26 @@ async def delete_account(authorization: Optional[str] = Header(None)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    # Purge every collection that holds user data
+    # Purge every collection that holds this user's data.
+    # NOTE: these are the REAL collection names used across the app. The prior
+    # list referenced non-existent collections (profiles, session_logs,
+    # exercise_logs, prs, body_metrics, coach_messages, coach_context,
+    # uploaded_docs, readiness) so almost nothing was actually deleted.
+    user_collections = [
+        "profile", "saved_plans", "log", "tracked_lifts", "pain_reports",
+        "substitutions", "user_documents", "user_document_chunks",
+        "conversations", "coach_memory", "coach_voice_transcriptions",
+        "coach_voice_tts", "weekly_reviews", "session_ratings",
+        "readiness_checks", "checkins", "calendar_overrides", "user_exercises",
+        "rehab_protocols", "rehab_logs", "deload_history", "image_credits",
+        "credit_transactions", "weekly_quests", "streak_freezes",
+    ]
+    for coll in user_collections:
+        await db[coll].delete_many({"userId": user_id})
+    # Delete the account record itself last.
     await db.users.delete_one({"userId": user_id})
-    await db.profiles.delete_one({"userId": user_id})
-    await db.saved_plans.delete_many({"userId": user_id})
-    await db.session_logs.delete_many({"userId": user_id})
-    await db.exercise_logs.delete_many({"userId": user_id})
-    await db.prs.delete_many({"userId": user_id})
-    await db.body_metrics.delete_many({"userId": user_id})
-    await db.pain_reports.delete_many({"userId": user_id})
-    await db.coach_messages.delete_many({"userId": user_id})
-    await db.coach_context.delete_many({"userId": user_id})
-    await db.uploaded_docs.delete_many({"userId": user_id})
-    await db.readiness.delete_many({"userId": user_id})
 
-    logger.info(f"[DELETE ACCOUNT] All data purged for userId={user_id}")
+    logger.info(f"[DELETE ACCOUNT] All data purged for userId={user_id} across {len(user_collections)} collections")
     return {"success": True, "message": "Account and all associated data permanently deleted."}
 
 
