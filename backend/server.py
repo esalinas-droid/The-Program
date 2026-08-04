@@ -616,6 +616,12 @@ async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
     data.update(_onboarding_capture_updates(data))  # capture raw answers on edit
     # Upsert — create profile if it doesn't exist yet (e.g. during onboarding)
     await db.profile.update_one({"userId": userId}, {"$set": data}, upsert=True)
+    # Mirror onboarding completion onto db.users — that (not db.profile) is what
+    # GET /auth/me reads, and the app's launch screen treats it as authoritative.
+    # Without this, users who finish via the "just track" or import paths get
+    # bounced back to the onboarding path picker on every launch.
+    if data.get("onboardingComplete"):
+        await db.users.update_one({"userId": userId}, {"$set": {"onboardingComplete": True}})
     doc = await db.profile.find_one({"userId": userId})
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
 
@@ -2220,11 +2226,16 @@ async def parse_session_image(
     1. Validate image (type + size)
     2. Grant first-use freebie if eligible
     3. Check balance, return 402 if zero
-    4. Upload to Supabase Storage
-    5. Spend credit (stores object_path in transaction metadata)
-    6. Call vision parser
-    7. Refund credit if parse returns no exercises or errors
-    8. Return structured entries + image URL + balance
+    4. Parse the image (the essential step)
+    5. Store the image opportunistically — NEVER fatal
+    6. Charge a credit only if the parse produced exercises
+    7. Return structured entries + image URL + balance
+
+    Ordering note: storage used to run BEFORE the parse and a storage failure
+    raised a 500, so a paused/unreachable Supabase project (or a missing
+    SUPABASE_SERVICE_ROLE_KEY) silently killed workout scanning entirely. The
+    stored image is only a thumbnail for the review screen — it must never
+    block logging a workout.
     """
     # ── Step 1: validate ──────────────────────────────────────────────────────
     if image.content_type not in ("image/jpeg", "image/png", "image/heic"):
@@ -2246,57 +2257,66 @@ async def parse_session_image(
             detail={"error": "Insufficient credits", "balance": balance, "granted_this_call": granted},
         )
 
-    # ── Step 4: upload to Supabase Storage ───────────────────────────────────
-    try:
-        upload = _supabase_storage.upload_tracker_image(userId, image_bytes, image.content_type)
-    except Exception as e:
-        # Don't spend the credit if the upload itself failed
-        raise HTTPException(status_code=500, detail=f"Image upload failed: {e}")
-
-    image_id = upload["image_id"]
-    object_path = upload["object_path"]
-    signed_url = upload["signed_url"]
-
-    # ── Step 5: spend credit (metadata includes object_path for re-signing) ──
-    balance_after_spend = await _image_credits.spend_credit(
-        db, userId,
-        related_id=image_id,
-        reason="image_parse",
-        metadata={"object_path": object_path},
-    )
-
-    # ── Steps 6 + 7: parse + refund on failure ────────────────────────────────
-    credit_used = True
+    # ── Step 4: parse the image FIRST (the part the user actually needs) ─────
     try:
         parse_result = await _vision_parser.parse_workout_image(image_bytes, model="claude-sonnet-4-5")
         exercises     = parse_result["exercises"]
         session_title = parse_result.get("session_title")
         session_date  = parse_result.get("session_date")
         confidence    = parse_result.get("confidence", "low")
-        if not exercises:
-            balance_after_spend = await _image_credits.refund_credit(
-                db, userId, related_id=image_id, reason="zero_exercises"
-            )
-            credit_used = False
     except Exception as e:
-        logger.exception("Vision parse failed for user %s image %s", userId, image_id)
-        balance_after_spend = await _image_credits.refund_credit(
-            db, userId, related_id=image_id, reason="vision_error"
-        )
-        credit_used = False
+        # Nothing was charged — the credit is only spent on a usable parse.
+        logger.exception("Vision parse failed for user %s", userId)
         return {
-            "image_id": image_id,
-            "image_url": signed_url,
-            "object_path": object_path,
+            "image_id": None,
+            "image_url": None,
+            "object_path": None,
             "session_title": None,
             "session_date": None,
             "confidence": "low",
             "exercises": [],
             "credit_used": False,
-            "balance_after": balance_after_spend,
+            "balance_after": balance,
             "granted_this_call": granted,
             "error": f"{type(e).__name__}: {str(e)[:300]}",
         }
+
+    if not exercises:
+        return {
+            "image_id": None,
+            "image_url": None,
+            "object_path": None,
+            "session_title": session_title,
+            "session_date": session_date,
+            "confidence": confidence,
+            "exercises": [],
+            "credit_used": False,
+            "balance_after": balance,
+            "granted_this_call": granted,
+        }
+
+    # ── Step 5: store the image opportunistically — never fatal ──────────────
+    image_id = None
+    object_path = None
+    signed_url = None
+    try:
+        upload = _supabase_storage.upload_tracker_image(userId, image_bytes, image.content_type)
+        image_id    = upload["image_id"]
+        object_path = upload["object_path"]
+        signed_url  = upload["signed_url"]
+    except Exception as e:
+        logger.warning(
+            "Tracker image storage unavailable for user %s — returning parsed session "
+            "without a stored image: %s", userId, e,
+        )
+
+    # ── Step 6: charge, now that we know the parse is usable ─────────────────
+    balance_after_spend = await _image_credits.spend_credit(
+        db, userId,
+        related_id=image_id or f"noimage-{uuid.uuid4()}",
+        reason="image_parse",
+        metadata={"object_path": object_path} if object_path else None,
+    )
 
     return {
         "image_id": image_id,
@@ -2306,7 +2326,7 @@ async def parse_session_image(
         "session_date": session_date,
         "confidence": confidence,
         "exercises": exercises,
-        "credit_used": credit_used,
+        "credit_used": True,
         "balance_after": balance_after_spend,
         "granted_this_call": granted,
     }

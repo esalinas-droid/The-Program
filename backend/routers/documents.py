@@ -734,6 +734,10 @@ async def activate_extracted_plan(
         }},
         upsert=True,
     )
+    # Mirror onboarding completion onto db.users — GET /auth/me reads that, and
+    # the launch screen treats it as authoritative. Without this, users who set
+    # up by importing a program are bounced back to onboarding on every launch.
+    await db.users.update_one({"userId": userId}, {"$set": {"onboardingComplete": True}})
     _prog_store["plans"].pop(userId, None)   # evict cache — force re-fetch with new startDate
 
     logger.info(
