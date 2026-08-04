@@ -2445,7 +2445,7 @@ async def patch_log_fieldshape(
 ):
     """Patch fieldShape on a single log entry (used for __legacy__ sessions)."""
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
-    if not existing or existing.get("userId", "") not in (userId, ""):
+    if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
         {"_id": ObjectId(entry_id)},
@@ -2485,7 +2485,7 @@ async def reorder_tracker_exercises(
 @api_router.put("/log/{entry_id}")
 async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
-    if not existing or existing.get("userId", "") not in (userId, ""):
+    if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
     data = entry.model_dump(exclude_none=True)   # exclude_none: don't wipe sessionId/other optional fields not in payload
@@ -2500,7 +2500,7 @@ async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str =
 @api_router.delete("/log/{entry_id}")
 async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user)):
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
-    if not existing or existing.get("userId", "") not in (userId, ""):
+    if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.delete_one({"_id": ObjectId(entry_id)})
     return {"deleted": True}
@@ -2517,7 +2517,7 @@ async def patch_log_effort(
 ):
     """Store reps-left-in-tank effort signal for a logged set. Never overwrites notes/weight/etc."""
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
-    if not existing or existing.get("userId", "") not in (userId, ""):
+    if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
         {"_id": ObjectId(entry_id)},
@@ -2536,7 +2536,7 @@ async def patch_log_notes(
 ):
     """Patch only the notes field on a single log entry. Pass notes=null to clear."""
     existing = await db.log.find_one({"_id": ObjectId(entry_id)})
-    if not existing or existing.get("userId", "") not in (userId, ""):
+    if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
         {"_id": ObjectId(entry_id)},
@@ -3379,18 +3379,27 @@ _openai_client = None
 _supabase_client = None
 
 def _user_or_orphan(user_id: str) -> dict:
-    """Returns MongoDB $or filter matching userId OR orphan entries (no userId/empty/null).
-    Used as a safety net while migration is in progress or for legacy data."""
-    return {"$or": [
-        {"userId": user_id},
-        {"userId": {"$exists": False}},
-        {"userId": ""},
-        {"userId": None},
-    ]}
+    """Returns a strict owner-scoped filter.
+
+    Previously this returned an $or that also matched orphan entries (no
+    userId / empty / null), which let any authenticated user read every other
+    user's pre-account legacy data. Now that all writes stamp userId, the
+    orphan net is a cross-user leak, so this is strict. Kept as a function so
+    all ~20 call sites are fixed in one place. Legacy orphan rows (if any
+    remain) are simply not returned rather than shown to everyone."""
+    return {"userId": user_id}
 
 
 async def _migrate_log_entries_add_userid():
-    """Migration: add userId to log entries that don't have one."""
+    """Migration: add userId to log entries that don't have one.
+
+    GATED: this reassigns ALL orphan logs/checkins/substitutions to a single
+    "first onboarded" user, which mass-mis-attributes multiple testers' data
+    to one account. It must only ever run as a deliberate one-off, never on
+    every startup. Set ENABLE_ORPHAN_MIGRATION=true to run it."""
+    if os.environ.get("ENABLE_ORPHAN_MIGRATION", "").lower() != "true":
+        logger.info("[MIGRATION] orphan-userId backfill skipped (ENABLE_ORPHAN_MIGRATION not set)")
+        return
     orphan_filter = {"$or": [{"userId": {"$exists": False}}, {"userId": ""}, {"userId": None}]}
     orphan_count = await db.log.count_documents(orphan_filter)
     if orphan_count == 0:
@@ -5421,13 +5430,13 @@ async def get_conversations(userId: str = Depends(get_current_user)):
 
 
 @api_router.get("/coach/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
-    """Get full conversation with messages."""
+async def get_conversation(conversation_id: str, userId: str = Depends(get_current_user)):
+    """Get full conversation with messages (owner-scoped)."""
     try:
         oid = ObjectId(conversation_id)
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid conversation ID format")
-    doc = await db.conversations.find_one({"_id": oid})
+    doc = await db.conversations.find_one({"_id": oid, "userId": userId})
     if not doc:
         raise HTTPException(status_code=404, detail="Conversation not found")
     cu = doc.get("createdAt", "")
@@ -5443,12 +5452,12 @@ async def get_conversation(conversation_id: str):
 
 
 @api_router.delete("/coach/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, userId: str = Depends(get_current_user)):
     try:
         oid = ObjectId(conversation_id)
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid conversation ID format")
-    result = await db.conversations.delete_one({"_id": oid})
+    result = await db.conversations.delete_one({"_id": oid, "userId": userId})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"deleted": True}
@@ -5674,10 +5683,12 @@ async def _save_plan_to_db(plan, uid: str = None) -> None:
         # Ensure new plan documents always have createdAt set
         if not plan_dict.get('createdAt'):
             plan_dict['createdAt'] = datetime.now(timezone.utc).isoformat()
-        # Use planId as the unique key — one document per plan (not per user)
+        # Use planId as the unique key — one document per plan (not per user).
+        # Scope the filter by userId so a client-supplied planId can never
+        # overwrite another user's plan document (cross-user data loss).
         plan_id = plan_dict.get('planId') or user_id
         await db.saved_plans.replace_one(
-            {"planId": plan_id},
+            {"planId": plan_id, "userId": user_id},
             plan_dict,
             upsert=True,
         )
@@ -5722,21 +5733,12 @@ async def _ensure_plan_loaded(uid: str = None) -> bool:
     except Exception as e:
         logger.warning(f"Could not load saved plan from MongoDB: {e}")
 
-    # ── 1b. Fallback: load ANY saved plan and re-assign to current userId ──────
-    try:
-        from models.schemas import AnnualPlan as _AnnualPlan
-        any_plan_doc = await db.saved_plans.find_one({})
-        if any_plan_doc:
-            any_plan_doc.pop("_id", None)
-            any_plan_doc.pop("_saved_at", None)
-            plan = _AnnualPlan.model_validate(any_plan_doc)
-            plan.userId = user_id
-            _prog_store["plans"][user_id] = plan
-            await _save_plan_to_db(plan, user_id)
-            logger.warning(f"[PLAN] Loaded orphan plan and reassigned to user: {user_id}")
-            return True
-    except Exception as e:
-        logger.warning(f"[PLAN] Fallback orphan plan load failed: {e}")
+    # NOTE: There used to be a "1b" fallback here that loaded ANY saved plan
+    # (db.saved_plans.find_one({}) with no userId filter) and reassigned it to
+    # the requesting user. That caused cross-user plan theft — a user with no
+    # plan would inherit (and overwrite) another user's plan. Removed. The
+    # correct recovery path is step 2 below: regenerate from the user's own
+    # profile answers.
 
     # ── 2. Fall back: regenerate from profile data ─────────────────────────────
     profile_doc = await db.profile.find_one({"userId": user_id})
