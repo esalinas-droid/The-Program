@@ -5003,6 +5003,148 @@ export default function TodayScreen() {
     console.log('[Today] Added exercise:', picked.name, newExId, displayCat);
   };
 
+  // ── Program Mode: scan a workout photo into today's session ──────────────────
+  // Parses the photo with the same vision endpoint tracker mode uses, then asks
+  // whether the scanned work should be ADDED alongside the programmed session or
+  // REPLACE it for today. Replace uses the existing today-only skip list, so the
+  // plan itself is never modified and the override clears at day roll.
+  const scannedToExercises = (parsed: any[]): Exercise[] =>
+    parsed.map((px: any, i: number) => {
+      const pType: string = px.prescriptionType || px.prescription_type || 'weighted';
+      const cat: ExCategory = 'supplemental';
+      let fields: FieldSpec[];
+      if (pType === 'timed')          fields = [{ type: 'time' }];
+      else if (pType === 'distance')  fields = [{ type: 'distance' }];
+      else if (pType === 'calories')  fields = [{ type: 'calories' }];
+      else                            fields = [{ type: 'weight' }, { type: 'reps' }];
+      const rawSets: any[] = Array.isArray(px.sets) && px.sets.length ? px.sets : [{}];
+      const exId = `added-ex-${Date.now()}-${i}`;
+      return {
+        id:           exId,
+        name:         px.name || 'Exercise',
+        category:     cat,
+        prescription: '',
+        lastSession:  '',
+        cues:         [],
+        notes:        '',
+        videoUrl:     undefined,
+        fields,
+        sets: rawSets.map((st: any, j: number) => ({
+          id:     `${exId}-set-${j}`,
+          type:   'work' as const,
+          weight: Number(st.weight) || 0,
+          reps:   st.reps != null ? String(st.reps) : '',
+          label:  `Set ${j + 1}`,
+        })),
+      } as Exercise;
+    });
+
+  const applyScannedToProgramSession = useCallback(async (parsed: any[], mode: 'add' | 'replace') => {
+    const newExs = scannedToExercises(parsed);
+    if (mode === 'replace') {
+      // Push every currently-shown programmed exercise onto the today-only skip
+      // list so the scanned session stands alone. Plan data is untouched.
+      try {
+        const todayStr = getLocalDateString();
+        const programmedIds = exercises
+          .filter((e: any) => !String(e.id).startsWith('added-ex-'))
+          .map((e: any) => ({ sessionExerciseId: e.id }));
+        const raw = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+        const prev = raw ? JSON.parse(raw) : null;
+        const existing = prev?.date === todayStr && Array.isArray(prev?.skipped) ? prev.skipped : [];
+        const merged = [...existing, ...programmedIds].filter(
+          (s: any, i: number, arr: any[]) => arr.findIndex(x => x.sessionExerciseId === s.sessionExerciseId) === i,
+        );
+        await AsyncStorage.setItem(SKIPPED_EXERCISES_KEY, JSON.stringify({ date: todayStr, skipped: merged }));
+      } catch (err) {
+        console.warn('[Today] Failed to write skip list for scanned replace:', err);
+      }
+      setExercises(newExs);
+    } else {
+      setExercises(prev => [...prev, ...newExs]);
+    }
+    setExpanded(prev => {
+      const next = new Set(prev);
+      newExs.forEach(e => next.add(e.id));
+      return next;
+    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, [exercises]);
+
+  const handleProgramImageScan = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please allow access to your photo library to scan workout logs.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: false,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+
+    setIsUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', {
+        uri:  asset.uri,
+        type: asset.mimeType || 'image/jpeg',
+        name: 'workout.jpg',
+      } as any);
+      const token   = await getAuthToken();
+      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+      const res = await fetch(`${baseUrl}/api/tracker/parse-session-image`, {
+        method: 'POST',
+        body: formData,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        if (res.status === 402) {
+          Alert.alert('No credits', 'You\'ve used all 3 free image scans. More credits coming in a future update.');
+        } else {
+          throw new Error((await res.text()) || 'Upload failed');
+        }
+        return;
+      }
+
+      const data = await res.json();
+      const parsed = data.exercises || [];
+      if (!parsed.length) {
+        Alert.alert(
+          'Couldn\'t read that image',
+          data.error
+            ? `Parse error: ${data.error}`
+            : 'No exercises were found in this image. Try a clearer photo of your workout.',
+        );
+        return;
+      }
+
+      const names = parsed.slice(0, 4).map((p: any) => `• ${p.name}`).join('\n');
+      const more  = parsed.length > 4 ? `\n…and ${parsed.length - 4} more` : '';
+      Alert.alert(
+        `Found ${parsed.length} exercise${parsed.length === 1 ? '' : 's'}`,
+        `${names}${more}\n\nHow should this go into today?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Add to today', onPress: () => applyScannedToProgramSession(parsed, 'add') },
+          {
+            text: 'Replace session',
+            style: 'destructive',
+            onPress: () => applyScannedToProgramSession(parsed, 'replace'),
+          },
+        ],
+      );
+    } catch (err: any) {
+      console.error('[Today] Program scan failed:', err);
+      Alert.alert('Scan failed', err?.message || 'Could not scan that image. Please try again.');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  }, [applyScannedToProgramSession]);
+
   // ── Tracker Mode: manually add an exercise via picker (persists as week-0) ──────
   const handleTrackerAddExerciseManual = async (picked: PickedExercise) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -6251,6 +6393,21 @@ export default function TodayScreen() {
         >
           <MaterialCommunityIcons name="plus-circle-outline" size={15} color={COLORS.accent} />
           <Text style={s.addExerciseBtnText}>Add Exercise</Text>
+        </TouchableOpacity>
+
+        {/* ── SCAN WORKOUT PHOTO (program mode — logs a scanned workout into today) ── */}
+        <TouchableOpacity
+          style={s.addExerciseBtn}
+          onPress={handleProgramImageScan}
+          disabled={isUploadingImage}
+          activeOpacity={0.7}
+        >
+          {isUploadingImage
+            ? <ActivityIndicator size="small" color={COLORS.accent} />
+            : <MaterialCommunityIcons name="camera-outline" size={15} color={COLORS.accent} />}
+          <Text style={s.addExerciseBtnText}>
+            {isUploadingImage ? 'Scanning image…' : 'Scan Workout Photo'}
+          </Text>
         </TouchableOpacity>
 
         <View style={{ height: SPACING.xl }} />
