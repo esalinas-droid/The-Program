@@ -124,7 +124,59 @@ def _has_equip(equipment: List[str], key: str) -> bool:
     if not equipment:
         return False
     key_lower = key.lower()
-    return any(key_lower in e.lower() or e.lower() in key_lower for e in equipment)
+    # Also match on individual words so a generator key like "farmers" still
+    # matches the onboarding label "Farmer Handles" (it previously did not,
+    # which made Farmer's Walk unreachable for every strongman athlete).
+    key_stem = key_lower.rstrip("s")
+    for e in equipment:
+        e_lower = e.lower()
+        if key_lower in e_lower or e_lower in key_lower:
+            return True
+        if any(w.rstrip("s") == key_stem for w in e_lower.replace("/", " ").split()):
+            return True
+    return False
+
+
+# ─── Strongman event maxes ────────────────────────────────────────────────────
+# Event loads must be derived from EVENT capacity, never from a barbell lift.
+# Deriving a yoke walk from a back squat (as this file used to) produces loads
+# with no relationship to what the athlete can actually carry.
+#
+# When an athlete hasn't entered an event max we fall back to an estimate from
+# the closest barbell lift using typical strongman ratios. That is a rough floor
+# to keep the plan usable — the entered number is always preferred.
+_DEFAULT_BARBELL = {"squat": 185.0, "bench": 135.0, "deadlift": 225.0}
+
+_EVENT_FALLBACK_RATIO = {
+    "yoke_walk":   ("squat",    1.25),   # loaded carries sit well above squat 1RM
+    "farmer_walk": ("squat",    0.55),   # per hand
+    "log_press":   ("bench",    0.75),
+    "atlas_stone": ("deadlift", 0.60),
+}
+
+
+def _event_max(lifts: CurrentLifts, event: str) -> float:
+    """The athlete's max for a strongman event, or a conservative estimate."""
+    entered = getattr(lifts, event, None)
+    if entered and entered > 0:
+        return float(entered)
+    ref_lift, ratio = _EVENT_FALLBACK_RATIO[event]
+    ref = getattr(lifts, ref_lift, None) or _DEFAULT_BARBELL[ref_lift]
+    return float(ref) * ratio
+
+
+# Base percentages of the EVENT max. Phase intensity is applied on top of these
+# by _apply_progression, so these describe a mid-block working session.
+_EVENT_PCT = {"warmup": 0.50, "ramp": 0.70, "work": 0.85, "top": 0.92}
+
+# Exercises whose prescription encodes a specific coaching intent (speed work,
+# heavy event singles, explosive pulls). The generic accessory volume wave in
+# _apply_progression must never reshape these into straight sets.
+_NEVER_REWAVE = {
+    "Atlas Stone", "Yoke Walk", "Farmer Carry", "Sandbag Carry", "Sled Push",
+    "Log Press", "Axle Press", "Axle Deadlift",
+    "Speed Deadlift", "Speed Squat", "Speed Bench",
+}
 
 
 # ─── Session Templates ────────────────────────────────────────────────────────
@@ -169,6 +221,14 @@ def _build_me_upper(lifts: CurrentLifts, unit: str,
         main_name = next((c for c in candidates if c not in blocked_upper), "Close-Grip Bench")
         main_label = "Rotate variation weekly"
 
+    # Reference max for the chosen main lift. Overhead strongman implements are
+    # loaded off the athlete's own overhead event max, NOT off their bench —
+    # a bench press and a log clean & press are not interchangeable.
+    if main_name in ("Log Press", "Axle Press"):
+        press_ref = _event_max(lifts, "log_press")
+    else:
+        press_ref = bench_max
+
     # ── Rep/load scheme varies by goal ────────────────────────────────────────
     if goal in ("hypertrophy", "bodybuilding"):
         main_sets = [
@@ -182,11 +242,11 @@ def _build_me_upper(lifts: CurrentLifts, unit: str,
     else:
         main_sets = [
             TargetSet(setNumber=1, targetLoad="Bar", targetReps="10", setType="warmup"),
-            TargetSet(setNumber=2, targetLoad=str(int(bench_max * 0.5)), targetReps="5", setType="warmup"),
-            TargetSet(setNumber=3, targetLoad=str(int(bench_max * 0.7)), targetReps="3", setType="ramp"),
-            TargetSet(setNumber=4, targetLoad=str(int(bench_max * 0.85)), targetReps="1", setType="ramp"),
-            TargetSet(setNumber=5, targetLoad=str(int(bench_max * 0.95)), targetReps="1", setType="work"),
-            TargetSet(setNumber=6, targetLoad=str(int(bench_max * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
+            TargetSet(setNumber=2, targetLoad=str(int(press_ref * 0.5)), targetReps="5", setType="warmup"),
+            TargetSet(setNumber=3, targetLoad=str(int(press_ref * 0.7)), targetReps="3", setType="ramp"),
+            TargetSet(setNumber=4, targetLoad=str(int(press_ref * 0.85)), targetReps="1", setType="ramp"),
+            TargetSet(setNumber=5, targetLoad=str(int(press_ref * 0.95)), targetReps="1", setType="work"),
+            TargetSet(setNumber=6, targetLoad=str(int(press_ref * 1.0)) + "+", targetReps="1", setType="work", targetRPE=9.5),
         ]
         main_prx = "Work to 1RM"
 
@@ -262,11 +322,12 @@ def _build_me_lower(lifts: CurrentLifts, unit: str,
             main_name = "Yoke Walk"
             main_prx = "Work to max 20m carry + heavy singles"
             main_label = "Yoke — pick to hips, short fast steps"
+            yoke_max = _event_max(lifts, "yoke_walk")
             main_sets = [
-                TargetSet(setNumber=1, targetLoad=str(int(squat_max * 0.6)), targetReps="20m", setType="warmup"),
-                TargetSet(setNumber=2, targetLoad=str(int(squat_max * 0.8)), targetReps="20m", setType="ramp"),
-                TargetSet(setNumber=3, targetLoad=str(int(squat_max * 0.95)), targetReps="20m", setType="work"),
-                TargetSet(setNumber=4, targetLoad=str(int(squat_max * 1.0)), targetReps="20m", setType="work", targetRPE=9.0),
+                TargetSet(setNumber=1, targetLoad=str(int(yoke_max * _EVENT_PCT["warmup"])), targetReps="20m", setType="warmup"),
+                TargetSet(setNumber=2, targetLoad=str(int(yoke_max * _EVENT_PCT["ramp"])),   targetReps="20m", setType="ramp"),
+                TargetSet(setNumber=3, targetLoad=str(int(yoke_max * _EVENT_PCT["work"])),   targetReps="20m", setType="work",  targetRPE=7.0),
+                TargetSet(setNumber=4, targetLoad=str(int(yoke_max * _EVENT_PCT["top"])),    targetReps="20m", setType="work",  targetRPE=8.0),
             ]
             main_cues = EXERCISE_DB["Yoke Walk"]["cues"]
         else:
@@ -326,10 +387,20 @@ def _build_me_lower(lifts: CurrentLifts, unit: str,
     # ── Supplemental ─────────────────────────────────────────────────────────
     if goal in ("strongman", "strongman_competition"):
         supp_name = "Atlas Stone" if (_has_equip(equipment, "stone") and "Atlas Stone" not in blocked_lower) else "Block Pull"
+        if supp_name == "Atlas Stone":
+            # Stones previously carried NO load at all — the athlete was told
+            # "3×3-5 heavy" with no weight. Load them off their own stone max.
+            stone_load = int(_event_max(lifts, "atlas_stone") * 0.85)
+            supp_prx = f"3×3-5 @ {stone_load}{unit} — lap and extend"
+            supp_sets = [TargetSet(setNumber=i, targetLoad=str(stone_load), targetReps="3-5",
+                                   setType="work", targetRPE=7.5) for i in range(1, 4)]
+        else:
+            supp_prx = "3×3-5 — heavy"
+            supp_sets = [TargetSet(setNumber=i, targetReps="3-5", setType="work") for i in range(1, 4)]
         supp = [SessionExercise(
             sessionExerciseId=_id(), name=supp_name, category=ExerciseCategory.SUPPLEMENTAL,
-            prescription="3×3-5 — heavy", cues=EXERCISE_DB.get(supp_name, {}).get("cues", []),
-            targetSets=[TargetSet(setNumber=i, targetReps="3-5", setType="work") for i in range(1, 4)],
+            prescription=supp_prx, cues=EXERCISE_DB.get(supp_name, {}).get("cues", []),
+            targetSets=supp_sets,
         )]
     elif goal in ("hypertrophy", "bodybuilding"):
         supp = [SessionExercise(
@@ -457,13 +528,16 @@ def _build_de_lower(lifts: CurrentLifts, unit: str,
     if goal in ("strongman", "strongman_competition"):
         # Events day — strongman specific
         if _has_equip(equipment, "farmers") and "Farmer Carry" not in blocked:
+            # Speed carries off the athlete's own farmer's max, per hand.
+            farmer_load = int(_event_max(lifts, "farmer_walk") * 0.70)
             main_name = "Farmer Carry"
-            main_prx = f"6×30m @ {int(squat_max * 0.5)}{unit}/hand — fast turns"
-            main_sets = [TargetSet(setNumber=i, targetLoad=str(int(squat_max * 0.5)), targetReps="30m", setType="work") for i in range(1, 7)]
+            main_prx = f"6×30m @ {farmer_load}{unit}/hand — fast turns"
+            main_sets = [TargetSet(setNumber=i, targetLoad=str(farmer_load), targetReps="30m", setType="work") for i in range(1, 7)]
         elif _has_equip(equipment, "yoke") and "Yoke Walk" not in blocked:
+            yoke_speed = int(_event_max(lifts, "yoke_walk") * 0.65)
             main_name = "Yoke Walk"
-            main_prx = f"6×20m @ {int(squat_max * 0.7)}{unit} — speed runs"
-            main_sets = [TargetSet(setNumber=i, targetLoad=str(int(squat_max * 0.7)), targetReps="20m", setType="work") for i in range(1, 7)]
+            main_prx = f"6×20m @ {yoke_speed}{unit} — speed runs"
+            main_sets = [TargetSet(setNumber=i, targetLoad=str(yoke_speed), targetReps="20m", setType="work") for i in range(1, 7)]
         else:
             main_name = "Sandbag Carry" if _has_equip(equipment, "sandbag") else "Sled Push"
             main_prx = "6×30m — strongman conditioning"
@@ -983,19 +1057,35 @@ def _apply_progression(exercises, ctx):
                 st.targetLoad = _scale_load(st.targetLoad, mult)
 
     # 3. Accessory volume wave (training weeks only)
+    #
+    # This wave only applies to GENERIC accessory work. It used to be applied to
+    # every SUPPLEMENTAL/ACCESSORY exercise, which destroyed deliberately-written
+    # prescriptions and replaced them with a blanket (sets, reps) pair — turning
+    # "Speed Deadlift 6×1 @65%, reset each rep" into 3×12, and "Atlas Stone 3×3-5
+    # heavy" into 3 sets of 12. A prescription written by the session builder is
+    # a coaching decision and must never be bulk-rewritten.
     if not ctx.is_deload:
         wave = _wave(p.get("accWave"), ctx.week_in_block)
         if wave:
             n_sets, reps = wave
             for ex in exercises:
-                if ex.category in (ExerciseCategory.SUPPLEMENTAL, ExerciseCategory.ACCESSORY):
-                    ws = [s for s in ex.targetSets if s.setType == "work"]
-                    if _is_plain_rep(ws):
-                        load = ws[0].targetLoad
-                        ex.targetSets = [
-                            TargetSet(setNumber=i + 1, targetLoad=load, targetReps=reps, setType="work")
-                            for i in range(n_sets)
-                        ]
+                if ex.category not in (ExerciseCategory.SUPPLEMENTAL, ExerciseCategory.ACCESSORY):
+                    continue
+                if ex.name in _NEVER_REWAVE:
+                    continue
+                ws = [s for s in ex.targetSets if s.setType == "work"]
+                # Only reshape sets that carry no coached intent: no RPE target
+                # and a plain rep count. Anything with a prescribed RPE, a speed/
+                # distance/time scheme, or an explicit load progression is left alone.
+                if not _is_plain_rep(ws):
+                    continue
+                if any(s.targetRPE is not None for s in ws):
+                    continue
+                load = ws[0].targetLoad
+                ex.targetSets = [
+                    TargetSet(setNumber=i + 1, targetLoad=load, targetReps=reps, setType="work")
+                    for i in range(n_sets)
+                ]
 
     # 4. Deload volume cut (all exercises)
     if ctx.is_deload:
