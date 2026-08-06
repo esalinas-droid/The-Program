@@ -402,6 +402,9 @@ class IntakeRequest(BaseModel):
     liftUnit: str = "lbs"
     frequency: int = 4
     injuries: List[str] = []
+    # Per-injury severity / active status / 0-10 pain score. Used to scale volume;
+    # without it the generator can only tell THAT an athlete is injured, not how badly.
+    injuryDetails: List[dict] = []
     gym: List[str] = []
     bodyweight: Optional[float] = None
     # Extended intake fields (Phase 2)

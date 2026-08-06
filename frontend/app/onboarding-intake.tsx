@@ -699,6 +699,10 @@ export default function OnboardingIntake() {
         liftUnit,
         frequency:          trainingDays,
         injuries:           activeInjuries,
+        // Severity / active status / pain score used to be stripped here and sent
+        // only to the profile, so the generator saw bare injury names — a "mild,
+        // past" issue and a "severe, active" one produced identical programs.
+        injuryDetails,
         gym:                gymTypes,
         bodyweight:         bwNum,
         primaryWeaknesses,

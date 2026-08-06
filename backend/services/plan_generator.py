@@ -97,7 +97,51 @@ _INJURY_CONTRAINDICATIONS: Dict[str, List[str]] = {
     "Ankle / Foot":           ["Box Squat", "Front Squat", "Sled Push"],
     "Elbow / Tennis Elbow":   ["Close-Grip Bench", "Tricep Pushdown", "Hammer Curl"],
     "Wrist / Forearm":        ["Close-Grip Bench", "SSB Squat"],
+    # ── Previously missing entirely ───────────────────────────────────────────
+    # These are all options the onboarding form offers, but the map only covered
+    # nine of them — so a torn biceps (the classic atlas-stone injury), sciatica,
+    # a hernia or post-surgical status changed nothing about the program at all.
+    "Elbow":                  ["Close-Grip Bench", "Tricep Pushdown", "Hammer Curl", "Atlas Stone"],
+    "Bicep":                  ["Atlas Stone", "Hammer Curl", "Weighted Pull-Up", "Sandbag Carry"],
+    "Tricep":                 ["Close-Grip Bench", "Tricep Pushdown", "2-Board Press", "Log Press"],
+    "Upper Back / Thoracic":  ["Yoke Walk", "Farmer Carry", "Weighted Pull-Up", "Barbell Row"],
+    "Neck / Cervical":        ["Yoke Walk", "Farmer Carry", "Sandbag Carry"],
+    "Groin / Adductor":       ["Box Squat", "Bulgarian Split Squat", "Sumo Deadlift", "Belt Squat"],
+    "Hamstring":              ["Romanian Deadlift", "GHR", "Deficit Deadlift", "Speed Deadlift"],
+    "Quad / Patellar":        ["Box Squat", "Front Squat", "Belt Squat", "Leg Press"],
+    "Hernia / Core":          ["Atlas Stone", "Yoke Walk", "Sandbag Carry", "Ab Wheel", "Deficit Deadlift"],
+    "Nerve / Sciatica":       ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift",
+                               "Box Squat", "Reverse Hyper"],
+    "Post-Surgical Rehab":    ["Atlas Stone", "Yoke Walk", "Deficit Deadlift", "Speed Deadlift",
+                               "Box Squat", "Log Press", "Farmer Carry"],
+    "Chronic / Systemic Pain": ["Deficit Deadlift", "Speed Deadlift", "Atlas Stone", "Yoke Walk"],
 }
+
+# How much to scale total working volume for an injured athlete. Severity and a
+# 0-10 pain score are collected per injury during onboarding and were previously
+# discarded client-side — a "mild, past" issue and a "severe, active" one produced
+# identical programs.
+_SEVERITY_VOLUME_MULT = {"mild": 0.90, "moderate": 0.80, "severe": 0.65}
+_PAIN_VOLUME_MULT = [(7, 0.65), (4, 0.80), (1, 0.92)]   # (pain >= X, multiplier)
+
+
+def _injury_volume_mult(injury_details) -> float:
+    """Volume multiplier from the worst ACTIVE injury. 1.0 when uninjured."""
+    if not injury_details:
+        return 1.0
+    worst = 1.0
+    for d in injury_details:
+        if not isinstance(d, dict) or d.get("status") != "active":
+            continue
+        m = _SEVERITY_VOLUME_MULT.get(str(d.get("severity", "")).lower(), 1.0)
+        pain = d.get("painLevel")
+        if isinstance(pain, (int, float)):
+            for threshold, pm in _PAIN_VOLUME_MULT:
+                if pain >= threshold:
+                    m = min(m, pm)
+                    break
+        worst = min(worst, m)
+    return worst
 
 def _filter_injured(exercises: List[SessionExercise], injuries: List[str]) -> List[SessionExercise]:
     """Remove exercises contraindicated by user's active injuries."""
@@ -109,14 +153,87 @@ def _filter_injured(exercises: List[SessionExercise], injuries: List[str]) -> Li
     filtered = []
     for ex in exercises:
         if ex.name in blocked:
-            # Find a safe substitute (basic barbell press / squat)
-            if ex.category == ExerciseCategory.MAIN:
-                ex.notes = (ex.notes or "") + " [Modified — original blocked by injury]"
-                ex.name = "Barbell Row" if ex.category == ExerciseCategory.SUPPLEMENTAL else ex.name
+            sub = _safe_substitute(ex.name, blocked)
+            if sub:
+                ex.notes = (ex.notes or "") + f" [Swapped from {ex.name} — contraindicated by injury]"
+                ex.name = sub
+                new_cues = EXERCISE_DB.get(sub, {}).get("cues")
+                if new_cues:
+                    ex.cues = new_cues
+            elif ex.category == ExerciseCategory.MAIN:
+                # Keep the slot but flag it — an empty main lift is worse than a
+                # flagged one, and the athlete can swap it themselves.
+                ex.notes = (ex.notes or "") + " [Contraindicated by injury — pick a safe variation]"
             else:
-                continue  # Drop non-main blocked accessories
+                continue  # nothing safe available; drop the accessory
         filtered.append(ex)
     return filtered
+
+
+def _safe_substitute(name: str, blocked: set) -> Optional[str]:
+    """Another exercise training the same pattern that isn't contraindicated.
+
+    The previous implementation had a dead branch (it tested for SUPPLEMENTAL
+    inside a MAIN-only block), so blocked main lifts kept their original name and
+    merely gained a note claiming they had been modified, while every blocked
+    accessory was deleted with no replacement.
+    """
+    meta = EXERCISE_DB.get(name)
+    if not meta:
+        return None
+    pattern = meta.get("pattern")
+    if not pattern:
+        return None
+    for cand, cmeta in EXERCISE_DB.items():
+        if cand == name or cand in blocked:
+            continue
+        if cmeta.get("pattern") == pattern:
+            return cand
+    return None
+
+
+def _rehab_exercises(injury_details, blocked: set, limit: int = 2) -> List[SessionExercise]:
+    """Prehab/rehab work for the athlete's active injuries.
+
+    The app ships a full rehab protocol library (services/rehab_protocols.py)
+    that the generator never called. This pulls gentle phase-1 work for each
+    active injury so an injured athlete is actually given something to do about
+    it, rather than just having exercises removed.
+    """
+    out: List[SessionExercise] = []
+    if not injury_details:
+        return out
+    try:
+        from services.rehab_protocols import resolve_injury_key, get_protocol
+    except Exception:
+        return out
+    seen = set()
+    for d in injury_details:
+        if len(out) >= limit:
+            break
+        if not isinstance(d, dict) or d.get("status") != "active":
+            continue
+        try:
+            key = resolve_injury_key(str(d.get("name", "")))
+            protocol = get_protocol(key) or []
+        except Exception:
+            continue
+        if not protocol:
+            continue
+        for item in (protocol[0].get("exercises") or []):
+            nm = item.get("name")
+            if not nm or nm in seen or nm in blocked:
+                continue
+            seen.add(nm)
+            out.append(SessionExercise(
+                sessionExerciseId=_id(), name=nm, category=ExerciseCategory.PREHAB,
+                prescription=item.get("prescription", "as prescribed"),
+                cues=[item["notes"]] if item.get("notes") else [],
+                notes=f"Rehab — {key}",
+                targetSets=[TargetSet(setNumber=1, targetReps=item.get("prescription", "1"), setType="work")],
+            ))
+            break   # one movement per injury keeps the session sane
+    return out
 
 
 def _has_equip(equipment: List[str], key: str) -> bool:
@@ -930,6 +1047,26 @@ _PHASE_TOP_RPE = {
 _DELOAD_RPE = 6.0
 _DEFAULT_TOP_RPE = 8.0
 
+# Experience was collected at onboarding and then ignored completely — a beginner
+# and an elite competitor with the same 1RMs received identical programs. It now
+# scales four things:
+#   volume     — working sets per exercise
+#   intensity  — how heavy relative to the phase target
+#   topRPE     — how close to failure the top set goes
+#   deloadEvery— how many weeks between deloads (advanced athletes accumulate
+#                fatigue faster and need them more often)
+_EXPERIENCE_SCALING = {
+    "beginner":     {"volume": 0.75, "intensity": 0.92, "topRPE": -1.0, "deloadEvery": 5},
+    "intermediate": {"volume": 1.00, "intensity": 1.00, "topRPE":  0.0, "deloadEvery": 4},
+    "advanced":     {"volume": 1.15, "intensity": 1.03, "topRPE": +0.5, "deloadEvery": 4},
+    "elite":        {"volume": 1.25, "intensity": 1.05, "topRPE": +0.5, "deloadEvery": 3},
+}
+_DEFAULT_EXPERIENCE = _EXPERIENCE_SCALING["intermediate"]
+
+
+def _experience_params(experience: str) -> dict:
+    return _EXPERIENCE_SCALING.get(str(experience or "").strip().lower(), _DEFAULT_EXPERIENCE)
+
 # Per-block deload scheduling (template-level DATA):
 #   The final week of every block is a deload, EXCEPT for blocks that are this
 #   short (they are effectively tapers/short blocks) and phases listed as opting out.
@@ -1060,6 +1197,11 @@ class ProgContext:
     is_speed: bool = False
     is_max_effort: bool = False
     blocked: set = _dc.field(default_factory=set)
+    # Athlete-specific scaling (experience level + active injury severity)
+    exp: dict = _dc.field(default_factory=lambda: dict(_DEFAULT_EXPERIENCE))
+    injury_volume_mult: float = 1.0
+    injury_details: list = _dc.field(default_factory=list)
+    is_first_session_of_week: bool = False
 
 
 def _blocked_set(injuries) -> set:
@@ -1082,7 +1224,9 @@ def _wave(seq, week_in_block):
 def _load_mult(ctx: "ProgContext") -> float:
     """Multiplier applied to a working load for this session's context."""
     p = ctx.params
-    m = p.get("intensity", 1.0)
+    # Experience shifts how heavy the phase target actually lands — a beginner
+    # trains the same phase further from their max than an elite competitor.
+    m = p.get("intensity", 1.0) * ctx.exp.get("intensity", 1.0)
     if ctx.is_deload:
         return m * DELOAD_LOAD_MULT
     if ctx.is_speed:
@@ -1203,12 +1347,39 @@ def _apply_progression(exercises, ctx):
                     for i in range(n_sets)
                 ]
 
+    # 3b. Athlete-specific volume: experience level and active-injury severity.
+    #     Beginners get less total work, advanced/elite athletes more; an athlete
+    #     carrying a severe or painful active injury gets less regardless.
+    vol_mult = ctx.exp.get("volume", 1.0) * ctx.injury_volume_mult
+    if not ctx.is_deload and abs(vol_mult - 1.0) > 0.01:
+        for ex in exercises:
+            if ex.category not in (ExerciseCategory.SUPPLEMENTAL, ExerciseCategory.ACCESSORY):
+                continue
+            ws = [s for s in ex.targetSets if s.setType == "work"]
+            others = [s for s in ex.targetSets if s.setType != "work"]
+            if len(ws) <= 1:
+                continue
+            keep = max(1, min(len(ws), int(round(len(ws) * vol_mult))))
+            ex.targetSets = others + ws[:keep]
+            for i, st in enumerate(ex.targetSets):
+                st.setNumber = i + 1
+
+    # 3c. Rehab work for active injuries (first session of the week only, so it
+    #     supports training rather than dominating it).
+    if ctx.injury_details and ctx.is_first_session_of_week:
+        existing = {e.name for e in exercises}
+        for rex in _rehab_exercises(ctx.injury_details, ctx.blocked):
+            if rex.name not in existing:
+                exercises.append(rex)
+
     # 4. RPE targets on main-lift work sets.
     #    Prescribe effort so the session self-regulates on the day. Deliberate
     #    RPEs already set by a session builder (e.g. block-specific event work)
     #    are preserved; only missing targets and legacy "grind to 9.5" values
     #    are replaced.
     top_rpe = _DELOAD_RPE if ctx.is_deload else _PHASE_TOP_RPE.get(ctx.phase_name, _DEFAULT_TOP_RPE)
+    if not ctx.is_deload:
+        top_rpe = max(6.0, min(9.0, top_rpe + ctx.exp.get("topRPE", 0.0)))
     for ex in exercises:
         if ex.category != ExerciseCategory.MAIN:
             continue
@@ -1635,6 +1806,12 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
     # and one 40 weeks away produced exactly the same 52-week plan, with
     # "Competition Prep" always parked at weeks 35-38. Now the phases are fitted
     # to the time actually available, so prep and the taper land ON the meet.
+    # Athlete-specific scaling, resolved once and carried on every session context.
+    _exp_params = _experience_params(getattr(intake, 'experience', None))
+    _injury_vol = _injury_volume_mult(getattr(intake, 'injuryDetails', None))
+    if _injury_vol < 1.0:
+        print(f"[PLANGEN] Active injury — scaling accessory volume to {_injury_vol:.0%}")
+
     weeks_out = _weeks_until(getattr(intake, 'competitionDate', None),
                              getattr(intake, 'programStartDate', None))
     if weeks_out:
@@ -1685,8 +1862,12 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
         block_num = 1
         block_start_week = running_week
 
+        # Block length drives deload frequency, which scales with experience:
+        # advanced and elite athletes accumulate fatigue faster and deload more
+        # often; beginners can run longer between them.
+        _block_len = int(_exp_params.get("deloadEvery", 4))
         while weeks_remaining > 0:
-            block_weeks = min(4, weeks_remaining)
+            block_weeks = min(_block_len, weeks_remaining)
             block_id = _id()
             # Per-block deload: the FINAL week of every block is a deload, except
             # for short blocks (≤2 weeks) and phases that explicitly opt out.
@@ -1712,11 +1893,15 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
                     is_deload=is_deload,
                     plan_id=plan_id,
                     params=_phase_prog_params(tmpl["name"]),
+                    exp=_exp_params,
+                    injury_volume_mult=_injury_vol,
+                    injury_details=list(getattr(intake, 'injuryDetails', None) or []),
                 )
 
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)
                 sessions = []
-                for stype, cal_day in day_map:
+                for _si, (stype, cal_day) in enumerate(day_map):
+                    base_ctx.is_first_session_of_week = (_si == 0)
                     # ⚑ CRITICAL FIX: pass lowercase goal so all if/elif comparisons match
                     session = _build_session(
                         stype, intake.lifts, intake.liftUnit, current_week, cal_day, block_id,
