@@ -1132,7 +1132,7 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
         SessionType.RE_UPPER: ("Volume upper day. Multiple working sets at moderate intensity for muscle growth and strength endurance.", _build_re_upper, "upper"),
         SessionType.RE_LOWER: ("Volume lower day. Multiple working sets targeting posterior chain and quad development.", _build_re_lower, "lower"),
         SessionType.FULL_BODY: ("Full body session. Compound push, pull, and hinge movements for total athletic development.", _build_full_body, "gpp"),
-        SessionType.EVENT_TRAINING: ("Event training day. Competition-specific event practice at heavy loads.", _build_de_lower, "lower"),
+        SessionType.EVENT_TRAINING: ("Event training day. Competition-specific event practice at heavy loads.", _build_event, "lower"),
     }
 
     objective, builder, warmup_key = type_map.get(session_type, type_map[SessionType.ME_UPPER])
@@ -1165,6 +1165,120 @@ def _build_session(session_type: SessionType, lifts: CurrentLifts, unit: str, we
         warmup=WARMUPS.get(warmup_key, WARMUPS["upper"]),
         status=SessionStatus.PLANNED,
     )
+
+
+def _build_event(lifts: CurrentLifts, unit: str,
+                 goal: str = "strongman",
+                 injuries: List[str] = None,
+                 equipment: List[str] = None,
+                 ctx: "ProgContext" = None) -> List[SessionExercise]:
+    """A real strongman event session.
+
+    Event emphasis rotates by block:
+      block 1 of each cycle — capacity & technique (more runs, moderate load)
+      block 2              — heavy events (fewer runs, near-max singles)
+      block 3              — contest-specific (medley work, transitions)
+
+    Previously EVENT_TRAINING was aliased to the dynamic-lower builder and never
+    appeared in any split, so strongman athletes got a powerlifting week.
+    """
+    injuries = injuries or []
+    equipment = equipment or []
+    blocked = _blocked_set(injuries)
+    # Rotate on a GLOBAL 4-week block index. ctx.block_number restarts inside every
+    # phase, so using it made consecutive blocks repeat the same emphasis.
+    gw = (ctx.global_week if ctx else 1)
+    emphasis = ((((gw - 1) // 4) % 3) + 1)     # 1 capacity, 2 heavy, 3 contest-specific
+
+    def _avail(name: str, equip_key: str) -> bool:
+        return _has_equip(equipment, equip_key) and name not in blocked
+
+    exercises: List[SessionExercise] = []
+
+    # ── Primary event: carry ──────────────────────────────────────────────────
+    if _avail("Yoke Walk", "yoke"):
+        ymax = _event_max(lifts, "yoke_walk")
+        if emphasis == 1:
+            pct, runs, dist, rpe, note = 0.65, 6, "20m", 7.0, "Build speed — posture and foot turnover"
+        elif emphasis == 2:
+            pct, runs, dist, rpe, note = 0.85, 4, "15m", 8.0, "Heavy runs — brace hard, short steps"
+        else:
+            pct, runs, dist, rpe, note = 0.78, 4, "20m", 7.5, "Contest pace — clean pick and finish"
+        load = int(ymax * pct)
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Yoke Walk", category=ExerciseCategory.MAIN,
+            prescription=f"{runs}×{dist} @ {load}{unit} — {note}",
+            cues=EXERCISE_DB["Yoke Walk"]["cues"],
+            targetSets=[TargetSet(setNumber=i, targetLoad=str(load), targetReps=dist,
+                                  setType="work", targetRPE=rpe) for i in range(1, runs + 1)],
+        ))
+
+    # ── Second event: loaded carry / grip ─────────────────────────────────────
+    if _avail("Farmer Carry", "farmers"):
+        fmax = _event_max(lifts, "farmer_walk")
+        pct, runs = (0.70, 6) if emphasis == 1 else (0.85, 4) if emphasis == 2 else (0.78, 5)
+        load = int(fmax * pct)
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Farmer Carry", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription=f"{runs}×20m @ {load}{unit}/hand — fast turns",
+            cues=EXERCISE_DB["Farmer Carry"]["cues"],
+            targetSets=[TargetSet(setNumber=i, targetLoad=str(load), targetReps="20m",
+                                  setType="work", targetRPE=7.0) for i in range(1, runs + 1)],
+        ))
+
+    # ── Third event: loading ──────────────────────────────────────────────────
+    if _avail("Atlas Stone", "stone"):
+        smax = _event_max(lifts, "atlas_stone")
+        pct, sets, reps = (0.75, 5, "3") if emphasis == 1 else (0.90, 4, "2") if emphasis == 2 else (0.82, 4, "3")
+        load = int(smax * pct)
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Atlas Stone", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription=f"{sets}×{reps} @ {load}{unit} — lap and extend",
+            cues=EXERCISE_DB["Atlas Stone"]["cues"],
+            targetSets=[TargetSet(setNumber=i, targetLoad=str(load), targetReps=reps,
+                                  setType="work", targetRPE=7.5) for i in range(1, sets + 1)],
+        ))
+    elif _avail("Sandbag Carry", "sandbag"):
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Sandbag Carry", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="5×20m — bear hug, stay tall",
+            cues=EXERCISE_DB["Sandbag Carry"]["cues"],
+            targetSets=[TargetSet(setNumber=i, targetReps="20m", setType="work", targetRPE=7.0)
+                        for i in range(1, 6)],
+        ))
+
+    # ── Medley: contest-specific blocks only ──────────────────────────────────
+    if emphasis == 3 and len(exercises) >= 2:
+        a, b = exercises[0].name, exercises[1].name
+        # Naming matches the app's existing medley convention, e.g. "Medley (Yoke + Keg)".
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name=f"Medley ({a} + {b})", category=ExerciseCategory.SUPPLEMENTAL,
+            prescription="3 runs — quality transitions over sloppy load",
+            cues=["Plan the transition", "Reset breath between implements", "Move with intent"],
+            targetSets=[TargetSet(setNumber=i, targetReps="1 run", setType="work", targetRPE=8.0)
+                        for i in range(1, 4)],
+        ))
+
+    # ── Fallback when the athlete has no implements logged ────────────────────
+    if not exercises:
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Sled Push", category=ExerciseCategory.MAIN,
+            prescription="6×30m — heavy sled, drive through the ground",
+            cues=EXERCISE_DB.get("Sled Push", {}).get("cues", []),
+            targetSets=[TargetSet(setNumber=i, targetReps="30m", setType="work", targetRPE=7.0)
+                        for i in range(1, 7)],
+        ))
+
+    # ── Conditioning finisher ─────────────────────────────────────────────────
+    exercises.append(SessionExercise(
+        sessionExerciseId=_id(), name="Backward Sled Drag", category=ExerciseCategory.PREHAB,
+        prescription="6 trips — restorative, knees and posture",
+        cues=["Stay low", "Push knees forward", "Easy breathing"],
+        targetSets=[TargetSet(setNumber=i, targetReps="30m", setType="work", targetRPE=5.0)
+                    for i in range(1, 7)],
+    ))
+
+    return _filter_injured(exercises, blocked)
 
 
 def _generate_coach_note(session_type: SessionType, week: int) -> str:
@@ -1224,12 +1338,52 @@ SPLIT_TEMPLATES = {
     6: [SessionType.ME_LOWER, SessionType.ME_UPPER, SessionType.GPP, SessionType.DE_LOWER, SessionType.DE_UPPER, SessionType.GPP],
 }
 
+# Strongman gets its own week. It previously shared the powerlifting/Westside map,
+# which contained no event day at all — SessionType.EVENT_TRAINING existed but was
+# referenced by zero splits, so a competitive strongman trained like a powerlifter.
+#
+# Event exposures per week: one dedicated event day, plus event work attached to
+# the heavy days by the session builders (yoke on ME lower, log on ME upper).
+STRONGMAN_DAY_MAPS = {
+    2: [
+        (SessionType.ME_LOWER, 1),        # Monday   — squat + yoke
+        (SessionType.EVENT_TRAINING, 5),  # Friday   — events
+    ],
+    3: [
+        (SessionType.ME_LOWER, 1),        # Monday   — squat + yoke
+        (SessionType.ME_UPPER, 3),        # Wednesday— log/overhead
+        (SessionType.EVENT_TRAINING, 6),  # Saturday — events
+    ],
+    4: [
+        (SessionType.ME_LOWER, 1),        # Monday   — squat + yoke
+        (SessionType.ME_UPPER, 2),        # Tuesday  — log/overhead
+        (SessionType.DE_LOWER, 4),        # Thursday — speed + carries
+        (SessionType.EVENT_TRAINING, 6),  # Saturday — events
+    ],
+    5: [
+        (SessionType.ME_LOWER, 1),
+        (SessionType.ME_UPPER, 2),
+        (SessionType.DE_LOWER, 4),
+        (SessionType.DE_UPPER, 5),
+        (SessionType.EVENT_TRAINING, 6),  # Saturday — events
+    ],
+    6: [
+        (SessionType.ME_LOWER, 1),
+        (SessionType.ME_UPPER, 2),
+        (SessionType.GPP, 3),             # Wednesday— recovery / conditioning
+        (SessionType.DE_LOWER, 4),
+        (SessionType.DE_UPPER, 5),
+        (SessionType.EVENT_TRAINING, 6),  # Saturday — events
+    ],
+}
+
 # Goal-specific day maps: route different training goals to appropriate session types
 GOAL_DAY_MAPS: Dict[str, dict] = {
-    # Strength / Powerlifting / Strongman → Max Effort + Dynamic Effort (Conjugate model)
+    # Strength / Powerlifting → Max Effort + Dynamic Effort (Conjugate model)
     "strength":     DAY_MAPS,
     "powerlifting": DAY_MAPS,
-    "strongman":    DAY_MAPS,
+    # Strongman → conjugate base + a real event day
+    "strongman":    STRONGMAN_DAY_MAPS,
     # Hypertrophy → Repetition Effort Upper/Lower (4×8-12 volume work)
     "hypertrophy": {
         3: [(SessionType.RE_LOWER, 1), (SessionType.RE_UPPER, 3), (SessionType.RE_LOWER, 5)],
@@ -1364,7 +1518,18 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
     # Get the correct day map based on goal (goal-specific session types)
     goal_lower = goal.value.lower()
     goal_day_maps = GOAL_DAY_MAPS.get(goal_lower, DAY_MAPS)
-    day_map = goal_day_maps.get(frequency, goal_day_maps.get(4, DAY_MAPS.get(4)))
+    # Fall back to the CLOSEST available frequency, not blindly to 4. The UI offers
+    # 2 days/week but most maps start at 3, so a 2-day athlete was silently handed a
+    # 4-day program — twice the sessions they asked for.
+    day_map = goal_day_maps.get(frequency)
+    if day_map is None:
+        available = sorted(goal_day_maps.keys())
+        nearest = min(available, key=lambda k: (abs(k - frequency), k)) if available else 4
+        day_map = goal_day_maps.get(nearest, DAY_MAPS.get(4))
+        logger.warning(
+            "[PLANGEN] No %s-day split for goal — using nearest available (%s days)",
+            frequency, nearest,
+        )
     print(f"[PLANGEN] Using day map for goal='{goal_lower}', frequency={frequency}: {[st.value for st, _ in day_map]}")
 
     for i, tmpl in enumerate(phase_templates):
