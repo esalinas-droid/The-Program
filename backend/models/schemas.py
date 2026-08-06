@@ -92,10 +92,25 @@ class ChangeTrigger(str, Enum):
 # ─── Lift Data ────────────────────────────────────────────────────────────────
 
 class CurrentLifts(BaseModel):
-    squat: Optional[int] = None
-    bench: Optional[int] = None
-    deadlift: Optional[int] = None
-    ohp: Optional[int] = None
+    """Athlete's current maxes.
+
+    float (not int) — a decimal entry like 225.5 previously raised a validation
+    error that failed the WHOLE intake request, so no plan was generated at all.
+
+    The strongman fields are required for event loads to mean anything: without
+    them the generator derives yoke/farmer's/log/stone loads from the barbell
+    squat and bench, which have no relationship to event capacity. Field names
+    match STRONGMAN_LIFT_FIELDS in frontend/app/onboarding-intake.tsx.
+    """
+    squat: Optional[float] = None
+    bench: Optional[float] = None
+    deadlift: Optional[float] = None
+    ohp: Optional[float] = None
+    # Strongman events
+    log_press: Optional[float] = None
+    yoke_walk: Optional[float] = None
+    atlas_stone: Optional[float] = None
+    farmer_walk: Optional[float] = None
 
 
 # ─── User Profile ─────────────────────────────────────────────────────────────

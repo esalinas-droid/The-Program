@@ -378,17 +378,16 @@ export default function OnboardingIntake() {
         // Step 3 — Experience
         if (p.experience) setExperience(p.experience);
 
-        // Step 4 — Lifts (basePRs → string map)
+        // Step 4 — Lifts (basePRs → string map). Keys must match BASE_LIFT_FIELDS /
+        // STRONGMAN_LIFT_FIELDS or the inputs render uncontrolled and the saved
+        // strongman maxes disappear when an existing athlete rebuilds a program.
         if (p.basePRs) {
-          setLifts({
-            squat:    p.basePRs.squat    ? String(p.basePRs.squat)    : '',
-            bench:    p.basePRs.bench    ? String(p.basePRs.bench)    : '',
-            deadlift: p.basePRs.deadlift ? String(p.basePRs.deadlift) : '',
-            ohp:      p.basePRs.ohp      ? String(p.basePRs.ohp)      : '',
-            log:      p.basePRs.log      ? String(p.basePRs.log)      : '',
-            axle:     p.basePRs.axle     ? String(p.basePRs.axle)     : '',
-            yoke:     p.basePRs.yoke     ? String(p.basePRs.yoke)     : '',
-          });
+          const restored: Record<string, string> = {};
+          for (const { key } of [...BASE_LIFT_FIELDS, ...STRONGMAN_LIFT_FIELDS]) {
+            const v = (p.basePRs as any)[key];
+            restored[key] = v ? String(v) : '';
+          }
+          setLifts(restored);
         }
         if (p.units) setLiftUnit(p.units as 'lbs' | 'kg');
 
@@ -569,14 +568,18 @@ export default function OnboardingIntake() {
       // BUG 3B: Fetch user's registered name so Home tab greeting is populated
       const authUser = await getStoredUser();
 
+      // Build from the SAME keys the inputs are stored under (BASE_LIFT_FIELDS /
+      // STRONGMAN_LIFT_FIELDS). These used to be hand-written as 'log'/'axle'/'yoke',
+      // which matched nothing — so every strongman event max was silently discarded
+      // and the generator derived event loads from the barbell squat/bench instead.
       const currentLifts: Record<string, number> = {};
-      if (lifts.squat)    currentLifts['squat']    = parseFloat(lifts.squat)    || 0;
-      if (lifts.bench)    currentLifts['bench']    = parseFloat(lifts.bench)    || 0;
-      if (lifts.deadlift) currentLifts['deadlift'] = parseFloat(lifts.deadlift) || 0;
-      if (lifts.ohp)      currentLifts['ohp']      = parseFloat(lifts.ohp)      || 0;
-      if (lifts.log)      currentLifts['log']      = parseFloat(lifts.log)      || 0;
-      if (lifts.axle)     currentLifts['axle']     = parseFloat(lifts.axle)     || 0;
-      if (lifts.yoke)     currentLifts['yoke']     = parseFloat(lifts.yoke)     || 0;
+      for (const { key } of [...BASE_LIFT_FIELDS, ...STRONGMAN_LIFT_FIELDS]) {
+        const raw = lifts[key];
+        if (raw) {
+          const n = parseFloat(raw);
+          if (!isNaN(n) && n > 0) currentLifts[key] = n;
+        }
+      }
 
       const cleanInjuries = injuries.includes('None') ? [] : injuries;
       // Rich injury records — severity + active/past status + optional current pain per injury
