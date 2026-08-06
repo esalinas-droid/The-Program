@@ -941,6 +941,104 @@ def _phase_prog_params(phase_name: str) -> dict:
     return PHASE_PROGRESSION.get(phase_name, DEFAULT_PROGRESSION)
 
 
+# ─── Competition scheduling ───────────────────────────────────────────────────
+
+# Phases that carry the athlete INTO a meet, in the order they must appear at the
+# end of the plan. Everything before these gets compressed to make room.
+_PEAK_TAIL = ["Event Specialization", "Peaking", "Competition Prep"]
+_MIN_TAPER_WEEKS = 2
+
+
+def _weeks_until(comp_date, start_date=None) -> Optional[int]:
+    """Whole weeks from the program start to the meet, or None if unusable.
+
+    The onboarding field is free text ("e.g. November 2025"), so several formats
+    are accepted. Anything unparseable, in the past, or beyond a year returns
+    None and the plan falls back to the standard template.
+    """
+    if not comp_date:
+        return None
+    from datetime import datetime as _dt
+    text = str(comp_date).strip()
+    parsed = None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%B %Y", "%b %Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            parsed = _dt.strptime(text[:len(_dt.now().strftime(fmt)) + 6], fmt)
+            break
+        except Exception:
+            try:
+                parsed = _dt.strptime(text, fmt)
+                break
+            except Exception:
+                continue
+    if parsed is None:
+        return None
+    try:
+        start = _dt.strptime(str(start_date)[:10], "%Y-%m-%d") if start_date else _dt.now()
+    except Exception:
+        start = _dt.now()
+    days = (parsed - start).days
+    if days < 7 or days > 370:
+        return None
+    return max(1, days // 7)
+
+
+def _fit_phases_to_meet(templates: List[dict], weeks_out: int) -> List[dict]:
+    """Compress the phase template so the competition phases end on the meet.
+
+    Late phases (the peak/taper tail) are protected and shrink last; early base
+    phases absorb the compression. Very short runways drop the base work
+    entirely — there is no point starting an 8-week base block 3 weeks out.
+    """
+    tmpl = [dict(t) for t in templates]
+    tail_idx = [i for i, t in enumerate(tmpl) if t["name"] in _PEAK_TAIL]
+    if not tail_idx:
+        return templates
+
+    first_tail = min(tail_idx)
+    head, tail = tmpl[:first_tail], tmpl[first_tail:]
+    # Anything after Competition Prep (off-season etc.) keeps its place but is
+    # not part of the run-in to the meet.
+    prep_pos = max((i for i, t in enumerate(tail) if t["name"] == "Competition Prep"), default=len(tail) - 1)
+    run_in, after = tail[:prep_pos + 1], tail[prep_pos + 1:]
+
+    run_in_weeks = sum(t["weeks"] for t in run_in)
+    head_weeks = sum(t["weeks"] for t in head)
+
+    def _allocate(phases: List[dict], total: int) -> List[dict]:
+        """Split `total` weeks across phases proportionally, landing exactly.
+        Phases that round down to zero are dropped — better to skip a block than
+        to schedule a meaningless one-week version of it."""
+        if total <= 0 or not phases:
+            return []
+        base = sum(p["weeks"] for p in phases)
+        alloc = [max(0, int(round(p["weeks"] / base * total))) for p in phases]
+        # Correct rounding drift so the total is exact.
+        while sum(alloc) > total:
+            alloc[alloc.index(max(alloc))] -= 1
+        while sum(alloc) < total:
+            alloc[alloc.index(max(alloc))] += 1
+        out = []
+        for p, w in zip(phases, alloc):
+            if w > 0:
+                p["weeks"] = w
+                out.append(p)
+        return out
+
+    if weeks_out <= run_in_weeks:
+        # Short runway: drop base work entirely and squeeze the run-in, always
+        # protecting a taper of at least _MIN_TAPER_WEEKS (or the whole runway
+        # if the meet is closer than that).
+        taper = min(_MIN_TAPER_WEEKS, weeks_out)
+        earlier = _allocate(run_in[:-1], weeks_out - taper)
+        run_in[-1]["weeks"] = taper
+        return earlier + [run_in[-1]] + after
+
+    # Enough room: keep the run-in intact, compress the base phases to fit.
+    head = _allocate(head, weeks_out - run_in_weeks) if head_weeks else []
+    return head + run_in + after
+
+
 # Max-Effort main-lift variation pools by movement pattern (weekly rotation).
 ROTATION_POOLS = {
     "Squat": ["Box Squat", "SSB Squat", "Front Squat", "Belt Squat"],
@@ -1531,6 +1629,17 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
     else:
         phase_templates = PHASE_TEMPLATES_NO_COMP.get(goal, PHASE_TEMPLATES_NO_COMP[GoalType.STRENGTH])
         print("[PLANGEN] User does NOT compete — using non-competition phase template")
+
+    # ── Schedule backwards from the meet ──────────────────────────────────────
+    # The competition date used to be reduced to a boolean: a meet 6 weeks away
+    # and one 40 weeks away produced exactly the same 52-week plan, with
+    # "Competition Prep" always parked at weeks 35-38. Now the phases are fitted
+    # to the time actually available, so prep and the taper land ON the meet.
+    weeks_out = _weeks_until(getattr(intake, 'competitionDate', None),
+                             getattr(intake, 'programStartDate', None))
+    if weeks_out:
+        phase_templates = _fit_phases_to_meet(phase_templates, weeks_out)
+        print(f"[PLANGEN] Meet is {weeks_out} weeks out — phases compressed to land on it")
 
     # Build goal-specific plan name
     plan_names = {
