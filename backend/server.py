@@ -1342,6 +1342,47 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
     }
 
 
+@api_router.get("/progression/suggestions")
+async def get_load_suggestions(userId: str = Depends(get_current_user)):
+    """Advisory load suggestions for today's session.
+
+    Compares logged RPE against the prescribed RPE and recommends a change. It
+    NEVER modifies the plan — the athlete applies a suggestion or ignores it.
+    Returns an empty list when there isn't enough logged evidence to be useful.
+    """
+    from services.load_suggestions import build_suggestions
+    try:
+        await _ensure_plan_loaded(userId)
+        plan = _prog_store["plans"].get(userId)
+        if not plan:
+            return {"suggestions": []}
+
+        plan_doc = await db.saved_plans.find_one(
+            {"userId": userId, "status": "active"}, {"startDate": 1}
+        )
+        current_week = _calculate_current_week((plan_doc or {}).get("startDate", "")) if plan_doc else 1
+        today_day = datetime.now().isoweekday()
+
+        session = None
+        for phase in plan.phases:
+            for block in phase.blocks:
+                for week in block.weeks:
+                    if week.weekNumber != current_week:
+                        continue
+                    for s in week.sessions:
+                        if s.dayNumber == today_day:
+                            session = s
+                            break
+        if session is None:
+            return {"suggestions": []}
+
+        suggestions = await build_suggestions(db, userId, session)
+        return {"suggestions": suggestions, "sessionType": getattr(session.sessionType, "value", str(session.sessionType))}
+    except Exception as e:
+        logger.warning("[SUGGEST] endpoint failed for user %s: %s", userId, e)
+        return {"suggestions": []}
+
+
 @api_router.get("/plan/session/today")
 async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     """Get today's session — auto-loads plan from MongoDB if not in memory."""

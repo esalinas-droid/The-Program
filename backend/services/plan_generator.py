@@ -912,6 +912,24 @@ PHASE_PROGRESSION = {
 }
 DEFAULT_PROGRESSION = {"intensity": 0.90, "meWave": [1.00, 1.03, 1.05, 1.05], "deStep": 0.05, "reStep": 0.025, "accWave": [(3, "12"), (3, "12"), (4, "10"), (4, "10")]}
 
+# Target RPE for the top working set, by phase. Prescribing effort (not just a
+# percentage of a number typed at signup) is what lets a session self-regulate on
+# the day. Main lifts used to carry a hardcoded RPE 9.5 "grind to a max" on every
+# single session of all 52 weeks, regardless of phase.
+_PHASE_TOP_RPE = {
+    "Intro Phase":            7.0,
+    "Base Strength":          7.5,
+    "Building Phase":         8.0,
+    "Event Specialization":   8.0,
+    "Strength Phase":         8.5,
+    "Peaking":                8.5,
+    "Competition Prep":       8.0,   # sharp into a meet, never grinding
+    "Strength Consolidation": 7.0,
+    "Off-Season":             7.0,
+}
+_DELOAD_RPE = 6.0
+_DEFAULT_TOP_RPE = 8.0
+
 # Per-block deload scheduling (template-level DATA):
 #   The final week of every block is a deload, EXCEPT for blocks that are this
 #   short (they are effectively tapers/short blocks) and phases listed as opting out.
@@ -1087,7 +1105,22 @@ def _apply_progression(exercises, ctx):
                     for i in range(n_sets)
                 ]
 
-    # 4. Deload volume cut (all exercises)
+    # 4. RPE targets on main-lift work sets.
+    #    Prescribe effort so the session self-regulates on the day. Deliberate
+    #    RPEs already set by a session builder (e.g. block-specific event work)
+    #    are preserved; only missing targets and legacy "grind to 9.5" values
+    #    are replaced.
+    top_rpe = _DELOAD_RPE if ctx.is_deload else _PHASE_TOP_RPE.get(ctx.phase_name, _DEFAULT_TOP_RPE)
+    for ex in exercises:
+        if ex.category != ExerciseCategory.MAIN:
+            continue
+        work = [s for s in ex.targetSets if s.setType == "work"]
+        for i, st in enumerate(work):
+            is_top = (i == len(work) - 1)
+            if st.targetRPE is None or st.targetRPE >= 9.0:
+                st.targetRPE = top_rpe if is_top else max(6.0, round(top_rpe - 1.0, 1))
+
+    # 5. Deload volume cut (all exercises)
     if ctx.is_deload:
         for ex in exercises:
             ws = [s for s in ex.targetSets if s.setType == "work"]
