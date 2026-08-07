@@ -547,6 +547,20 @@ def _intake_raw_answers(intake) -> dict:
 def _apply_intake_profile_extras(profile_update: dict, intake, existing_profile: dict, injury_flags: list) -> None:
     """Persist raw onboarding answers + extra intake fields (previously dropped)
     into a db.profile update. Used by both /intake and /plans/rebuild."""
+    # Persist the maxes the plan was actually built from. These were only ever
+    # written client-side, so the server had no record of the numbers its own
+    # prescribed loads were derived from — which is why maxes could not be edited
+    # after onboarding without regenerating the whole program.
+    lifts = getattr(intake, "lifts", None)
+    if lifts is not None:
+        try:
+            entered = {k: v for k, v in lifts.model_dump().items() if v}
+        except Exception:
+            entered = {}
+        if entered:
+            profile_update["basePRs"] = {**((existing_profile or {}).get("basePRs") or {}), **entered}
+    if getattr(intake, "liftUnit", None):
+        profile_update["units"] = intake.liftUnit
     if injury_flags:
         profile_update["injuryDetails"] = _reconcile_details_with_flags(
             injury_flags, (existing_profile or {}).get("injuryDetails"))
@@ -1340,6 +1354,79 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
         "coachNote": "Great work — sets saved to your log.",
         "whatsNext": "Rest up and come back for your next session.",
     }
+
+
+class UpdateMaxesBody(BaseModel):
+    maxes: dict                      # {"squat": 455, "yoke_walk": 700, "Circus DB": 150, ...}
+    rescaleProgram: bool = True      # scale the live plan's remaining loads
+
+
+@api_router.get("/profile/maxes")
+async def get_maxes(userId: str = Depends(get_current_user)):
+    """The athlete's training maxes, plus any PRs their logs suggest are stale."""
+    from services.max_rescale import MAX_TO_EXERCISES, detect_pr_candidates
+    profile = await db.profile.find_one({"userId": userId}) or {}
+    base = profile.get("basePRs") or {}
+    logs = await db.log.find(
+        {"userId": userId, "weight": {"$gt": 0}}
+    ).sort("date", -1).limit(300).to_list(300)
+    return {
+        "maxes": base,
+        "programmingKeys": sorted(MAX_TO_EXERCISES.keys()),
+        "units": profile.get("units", "lbs"),
+        "prSuggestions": detect_pr_candidates(base, logs),
+    }
+
+
+@api_router.patch("/profile/maxes")
+async def update_maxes(body: UpdateMaxesBody, userId: str = Depends(get_current_user)):
+    """Update training maxes and rescale the athlete's live program.
+
+    Every prescribed load is a percentage of one of these numbers, so changing a
+    max must move the loads derived from it. Weeks already completed are left
+    untouched — they are a record of what was actually prescribed at the time.
+    Rescaling deliberately preserves block structure and week position; a rebuild
+    would reset the athlete's place in their program.
+    """
+    from services.max_rescale import changed_maxes, rescale_plan_doc
+
+    profile = await db.profile.find_one({"userId": userId}) or {}
+    old = dict(profile.get("basePRs") or {})
+    new = dict(old)
+    for k, v in (body.maxes or {}).items():
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv > 0:
+            new[k] = fv
+        else:
+            new.pop(k, None)   # clearing a value removes it
+
+    await db.profile.update_one(
+        {"userId": userId},
+        {"$set": {"basePRs": new, "updatedAt": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+
+    result = {"maxes": new, "rescaled": False, "exercisesUpdated": 0}
+    mults = changed_maxes(old, new)
+    if body.rescaleProgram and mults:
+        plan_doc = await db.saved_plans.find_one({"userId": userId, "status": "active"})
+        if plan_doc:
+            current_week = _calculate_current_week(plan_doc.get("startDate", "")) or 1
+            plan_doc, touched = rescale_plan_doc(plan_doc, mults, from_week=current_week)
+            plan_doc.pop("_id", None)
+            await db.saved_plans.replace_one(
+                {"planId": plan_doc.get("planId"), "userId": userId}, plan_doc
+            )
+            _prog_store["plans"].pop(userId, None)   # evict cache so the new loads load
+            result.update(rescaled=True, exercisesUpdated=touched,
+                          fromWeek=current_week,
+                          changedMaxes={k: round(v, 3) for k, v in mults.items()})
+            logger.info("[MAXES] user=%s rescaled %d exercises from week %d (%s)",
+                        userId, touched, current_week, list(mults.keys()))
+    return result
 
 
 @api_router.get("/progression/suggestions")
