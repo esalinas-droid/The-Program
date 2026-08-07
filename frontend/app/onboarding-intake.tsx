@@ -135,11 +135,14 @@ const BASE_LIFT_FIELDS = [
   { key: 'ohp',      label: 'Overhead Press'      },
 ] as const;
 
+// Labels must state the unit of measure. "Farmer's Walk" in particular is
+// ambiguous — the generator prescribes farmer's PER HAND, so entering a combined
+// total would double every prescribed load.
 const STRONGMAN_LIFT_FIELDS = [
-  { key: 'log_press',    label: 'Log Press'             },
-  { key: 'yoke_walk',    label: 'Yoke Walk (per 40 ft)' },
-  { key: 'atlas_stone',  label: 'Atlas Stone (to 48")' },
-  { key: 'farmer_walk',  label: "Farmer's Walk (per 50 ft)" },
+  { key: 'log_press',    label: 'Log Press — max'                        },
+  { key: 'yoke_walk',    label: 'Yoke Walk — total weight (per 40 ft)'   },
+  { key: 'atlas_stone',  label: 'Atlas Stone — stone weight (to 48")'    },
+  { key: 'farmer_walk',  label: "Farmer's Walk — per hand (per 50 ft)"   },
 ] as const;
 
 const TRAINING_DAYS = [
