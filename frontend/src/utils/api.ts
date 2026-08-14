@@ -660,6 +660,32 @@ export const liftsApi = {
   catalog:     ()                                            => api('/lifts/catalog'),
 };
 
+// Training maxes — the numbers every prescribed load is calculated from.
+// Saving rescales the athlete's live program (future weeks only).
+export interface PrSuggestion {
+  maxKey: string;
+  exercise: string;
+  currentMax: number;
+  loggedWeight: number;
+  increase: number;
+  reason: string;
+  requiresConfirmation: boolean;
+}
+export interface MaxesResponse {
+  maxes: Record<string, number>;
+  programmingKeys: string[];
+  units: 'lbs' | 'kg';
+  prSuggestions: PrSuggestion[];
+}
+export const maxesApi = {
+  get:    (): Promise<MaxesResponse> => api('/profile/maxes'),
+  update: (maxes: Record<string, number>, rescaleProgram = true) =>
+            api('/profile/maxes', {
+              method: 'PATCH',
+              body: JSON.stringify({ maxes, rescaleProgram }),
+            }),
+};
+
 // Streak
 export const streakApi = {
   get: () => api('/streaks'),

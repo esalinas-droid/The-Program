@@ -919,6 +919,22 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           )}
 
+          {/* Training maxes — the numbers every prescribed load comes from */}
+          <TouchableOpacity
+            style={s.accountRow}
+            onPress={() => router.push('/training-maxes' as any)}
+            activeOpacity={0.7}
+          >
+            <View style={[s.accountIconWrap, { backgroundColor: 'rgba(201,168,76,0.1)' }]}>
+              <MaterialCommunityIcons name="scale-balance" size={16} color={COLORS.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.accountRowLabel}>Training Maxes</Text>
+              <Text style={s.accountRowDesc}>Update your PRs · adjusts your program</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={18} color={COLORS.text.muted} />
+          </TouchableOpacity>
+
           {/* Programs Library — replaces Rebuild program row */}
           <TouchableOpacity
             style={s.accountRow}
