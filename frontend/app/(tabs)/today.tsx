@@ -472,6 +472,7 @@ const SESSION_OBJECTIVES: Record<string, string> = {
   'Speed Upper':            'Speed work at 50–60% of max. 8–10 sets of 3. Focus on bar speed and lockout.',
   'Speed Lower':            'Speed squats and pulls at 55–60%. 10–12 sets of 2. Explosive hip drive.',
   'Recovery / Conditioning':'Light aerobic conditioning. Maintain movement quality. Keep intensity low.',
+  'Event Training':         'Event day. Train the implements themselves — technique and confidence before load.',
   // ── Legacy (backward-compatible for existing saved plans) ─────────────────
   'Max Effort Upper':       'Build to a top set on a pressing variation. Add support and accessory volume.',
   'Max Effort Lower':       'Build to a top set on a lower body pattern. Build posterior chain support volume.',
@@ -5235,6 +5236,48 @@ export default function TodayScreen() {
     }
   };
 
+  // ── Tracker Mode: finish the day's session ───────────────────────────────────
+  // Tracker mode had no way to close out a session — sets were logged and the
+  // screen simply stayed open, with no completion state, no recap and no streak
+  // credit. Mirrors the program-mode finish, but titled for tracker and gated on
+  // a single logged set rather than a percentage of a prescribed total (tracker
+  // sessions have no prescribed total to be a percentage of).
+  const handleTrackerFinish = async () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    let volume = 0;
+    let setCount = 0;
+    for (const ex of trackerExercises) {
+      for (const st of ex.sets) {
+        if (!loggedSets.has(st.id)) continue;
+        const sv = setValues[st.id] || {};
+        volume += (parseFloat(sv.weight as any) || 0) * (parseInt(sv.reps as any) || 0);
+        setCount += 1;
+      }
+    }
+    const effortVals = Object.values(efforts);
+    const avgRPE = effortVals.length
+      ? effortVals.reduce((a, b) => a + b, 0) / effortVals.length
+      : 0;
+
+    let streakData = null;
+    try { streakData = await streakApi.get(); } catch {}
+    let badgeData = null;
+    try { badgeData = await badgesApi.get(); } catch {}
+
+    setSessionStats({
+      sessionType: 'Tracker Session',
+      sets: setCount,
+      volume,
+      rpe: avgRPE,
+      streak: streakData,
+      badges: badgeData,
+    });
+    setShowSessionComplete(true);
+    setSessionFinished(true);
+    AsyncStorage.setItem(FINISHED_DATE_KEY, getLocalDateString()).catch(() => {});
+  };
+
   const handleFinish = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -5827,7 +5870,7 @@ export default function TodayScreen() {
                       onMoveDown={() => handleTrackerMoveExercise(ex.id, 'down')}
                       canMoveUp={exIdx > 0}
                       canMoveDown={exIdx < totalInSession - 1}
-                      onHowTo={() => { setHowToExercise(ex.name); setHowToVisible(true); }}
+                      onHowTo={() => { setHowToExercise(ex.name); setHowToVideoUrl((ex as any).videoUrl ?? ''); setHowToVisible(true); }}
                       exerciseNote={notesByExercise[ex.id] ?? ''}
                       onNoteSave={(note) => handleTrackerNoteSave(ex.id, note)}
                       onNoteRemove={() => handleTrackerNoteRemove(ex.id)}
@@ -5844,6 +5887,47 @@ export default function TodayScreen() {
 
             {/* ── Action buttons ── */}
             <View style={{ marginTop: SPACING.md, gap: SPACING.sm }}>
+              {/* Finish session — appears once anything has been logged. Tracker
+                  mode previously had no way to close out a session: sets were
+                  logged and the screen just stayed open, with no completion
+                  state, no recap and no streak credit. */}
+              {loggedSets.size > 0 && (
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg,
+                    backgroundColor: sessionFinished ? COLORS.surfaceHighlight : GOLD,
+                  }}
+                  onPress={sessionFinished ? undefined : handleTrackerFinish}
+                  activeOpacity={sessionFinished ? 1 : 0.85}
+                >
+                  <MaterialCommunityIcons
+                    name={sessionFinished ? 'check-circle' : 'flag-checkered'}
+                    size={18}
+                    color={sessionFinished ? COLORS.text.muted : COLORS.surface}
+                  />
+                  <Text style={{
+                    color: sessionFinished ? COLORS.text.muted : COLORS.surface,
+                    fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold, letterSpacing: 0.5,
+                  }}>
+                    {sessionFinished ? 'SESSION COMPLETE' : 'FINISH SESSION'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Ask Coach about what was logged today */}
+              <AskCoachButton
+                seedPrompt={
+                  `I just logged a tracker session: ` +
+                  `${trackerExercises.map(e => e.name).join(', ') || 'no exercises yet'}. ` +
+                  `How did that look, and what should I watch for next time?`
+                }
+                triggerName="tracker_session_review"
+                label="Ask Coach"
+                size="md"
+                style={{ alignSelf: 'stretch', justifyContent: 'center' }}
+              />
+
               {/* Add another exercise */}
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: GOLD }}
@@ -6171,7 +6255,7 @@ export default function TodayScreen() {
             duration={warmupDuration}
             isGeneric={warmupIsGeneric}
             onReload={handleWarmupReload}
-            onHowTo={(name) => { setHowToExercise(name); setHowToVisible(true); }}
+            onHowTo={(name) => { setHowToExercise(name); setHowToVideoUrl(''); setHowToVisible(true); }}
             onStartHold={(secs) => {
               setTimerMode('hold');
               setTimerIsCountUp(false);
@@ -6238,7 +6322,7 @@ export default function TodayScreen() {
             onMoveDown={() => handleDirectOrder(ex.id, 'down')}
             canMoveUp={fullIdx > 0}
             canMoveDown={fullIdx < groupLen - 1}
-            onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+            onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVideoUrl((ex as any).videoUrl ?? ''); setHowToVisible(true); }}
             exerciseNote={notesByExercise[ex.id] ?? ''}
             onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
                       onNoteRemove={() => handleProgramNoteRemove(ex.id)}
@@ -6364,7 +6448,7 @@ export default function TodayScreen() {
                 onMoveDown={() => handleDirectOrder(ex.id, 'down')}
                 canMoveUp={fullIdx > 0}
                 canMoveDown={fullIdx < groupLen - 1}
-                onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVisible(true); }}
+                onHowTo={() => { setHowToExercise(swaps[ex.id]?.replacement ?? ex.name); setHowToVideoUrl((ex as any).videoUrl ?? ''); setHowToVisible(true); }}
                 exerciseNote={notesByExercise[ex.id] ?? ''}
                 onNoteSave={(note) => handleProgramNoteSave(ex.id, note)}
                       onNoteRemove={() => handleProgramNoteRemove(ex.id)}
@@ -6409,6 +6493,20 @@ export default function TodayScreen() {
             {isUploadingImage ? 'Scanning image…' : 'Scan Workout Photo'}
           </Text>
         </TouchableOpacity>
+
+        {/* ── ASK COACH (program mode — beside the session actions, where an
+             athlete already is when something needs adjusting mid-session) ── */}
+        <AskCoachButton
+          seedPrompt={
+            `I'm partway through my ${sessionType} session (week ${week}). ` +
+            `Exercises today: ${exercises.map(e => e.name).join(', ')}. ` +
+            `Something isn't working — can you help me adjust it?`
+          }
+          triggerName="today_session_adjust"
+          label="Ask Coach"
+          size="md"
+          style={{ alignSelf: 'stretch', justifyContent: 'center', marginTop: SPACING.sm }}
+        />
 
         <View style={{ height: SPACING.xl }} />
       </ScrollView>
