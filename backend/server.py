@@ -581,12 +581,50 @@ def _apply_intake_profile_extras(profile_update: dict, intake, existing_profile:
     profile_update["onboardingAnswersUpdatedAt"] = datetime.now(timezone.utc)
 
 # ── Profile Endpoints ─────────────────────────────────────────────────────────
+async def _sync_current_week(userId: str, profile_doc: dict = None) -> int:
+    """Recompute profile.currentWeek from the active plan's start date.
+
+    currentWeek was only ever written at plan activation and never advanced, so
+    it sat at 1 forever. Fifteen-plus endpoints read it, and the app stamps it on
+    every logged set — meaning all program-mode training was recorded as "week 1"
+    regardless of when it happened, the volume/compliance charts never moved past
+    a single week, and the scheduled-deload check could never fire.
+
+    Derived here from saved_plans.startDate (the same calculation the session
+    endpoints already use) and written back, so every existing reader sees a
+    correct value without changing 15 call sites.
+    """
+    try:
+        plan_doc = await db.saved_plans.find_one(
+            {"userId": userId, "status": "active"}, {"startDate": 1}
+        )
+        if not plan_doc or not plan_doc.get("startDate"):
+            return int((profile_doc or {}).get("currentWeek") or 1)
+        derived = _calculate_current_week(plan_doc["startDate"])
+        stored = int((profile_doc or {}).get("currentWeek") or 0)
+        if derived != stored:
+            await db.profile.update_one(
+                {"userId": userId},
+                {"$set": {"currentWeek": derived, "updatedAt": datetime.now(timezone.utc)}},
+            )
+            logger.info("[WEEK] user=%s currentWeek %s -> %s (derived from plan start)",
+                        userId, stored, derived)
+        return derived
+    except Exception as e:
+        logger.warning("[WEEK] could not sync currentWeek for %s: %s", userId, e)
+        return int((profile_doc or {}).get("currentWeek") or 1)
+
+
 @api_router.get("/profile")
 async def get_profile(userId: str = Depends(get_current_user)):
     doc = await db.profile.find_one({"userId": userId})
     if not doc:
         # Graceful fallback for users who haven't completed onboarding yet
         raise HTTPException(status_code=404, detail="Profile not found")
+    # Keep the training week honest. The app reads this on every foreground and
+    # stamps it on every logged set, so a stale value corrupts training history.
+    week = await _sync_current_week(userId, doc)
+    doc["currentWeek"] = week
     return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
 
 @api_router.post("/profile")
@@ -673,37 +711,37 @@ def _build_injury_keywords(injuries: list) -> set:
     return keywords
 
 _EXERCISE_CONTRAINDICATIONS = [
-    {"name": "SSB Box Squat",              "contra": ["knee_severe"],                                       "cat": "ME Lower"},
-    {"name": "Speed Box Squat",            "contra": ["knee_severe"],                                       "cat": "DE Lower"},
-    {"name": "Pause Back Squat",           "contra": ["knee_moderate"],                                     "cat": "ME Lower"},
-    {"name": "Belt Squat",                 "contra": [],                                                    "cat": "ME Lower"},
-    {"name": "Conventional Deadlift",      "contra": ["low_back_severe", "hamstring_severe", "si_joint_moderate"], "cat": "ME Lower"},
-    {"name": "Sumo Deadlift",              "contra": ["hip_moderate", "low_back_severe", "si_joint_moderate"], "cat": "ME Lower"},
-    {"name": "Trap Bar Deadlift",          "contra": ["low_back_severe"],                                   "cat": "ME Lower"},
-    {"name": "Romanian Deadlift (RDL)",    "contra": ["hamstring_severe", "si_joint_moderate"],             "cat": "ME Lower"},
-    {"name": "Good Morning",               "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "ME Lower"},
-    {"name": "Block Pull",                 "contra": [],                                                    "cat": "ME Lower"},
-    {"name": "Speed Deadlift",             "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "DE Lower"},
+    {"name": "SSB Box Squat",              "contra": ["knee_severe"],                                       "cat": "Heavy Lower"},
+    {"name": "Speed Box Squat",            "contra": ["knee_severe"],                                       "cat": "Speed Lower"},
+    {"name": "Pause Back Squat",           "contra": ["knee_moderate"],                                     "cat": "Heavy Lower"},
+    {"name": "Belt Squat",                 "contra": [],                                                    "cat": "Heavy Lower"},
+    {"name": "Conventional Deadlift",      "contra": ["low_back_severe", "hamstring_severe", "si_joint_moderate"], "cat": "Heavy Lower"},
+    {"name": "Sumo Deadlift",              "contra": ["hip_moderate", "low_back_severe", "si_joint_moderate"], "cat": "Heavy Lower"},
+    {"name": "Trap Bar Deadlift",          "contra": ["low_back_severe"],                                   "cat": "Heavy Lower"},
+    {"name": "Romanian Deadlift (RDL)",    "contra": ["hamstring_severe", "si_joint_moderate"],             "cat": "Heavy Lower"},
+    {"name": "Good Morning",               "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Heavy Lower"},
+    {"name": "Block Pull",                 "contra": [],                                                    "cat": "Heavy Lower"},
+    {"name": "Speed Deadlift",             "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Speed Lower"},
     {"name": "Leg Press",                  "contra": ["knee_moderate"],                                     "cat": "Accessory"},
     {"name": "Glute-Ham Raise (GHR)",      "contra": ["knee_severe", "hamstring_severe"],                   "cat": "Accessory"},
     {"name": "Lying Leg Curl",             "contra": ["hamstring_severe"],                                  "cat": "Accessory"},
     {"name": "Standing Leg Curl",          "contra": ["hamstring_severe"],                                  "cat": "Accessory"},
-    {"name": "Floor Press",                "contra": ["shoulder_severe"],                                   "cat": "ME Upper"},
-    {"name": "Close-Grip Bench Press",     "contra": ["shoulder_moderate", "elbow_severe"],                 "cat": "ME Upper"},
-    {"name": "JM Press",                   "contra": ["elbow_severe"],                                     "cat": "ME Upper"},
-    {"name": "Speed Bench Press",          "contra": ["shoulder_severe"],                                   "cat": "DE Upper"},
-    {"name": "Overhead Press (Barbell)",   "contra": ["shoulder_severe"],                                   "cat": "ME Upper"},
-    {"name": "Log Clean and Press",        "contra": ["shoulder_severe", "elbow_severe"],                   "cat": "ME Upper / Strongman"},
-    {"name": "Axle Press",                 "contra": ["shoulder_severe", "wrist_severe"],                   "cat": "ME Upper / Strongman"},
+    {"name": "Floor Press",                "contra": ["shoulder_severe"],                                   "cat": "Heavy Upper"},
+    {"name": "Close-Grip Bench Press",     "contra": ["shoulder_moderate", "elbow_severe"],                 "cat": "Heavy Upper"},
+    {"name": "JM Press",                   "contra": ["elbow_severe"],                                     "cat": "Heavy Upper"},
+    {"name": "Speed Bench Press",          "contra": ["shoulder_severe"],                                   "cat": "Speed Upper"},
+    {"name": "Overhead Press (Barbell)",   "contra": ["shoulder_severe"],                                   "cat": "Heavy Upper"},
+    {"name": "Log Clean and Press",        "contra": ["shoulder_severe", "elbow_severe"],                   "cat": "Heavy Upper / Strongman"},
+    {"name": "Axle Press",                 "contra": ["shoulder_severe", "wrist_severe"],                   "cat": "Heavy Upper / Strongman"},
     {"name": "Pendlay Row",                "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Supplemental"},
     {"name": "Lat Pulldown",               "contra": ["shoulder_severe"],                                   "cat": "Supplemental"},
     {"name": "Ab Wheel Rollout",           "contra": ["low_back_severe", "si_joint_moderate"],              "cat": "Accessory"},
     {"name": "Tricep Pushdown",            "contra": ["elbow_severe"],                                      "cat": "Accessory"},
     {"name": "Skull Crusher / EZ Bar",     "contra": ["elbow_severe"],                                      "cat": "Accessory"},
     {"name": "Tate Press",                 "contra": ["elbow_severe"],                                      "cat": "Accessory"},
-    {"name": "Farmer Carry",               "contra": ["wrist_severe"],                                      "cat": "GPP / Strongman"},
-    {"name": "Zercher Carry",              "contra": ["elbow_severe", "low_back_severe"],                   "cat": "GPP / Strongman"},
-    {"name": "Yoke Carry",                 "contra": ["low_back_severe"],                                   "cat": "GPP / Strongman"},
+    {"name": "Farmer Carry",               "contra": ["wrist_severe"],                                      "cat": "Conditioning / Strongman"},
+    {"name": "Zercher Carry",              "contra": ["elbow_severe", "low_back_severe"],                   "cat": "Conditioning / Strongman"},
+    {"name": "Yoke Carry",                 "contra": ["low_back_severe"],                                   "cat": "Conditioning / Strongman"},
     {"name": "Stone to Shoulder",          "contra": ["low_back_severe", "shoulder_severe", "hip_moderate"],"cat": "Strongman"},
     {"name": "Keg Toss",                   "contra": ["shoulder_severe", "low_back_severe"],                "cat": "Strongman"},
 ]
@@ -5877,6 +5915,12 @@ async def _ensure_plan_loaded(uid: str = None) -> bool:
             plan = _AnnualPlan.model_validate(saved)
             _prog_store["plans"][user_id] = plan
             logger.info(f"Plan loaded from MongoDB saved_plans: {plan.planName}")
+            # Keep the stored training week in step with the plan we just loaded,
+            # so the many endpoints that read profile.currentWeek stay correct.
+            try:
+                await _sync_current_week(user_id, await db.profile.find_one({"userId": user_id}))
+            except Exception:
+                pass
             return True
     except Exception as e:
         logger.warning(f"Could not load saved plan from MongoDB: {e}")
