@@ -150,13 +150,10 @@ export default function Dashboard() {
   const [competitionStatus, setCompetitionStatus] = useState<any | null>(null);
   const [rotationStatus, setRotationStatus] = useState<any | null>(null);
 
-  // ── Gamification state ───────────────────────────────────────────────────────
-  const [streak,          setStreak]          = useState<any>(null);
-  const [badges,          setBadges]          = useState<any>(null);
-  const [quest,           setQuest]           = useState<any>(null);
-  const [userRank,        setUserRank]        = useState<number>(0);
-  const [showGroupPrompt, setShowGroupPrompt] = useState(false);
-  const [questIsNew,      setQuestIsNew]      = useState(false);
+  // ── Streak state ─────────────────────────────────────────────────────────────
+  // badges / quest / userRank / groupPrompt state was dropped along with the cards
+  // that rendered them — they live on the Track tab now.
+  const [streak, setStreak] = useState<any>(null);
   const streakGlowAnim = useRef(new Animated.Value(0.7)).current;
 
   // ── Week overview state ───────────────────────────────────────────────────────
@@ -259,18 +256,13 @@ export default function Dashboard() {
       setRotationStatus(rot?.count > 0 ? rot : null);
     } catch { /* Rotation check not critical */ }
 
-    // ── Fetch gamification data ────────────────────────────────────────────
+    // ── Fetch streak ───────────────────────────────────────────────────────
+    // Only the streak is shown here now. Badges, the weekly quest and the
+    // leaderboard moved to the Track tab, so the homepage no longer makes three
+    // extra network calls on every load for cards it doesn't render.
     try {
-      const [strk, bdgs, qst, lbrd] = await Promise.all([
-        streakApi.get().catch(() => null),
-        badgesApi.get().catch(() => null),
-        questApi.get().catch(() => null),
-        api('/leaderboard?tab=consistency').catch(() => null),
-      ]);
+      const strk = await streakApi.get().catch(() => null);
       setStreak(strk);
-      setBadges(bdgs);
-      setQuest(qst);
-      setUserRank(lbrd?.userRank ?? 0);
 
       // Part 11B: streak glow on first-time streak
       if (strk?.currentStreak === 1) {
@@ -283,20 +275,7 @@ export default function Dashboard() {
           ]), { iterations: 3 }).start();
         }
       }
-
-      // Part 11D: quest "NEW" badge on first time
-      const questSeen = await AsyncStorage.getItem('questIntroSeen');
-      if (!questSeen && qst) {
-        setQuestIsNew(true);
-        await AsyncStorage.setItem('questIntroSeen', 'true');
-      }
-
-      // Part 10C: group prompt for 2+ week athletes
-      if (strk?.totalWeeksTrained >= 2) {
-        const dismissed = await AsyncStorage.getItem('groupPromptDismissed');
-        if (!dismissed) setShowGroupPrompt(true);
-      }
-    } catch { /* Gamification non-critical */ }
+    } catch { /* Streak is non-critical */ }
 
     // ── Fetch this week's training events for the "THIS WEEK" section ─────────
     try {
@@ -615,7 +594,7 @@ export default function Dashboard() {
           ))
         )}
 
-        {/* ── GAMIFICATION CARDS ── */}
+        {/* ── STREAK ── */}
 
         {/* Part 5C: Streak card */}
         {streak && streak.currentStreak > 0 && (
@@ -640,83 +619,13 @@ export default function Dashboard() {
           </Animated.View>
         )}
 
-        {/* Part 6B: Badges row */}
-        {badges?.earned?.length > 0 && (
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#1E1E22', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8 }}
-            onPress={() => router.push('/achievements')}
-            activeOpacity={0.7}>
-            <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>BADGES</Text>
-            <View style={{ flex: 1, flexDirection: 'row', gap: 6 }}>
-              {badges.earned.slice(-4).map((b: any) => (
-                <View key={b.id} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#C9A84C15', borderWidth: 1, borderColor: '#C9A84C40', alignItems: 'center', justifyContent: 'center' }}>
-                  <MaterialCommunityIcons name={b.icon as any} size={14} color="#C9A84C" />
-                </View>
-              ))}
-            </View>
-            <Text style={{ fontSize: 10, color: '#555' }}>{badges.totalEarned}/{badges.totalPossible}</Text>
-            <MaterialCommunityIcons name="chevron-right" size={16} color="#444" />
-          </TouchableOpacity>
-        )}
+        {/* Badges, the weekly quest, the leaderboard preview and the group invite
+            prompt used to stack here as four more cards. All of them are reachable
+            from the Track tab, and the streak above opens the same achievements
+            screen. On the homepage they buried the one thing this screen exists
+            for: starting today's session. */}
 
-        {/* Part 7B: Weekly Quest */}
-        {quest && (
-          <TouchableOpacity
-            style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#C9A84C30', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8 }}
-            onPress={() => router.push('/achievements')}
-            activeOpacity={0.7}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 9, color: '#C9A84C', fontWeight: '700', letterSpacing: 0.8 }}>WEEKLY QUEST</Text>
-                {questIsNew && (
-                  <View style={{ backgroundColor: '#C9A84C', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#0A0A0C' }}>NEW</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={{ fontSize: 10, color: '#555' }}>Resets Mon</Text>
-            </View>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', marginBottom: 6 }}>{quest.title}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ flex: 1, height: 6, backgroundColor: '#1E1E22', borderRadius: 3 }}>
-                <View style={{ width: `${Math.min(100, ((quest.progress?.current ?? 0) / Math.max(quest.progress?.target ?? 1, 1)) * 100)}%` as any, height: '100%', backgroundColor: '#C9A84C', borderRadius: 3 }} />
-              </View>
-              <Text style={{ fontSize: 11, color: '#C9A84C', fontWeight: '600' }}>
-                {quest.progress?.current ?? 0}/{quest.progress?.target ?? 1}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* Part 10D: Leaderboard preview card */}
-        <TouchableOpacity
-          style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#1E1E22', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
-          onPress={() => router.push('/leaderboard')}
-          activeOpacity={0.7}>
-          <MaterialCommunityIcons name="podium-gold" size={18} color="#C9A84C" />
-          <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', marginLeft: 8, flex: 1 }}>Leaderboard</Text>
-          <Text style={{ fontSize: 12, color: '#C9A84C', fontWeight: '600' }}>#{userRank || '—'}</Text>
-          <MaterialCommunityIcons name="chevron-right" size={16} color="#444" style={{ marginLeft: 4 }} />
-        </TouchableOpacity>
-
-        {/* Part 10C: One-time group invite prompt */}
-        {showGroupPrompt && (
-          <View style={{ backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#C9A84C30', padding: 14, marginHorizontal: 16, marginBottom: 8 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#E8E8E6', flex: 1 }}>Training is better with accountability</Text>
-              <TouchableOpacity onPress={async () => { await AsyncStorage.setItem('groupPromptDismissed', 'true'); setShowGroupPrompt(false); }}>
-                <MaterialCommunityIcons name="close" size={16} color="#555" />
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={{ backgroundColor: '#C9A84C', borderRadius: 8, paddingVertical: 8, marginTop: 8, alignItems: 'center' }}
-              onPress={() => router.push('/leaderboard')}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0A0A0C' }}>CREATE A GROUP</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ── COACH REBALANCE CARD (between Quest and Directive) ── */}
+        {/* ── COACH REBALANCE CARD ── */}
         <CoachRebalanceCard />
 
         {/* ── COACH'S DIRECTIVE (program mode only) ── */}
@@ -750,98 +659,9 @@ export default function Dashboard() {
         </View>
         )}{/* end program-only coach directive */}
 
-        {/* ── THIS WEEK OVERVIEW (program mode only) ── */}
-        {profile?.training_mode !== 'free' && weekEvents.length > 0 && (
-          <View style={{ marginHorizontal: 16, marginBottom: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <Text style={{ fontSize: 10, color: '#666', fontWeight: '700', letterSpacing: 1.2 }}>THIS WEEK</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/log' as any)}>
-                <Text style={{ fontSize: 11, color: COLORS.accent, fontWeight: '600' }}>View all →</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ gap: 6 }}>
-              {weekEvents.map((ev: any, idx: number) => {
-                const dateObj   = new Date(ev.date + 'T00:00:00');
-                const todayISO  = new Date().toISOString().slice(0, 10);
-                const isToday   = ev.date === todayISO;
-                const isPast    = ev.date < todayISO;
-                const isDone    = ev.isCompleted;
-
-                const dayAbbr   = ['SUN','MON','TUE','WED','THU','FRI','SAT'][dateObj.getDay()];
-                const dayNum    = dateObj.getDate();
-
-                const statusColor =
-                  isDone    ? '#EF5350' :
-                  isToday   ? COLORS.accent :
-                  isPast    ? '#555' :
-                  '#4DCEA6';
-
-                return (
-                  <TouchableOpacity
-                    key={`${ev.date}-${idx}`}
-                    onPress={() => {
-                      if (isToday)      router.push('/(tabs)/today' as any);
-                      else if (isDone)  router.push(`/session-detail?date=${ev.date}&sessionType=${encodeURIComponent(ev.sessionType)}` as any);
-                      else              router.push('/(tabs)/log' as any);
-                    }}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', gap: 12,
-                      backgroundColor: isToday ? COLORS.accent + '15'
-                        : isDone  ? '#EF535012'
-                        : isPast  ? '#0E0E10'
-                        : '#4DCEA608',
-                      borderRadius: 12,
-                      borderLeftWidth: 5,
-                      borderLeftColor: statusColor,
-                      borderWidth: 1,
-                      borderColor: isToday ? COLORS.accent + '60'
-                        : isDone  ? '#EF535030'
-                        : isPast  ? '#1E1E22'
-                        : '#4DCEA625',
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    {/* Day + date badge */}
-                    <View style={{
-                      width: 44,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: statusColor + '20',
-                      borderRadius: 8,
-                      paddingVertical: 6,
-                    }}>
-                      <Text style={{ fontSize: 9, color: statusColor, fontWeight: '700', letterSpacing: 0.5 }}>{dayAbbr}</Text>
-                      <Text style={{ fontSize: 18, fontWeight: '800', color: isPast && !isDone ? '#555' : '#E8E8E6' }}>{dayNum}</Text>
-                    </View>
-
-                    {/* Session type + status pill */}
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: isPast && !isDone ? '#666' : '#E8E8E6' }}>
-                        {ev.sessionType || 'Training'}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: statusColor + '25' }}>
-                          <Text style={{ fontSize: 10, color: statusColor, fontWeight: '700', letterSpacing: 0.3 }}>
-                            {isDone ? 'COMPLETED' : isToday ? 'TODAY' : isPast ? 'MISSED' : 'UPCOMING'}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-
-                    {/* Right icon */}
-                    {isDone    && <MaterialCommunityIcons name="check-circle"        size={22} color="#EF5350"      />}
-                    {isToday && !isDone && <MaterialCommunityIcons name="arrow-right-circle" size={22} color={COLORS.accent} />}
-                    {!isToday && !isDone && !isPast && <MaterialCommunityIcons name="chevron-right"  size={20} color="#4DCEA6" />}
-                    {isPast  && !isDone && <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#666" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
+        {/* The seven-row "this week" list lived here. The Schedule tab already
+            shows the same week (and three more), so on the homepage it was a
+            second copy of a screen one tap away. */}
         {/* ── WEEKLY STATS STRIP (compact horizontal) ── */}
         <View style={s.statsStrip}>
           <StripStat
