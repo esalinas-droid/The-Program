@@ -43,7 +43,14 @@ export default function OnboardingPathPicker() {
   const [choosingPrograms, setChoosingPrograms] = useState(false);
 
   const handleBuild = () => {
-    router.push('/onboarding-intake');
+    // In switch mode the athlete already has a profile and training history, so
+    // send them down the rebuild path: their answers are pre-filled, the name
+    // step is skipped, and the plan is rebuilt rather than created from scratch.
+    // Without this, "+ New Program" treated an existing athlete as a brand new
+    // user and re-asked every onboarding question.
+    router.push(isSwitchMode
+      ? { pathname: '/onboarding-intake', params: { mode: 'rebuild' } }
+      : '/onboarding-intake');
   };
 
   const handleImport = () => {

@@ -87,6 +87,44 @@ export default function ProgramDetailScreen() {
     }
   };
 
+  /**
+   * Land the athlete on their newly-activated program instead of deeper in the
+   * navigation stack.
+   *
+   * This used to `push('/programs')`, stacking a second Programs screen on top of
+   * Settings → Programs → this detail screen — so after switching programs you
+   * had to back out of every screen you came through. Clearing the stack and
+   * going to Today shows the thing you just switched to.
+   */
+  const goToActivatedProgram = () => {
+    try { (router as any).dismissAll?.(); } catch { /* not in a dismissable stack */ }
+    router.replace('/(tabs)/today' as any);
+  };
+
+  /**
+   * Cancelling the week picker still has to finish the job.
+   *
+   * By the time this modal is on screen the program has ALREADY been made active
+   * server-side — only the "which week do I resume at" question is outstanding.
+   * Simply closing the modal left the plan active but never re-anchored: its
+   * start date still pointed at whenever it was first created, so the app could
+   * compute a week beyond the end of the program and show no session at all.
+   * Cancel now completes the activation at the suggested week.
+   */
+  const handleCancelReactivate = async () => {
+    const fallbackWeek = reactivatePayload?.last_active_week ?? 1;
+    setShowReactivateModal(false);
+    if (!plan) return;
+    try {
+      await programsApi.reactivate(plan.planId, fallbackWeek);
+      const freshProfile = await profileApi.get();
+      await saveProfile(freshProfile as any);
+    } catch {
+      /* non-fatal — the program is active either way; the week stays as-is */
+    }
+    goToActivatedProgram();
+  };
+
   const handleConfirmReactivate = async (week: number) => {
     if (!plan || !reactivatePayload) return;
     setShowReactivateModal(false);
@@ -103,7 +141,7 @@ export default function ProgramDetailScreen() {
         week === 1
           ? 'Starting fresh from Week 1.'
           : `Resuming at Week ${week} of ${reactivatePayload.total_weeks}.`,
-        [{ text: 'Got it', onPress: () => router.push('/programs') }],
+        [{ text: 'Got it', onPress: goToActivatedProgram }],
       );
     } catch (e) {
       Alert.alert('Error', 'Could not update your progress. Please try again.');
@@ -273,7 +311,7 @@ export default function ProgramDetailScreen() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setShowReactivateModal(false)} style={s.modalCancelBtn}>
+            <TouchableOpacity onPress={handleCancelReactivate} style={s.modalCancelBtn}>
               <Text style={s.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>

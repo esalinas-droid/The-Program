@@ -372,8 +372,14 @@ export default function OnboardingIntake() {
         const p: any = await profileApi.get();
         if (!p) return;
 
-        // Step 1 — Name
-        if (p.name) setUserName(p.name);
+        // Step 1 — Name. An athlete rebuilding a program has already told us
+        // their name; asking again is the app forgetting who they are. Skip
+        // straight past it rather than showing a pre-filled field they have to
+        // dismiss.
+        if (p.name) {
+          setUserName(p.name);
+          setStep(prev => (prev === 1 ? 2 : prev));
+        }
 
         // Step 2 — Goal (direct match, GOAL_MAP values equal labels)
         if (p.goal) setGoal(p.goal);
