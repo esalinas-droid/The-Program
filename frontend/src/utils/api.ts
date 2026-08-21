@@ -143,6 +143,18 @@ export const authApi = {
    */
   updatePreferences: (data: { marketingOptIn?: boolean }) =>
     api('/auth/preferences', { method: 'PUT', body: JSON.stringify(data) }),
+
+  /** Request a reset code. Always succeeds — the response never reveals
+   *  whether the address is registered. */
+  forgotPassword: (email: string) =>
+    api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+
+  /** Complete a reset with the emailed code. Returns a session on success. */
+  resetPassword: (email: string, code: string, newPassword: string) =>
+    api('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, code, newPassword }),
+    }),
 };
 
 // Log

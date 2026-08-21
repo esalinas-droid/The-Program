@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import os
 import uuid
+import secrets
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import jwt
@@ -330,6 +331,134 @@ async def login(body: LoginRequest):
     )
     token = create_jwt(user["userId"], email, user["name"])
     logger.info(f"User logged in: {email}")
+    return _user_response(user, token)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    newPassword: str
+
+
+RESET_CODE_TTL_MINUTES = 15
+RESET_MAX_ATTEMPTS = 5
+
+
+async def _send_reset_email(email: str, name: str, code: str) -> bool:
+    """Send the reset code. Returns False when email isn't configured."""
+    if not RESEND_API_KEY or RESEND_API_KEY.startswith("re_placeholder"):
+        logger.warning("Password reset email NOT sent (no Resend key configured): %s", email)
+        return False
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        first = (name or "").split()[0] if name else "Athlete"
+        resend.Emails.send({
+            "from":    RESEND_FROM,
+            "to":      [email],
+            "subject": "Reset your password",
+            "html": f"""
+                <div style="font-family:sans-serif;max-width:520px;margin:auto;background:#0A0A0C;color:#E8E8E6;padding:36px 30px;border-radius:12px">
+                  <h1 style="color:#C9A84C;margin:0 0 10px;font-size:22px">Reset your password</h1>
+                  <p style="color:#B0B0AA;font-size:15px;line-height:1.6">
+                    {first}, enter this code in the app to set a new password. It expires in
+                    {RESET_CODE_TTL_MINUTES} minutes.
+                  </p>
+                  <p style="font-size:34px;letter-spacing:9px;font-weight:800;color:#fff;margin:26px 0;text-align:center">{code}</p>
+                  <p style="color:#77756F;font-size:13px;line-height:1.6">
+                    If you didn't ask for this, ignore this email — your password won't change.
+                  </p>
+                </div>
+            """,
+        })
+        return True
+    except Exception as e:
+        logger.error("Failed to send reset email to %s: %s", email, e)
+        return False
+
+
+@auth_router.post("/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest):
+    """Start a password reset.
+
+    Always reports success. Telling an anonymous caller whether an address is
+    registered would turn this into an account-enumeration oracle.
+    """
+    email = body.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+
+    if user and user.get("authProvider") == "email":
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        await db.password_resets.update_one(
+            {"email": email},
+            {"$set": {
+                "email":     email,
+                "codeHash":  bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode(),
+                "expiresAt": datetime.now(timezone.utc) + timedelta(minutes=RESET_CODE_TTL_MINUTES),
+                "attempts":  0,
+                "createdAt": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
+        await db.password_resets.create_index("email", unique=True, background=True)
+        sent = await _send_reset_email(email, user.get("name", ""), code)
+        if not sent:
+            logger.warning("Reset code generated for %s but could not be emailed.", email)
+    elif user:
+        logger.info("Reset requested for a %s account: %s", user.get("authProvider"), email)
+
+    return {
+        "success": True,
+        "message": "If that email is registered, a reset code is on its way.",
+    }
+
+
+@auth_router.post("/reset-password")
+async def reset_password(body: ResetPasswordRequest):
+    """Complete a password reset with the emailed code."""
+    email = body.email.lower().strip()
+    if len(body.newPassword) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    rec = await db.password_resets.find_one({"email": email})
+    if not rec:
+        raise HTTPException(status_code=400, detail="That code isn't valid. Request a new one.")
+
+    expires = rec.get("expiresAt")
+    if isinstance(expires, str):
+        expires = datetime.fromisoformat(expires)
+    if expires and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if not expires or expires < datetime.now(timezone.utc):
+        await db.password_resets.delete_one({"email": email})
+        raise HTTPException(status_code=400, detail="That code has expired. Request a new one.")
+
+    # Rate-limit guessing: a 6-digit code is only safe with a small attempt budget.
+    if int(rec.get("attempts", 0)) >= RESET_MAX_ATTEMPTS:
+        await db.password_resets.delete_one({"email": email})
+        raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
+
+    if not bcrypt.checkpw(body.code.strip().encode(), rec["codeHash"].encode()):
+        await db.password_resets.update_one({"email": email}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=400, detail="That code isn't valid. Request a new one.")
+
+    user = await db.users.find_one({"email": email})
+    if not user:
+        await db.password_resets.delete_one({"email": email})
+        raise HTTPException(status_code=400, detail="That code isn't valid. Request a new one.")
+
+    await db.users.update_one(
+        {"userId": user["userId"]},
+        {"$set": {"passwordHash": bcrypt.hashpw(body.newPassword.encode(), bcrypt.gensalt()).decode()}},
+    )
+    await db.password_resets.delete_one({"email": email})   # single use
+
+    token = create_jwt(user["userId"], email, user.get("name", ""))
+    logger.info("Password reset completed: %s", email)
     return _user_response(user, token)
 
 

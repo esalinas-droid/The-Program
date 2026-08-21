@@ -420,6 +420,18 @@ export default function AuthScreen() {
                 <MaterialCommunityIcons name={showPw ? 'eye-off' : 'eye'} size={20} color={MUTED} />
               </TouchableOpacity>
             </View>
+            {mode === 'login' && (
+              <TouchableOpacity
+                onPress={() => router.push({
+                  pathname: '/forgot-password' as any,
+                  params: email.trim() ? { email: email.trim() } : {},
+                })}
+                style={{ alignSelf: 'flex-end', paddingVertical: 8 }}
+                hitSlop={8}
+              >
+                <Text style={{ color: MUTED, fontSize: 13 }}>Forgot password?</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <TouchableOpacity
