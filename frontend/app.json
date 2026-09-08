@@ -9,6 +9,13 @@
     "scheme": "theprogram",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "updates": {
+      "url": "https://u.expo.dev/22450607-155d-450e-a3ad-5dfa37664b96",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.theprogramapp.ai",
