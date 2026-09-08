@@ -4747,45 +4747,89 @@ export default function TodayScreen() {
     }
   };
 
+  /**
+   * Build the field-derived half of a log payload for one set.
+   *
+   * Logging and editing have to produce the same shape. The edit handlers used
+   * to send a bare {weight, reps, rpe: 7}, which dropped the per-set unit tag —
+   * and the server reads a missing weightUnit as pounds (`entry.weightUnit or
+   * "lbs"`), so an edited kilo set was scored as though the number were pounds.
+   * The flat rpe: 7 was just as bad: it overwrote the effort the athlete
+   * actually entered, which is the signal the load suggestions read.
+   */
+  const buildSetFieldPayload = (
+    ex: { fields?: FieldSpec[]; category?: string } | undefined,
+    setId: string,
+  ) => {
+    const vals     = setValuesRef.current[setId] ?? setValues[setId];
+    const exFields = ex?.fields ?? [{ type: 'weight' }, { type: 'reps' }];
+    const flags = {
+      hasWeight: exFields.some(f => f.type === 'weight'),
+      hasReps:   exFields.some(f => f.type === 'reps'),
+      hasTime:   exFields.some(f => f.type === 'time'),
+      hasDist:   exFields.some(f => f.type === 'distance'),
+      hasCal:    exFields.some(f => f.type === 'calories'),
+      hasRpe:    exFields.some(f => f.type === 'rpe'),
+    };
+    const elapsedTime = flags.hasTime ? (parseFloat((vals as any)?.timeElapsed ?? '') || undefined) : undefined;
+    const distance    = flags.hasDist ? (parseFloat((vals as any)?.distance    ?? '') || undefined) : undefined;
+    const calories    = flags.hasCal  ? (parseFloat((vals as any)?.calories    ?? '') || undefined) : undefined;
+
+    const values = {
+      sets:       1,
+      weight:     flags.hasWeight ? (parseFloat((vals as any)?.weight ?? '') || 0) : 0,
+      reps:       flags.hasReps   ? (parseInt((vals as any)?.reps     ?? '') || 0) : 0,
+      rpe:        flags.hasRpe    ? (parseFloat((vals as any)?.rpe    ?? '') || 7) : 7,
+      pain:       0,
+      completed:  'yes',
+      category:   ex?.category,
+      // P4: per-set toggle wins; '' (cleared override) falls back to the profile default
+      weightUnit: (vals as any)?.weightUnit || (profileUnits === 'kgs' ? 'kg' : 'lb'),
+      ...(elapsedTime !== undefined && { elapsedTime }),
+      ...(distance    !== undefined && { distance }),
+      ...(calories    !== undefined && { calories }),
+    };
+    return { values, flags };
+  };
+
   const handleEditSave = async (exId: string, setId: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const ex = exercises.find(e => e.id === exId);
     if (!ex) return;
-    const vals    = setValuesRef.current[setId] ?? setValues[setId];
-    const weight  = parseFloat(vals?.weight || '0') || 0;
-    const reps    = parseInt(vals?.reps || '1') || 1;
     const setIdx  = ex.sets.findIndex(s => s.id === setId);
-    // Audit Bug #6 fix: capture old entry id BEFORE deleting, so we can roll
-    // back logEntryIds if the new entry create fails. Previously, if delete
-    // succeeded but create failed (network blip, validation error), the old
-    // id was forgotten and the set looked logged on screen but the server
-    // had no record.
-    const oldEntryId = logEntryIds[setId];
+    const entryId = logEntryIds[setId];
+    const { values, flags } = buildSetFieldPayload(ex, setId);
+    const todayStr  = getLocalDateString();
+    const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const payload = {
+      date: todayStr, week: week || 1, day: dayOfWeek,
+      sessionType: sessionType || 'Training',
+      exercise: ex.name,
+      setIndex: setIdx >= 0 ? setIdx : undefined,
+      notes: notesByExercise[ex.id] || undefined,
+      prescriptionType: flags.hasTime && !flags.hasReps ? 'timed'
+        : !flags.hasWeight && flags.hasReps ? 'reps'
+        : undefined,
+      ...values,
+    };
     try {
-      // BUG 3 fix: delete old entry first to prevent duplicates
-      if (oldEntryId) {
-        await logApi.delete(oldEntryId).catch(() => {});
-      }
-      const todayStr  = getLocalDateString();
-      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-      const result = await logApi.create({
-        date: todayStr, week: week || 1, day: dayOfWeek,
-        sessionType: sessionType || 'Training',
-        exercise: ex.name, sets: 1, weight, reps, rpe: 7, pain: 0, completed: 'yes',
-        setIndex: setIdx >= 0 ? setIdx : undefined,
-      });
-      if (result?._id || result?.id) {
-        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      if (entryId) {
+        // Edit in place rather than delete-then-recreate. The entry keeps its
+        // id, so it stays attached to its session, and a failure here leaves
+        // the original row untouched instead of destroying it — there is no
+        // longer a window where the set exists nowhere.
+        await logApi.update(entryId, payload);
       } else {
-        // No id back from server — treat as failure, drop stale id from state
-        setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+        const result = await logApi.create(payload);
+        if (result?._id || result?.id) {
+          setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+        }
       }
     } catch (e) {
       console.warn('[Today] Edit save failed:', e);
-      // Roll back: drop the stale id (the old entry was deleted, the new one
-      // didn't land). User will see the set as un-logged on next refresh and
-      // can retry. Better than showing it as logged when it isn't.
-      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+      // The row on the server is still the pre-edit one, so logEntryIds stays
+      // valid — don't drop it. Tell the athlete their change didn't land.
+      Alert.alert('Edit not saved', 'Your change could not be saved. Please try again.');
     }
   };
 
@@ -5603,34 +5647,43 @@ export default function TodayScreen() {
     }
   };
 
-  // ── Tracker Mode: edit-save (delete old entry, write new one at week 0) ──────
+  // ── Tracker Mode: edit-save (updates the existing week-0 entry in place) ─────
   const handleTrackerEditSave = async (exId: string, setId: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const ex = trackerExercises.find(e => e.id === exId);
     if (!ex) return;
-    const vals    = setValuesRef.current[setId] ?? setValues[setId];
-    const weight  = parseFloat(vals?.weight || '0') || 0;
-    const reps    = parseInt(vals?.reps     || '1') || 1;
     const setIdx  = ex.sets.findIndex(s => s.id === setId);
-    const oldId   = logEntryIds[setId];
+    const entryId = logEntryIds[setId];
+    const { values, flags } = buildSetFieldPayload(ex, setId);
+    const todayStr  = getLocalDateString();
+    const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const payload = {
+      date: todayStr, week: 0, day: dayOfWeek,  // ← TRACKER: week 0
+      sessionType: 'Tracker',
+      exercise: ex.name,
+      setIndex: setIdx >= 0 ? setIdx : undefined,
+      prescriptionType: ex.category === 'gpp'
+        ? (flags.hasTime && !flags.hasReps ? 'timed'
+          : flags.hasDist ? 'distance'
+          : flags.hasCal  ? 'calories'
+          : undefined)
+        : undefined,
+      ...values,
+    };
     try {
-      if (oldId) await logApi.delete(oldId).catch(() => {});
-      const todayStr  = getLocalDateString();
-      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-      const result = await logApi.create({
-        date: todayStr, week: 0, day: dayOfWeek,  // ← TRACKER: week 0
-        sessionType: 'Tracker',
-        exercise: ex.name, sets: 1, weight, reps, rpe: 7, pain: 0, completed: 'yes',
-        setIndex: setIdx >= 0 ? setIdx : undefined,
-      });
-      if (result?._id || result?.id) {
-        setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+      // Update in place: deleting and recreating detached the set from its
+      // tracker session, so an edited set fell out of the session it belonged to.
+      if (entryId) {
+        await logApi.update(entryId, payload);
       } else {
-        setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+        const result = await logApi.create(payload);
+        if (result?._id || result?.id) {
+          setLogEntryIds(prev => ({ ...prev, [setId]: result._id || result.id }));
+        }
       }
     } catch (e) {
       console.warn('[Today] Tracker edit-save failed:', e);
-      setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+      Alert.alert('Edit not saved', 'Your change could not be saved. Please try again.');
     }
   };
 
