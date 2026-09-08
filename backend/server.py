@@ -4844,31 +4844,42 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     _program_ctx_str = f"\n\nPROGRAM OVERVIEW:\n{program_overview}" if program_overview else ""
 
     # ── 7. RAG: retrieve relevant passages ────────────────────────────────────
-    embedding_response = await _openai_client.embeddings.create(
-        model='text-embedding-3-small',
-        input=request.message,
-        dimensions=512
-    )
-    embedding = embedding_response.data[0].embedding
+    # The embedding only *enriches* the answer — it decides which library
+    # passages get quoted. It is not required to coach. Unguarded, an OpenAI
+    # blip (rate limit, network, expired key) took the whole endpoint down with
+    # a 500 and the athlete saw a coach that was simply broken, even though
+    # everything that actually matters — their program, pain history, readiness,
+    # session ratings — was already loaded and needed no embedding at all.
+    embedding = None
+    try:
+        embedding_response = await _openai_client.embeddings.create(
+            model='text-embedding-3-small',
+            input=request.message,
+            dimensions=512
+        )
+        embedding = embedding_response.data[0].embedding
+    except Exception as _emb_err:
+        logger.warning("[CoachChat] Embedding failed — answering without library search: %s", _emb_err)
 
     retrieved_passages = ""
     sources = []
-    try:
-        rag_result = _supabase_client.rpc(
-            'match_documents',
-            {'query_embedding': embedding, 'match_threshold': 0.3, 'match_count': 4}
-        ).execute()
-        if rag_result.data:
-            passage_lines = []
-            for i, chunk in enumerate(rag_result.data):
-                source  = chunk.get('metadata', {}).get('source', 'Coaching Library')
-                content = chunk.get('content', '')[:300]  # cap each passage to save tokens
-                passage_lines.append(f"[{i+1}] {content}")
-                sources.append({"title": source, "page": "", "preview": content[:120]})
-            retrieved_passages = "\n\n".join(passage_lines)
-    except Exception as e:
-        logger.warning(f"Supabase query failed: {e}")
-        retrieved_passages = ""
+    if embedding is not None:
+        try:
+            rag_result = _supabase_client.rpc(
+                'match_documents',
+                {'query_embedding': embedding, 'match_threshold': 0.3, 'match_count': 4}
+            ).execute()
+            if rag_result.data:
+                passage_lines = []
+                for i, chunk in enumerate(rag_result.data):
+                    source  = chunk.get('metadata', {}).get('source', 'Coaching Library')
+                    content = chunk.get('content', '')[:300]  # cap each passage to save tokens
+                    passage_lines.append(f"[{i+1}] {content}")
+                    sources.append({"title": source, "page": "", "preview": content[:120]})
+                retrieved_passages = "\n\n".join(passage_lines)
+        except Exception as e:
+            logger.warning(f"Supabase query failed: {e}")
+            retrieved_passages = ""
 
     # ── 8. Build enhanced system prompt (target < 3500 tokens) ───────────────
     coaching_intelligence = ""
@@ -4885,8 +4896,11 @@ async def coach_chat(request: CoachRequest, userId: str = Depends(get_current_us
     user_doc_rag_section = ""
     try:
         import numpy as np
-        user_chunks_cursor = db.user_document_chunks.find({"userId": userId})
-        user_chunks = await user_chunks_cursor.to_list(500)
+        # No embedding means nothing to compare the athlete's chunks against.
+        user_chunks = (
+            await db.user_document_chunks.find({"userId": userId}).to_list(500)
+            if embedding is not None else []
+        )
         if user_chunks:
             q_emb = np.array(embedding, dtype=np.float32)
             scored = []
