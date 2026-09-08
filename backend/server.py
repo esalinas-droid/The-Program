@@ -1371,6 +1371,7 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
     try:
         await _ensure_plan_loaded(userId)
         plan = _prog_store["plans"].get(userId)
+        marked = False
         if plan and session_id:
             from models.schemas import SessionStatus as _SS
             for phase in plan.phases:
@@ -1379,7 +1380,14 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
                         for session in week.sessions:
                             if getattr(session, "sessionId", "") == session_id:
                                 session.status = _SS.COMPLETED
+                                marked = True
                                 logger.info(f"[FinishSession] Marked {session_id} complete for {userId}")
+        if marked:
+            # Marking the session only touched the in-memory copy of the plan.
+            # A restart — or simply a request landing on a different worker —
+            # put the session back to unfinished, so the athlete was invited to
+            # repeat a session they had already done.
+            await _save_plan_to_db(plan, userId)
     except Exception as e:
         logger.warning(f"[FinishSession] Could not mark session in plan: {e}")
     return {
