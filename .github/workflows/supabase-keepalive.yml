@@ -1,30 +1,82 @@
-# Keeps the Supabase knowledge base (Pocket Coach's 25k-chunk RAG library) awake.
-# Free-tier Supabase projects auto-pause after ~7 days without API activity;
-# a pause was found on Aug 3, 2026 and had silently disabled coach book-search
-# in production. This pings a dedicated keepalive_ping() RPC twice a week.
+# Keeps the Supabase knowledge base (Pocket Coach's 25k-chunk RAG library) usable.
 #
-# The key below is the Supabase ANON (public client) key — safe to commit by
+# Free-tier projects auto-pause, and pinging them does NOT reliably stop it: the
+# keepalive RPC below succeeded on Aug 6, 10 and 13 2026 and the project paused
+# anyway on Aug 17, then again around Aug 27. Each pause silently disabled coach
+# book-search in production until someone noticed by hand.
+#
+# So this no longer tries only to prevent a pause — it checks the real project
+# status every morning and restores it if it has gone INACTIVE. A restore takes
+# roughly four minutes and the library survives it intact (verified across three
+# pauses: 25,088 knowledge_base + 3,804 document_chunks each time).
+#
+# The anon key below is the Supabase public client key — safe to commit by
 # design. It can only execute keepalive_ping(); all data tables deny it.
+# The restore step needs a Supabase personal access token in repo secrets as
+# SUPABASE_ACCESS_TOKEN. Without it the workflow still pings and still reports a
+# pause; it just can't fix one on its own.
 name: Supabase keep-awake
 
 on:
   schedule:
-    - cron: "17 6 * * 1,4" # Mondays and Thursdays 06:17 UTC
+    - cron: "17 6 * * *" # every day 06:17 UTC — a pause should never sit unnoticed
   workflow_dispatch: {}
 
+env:
+  PROJECT_REF: eglmhlyrpdwqsfuliobt
+
 jobs:
-  ping:
+  ensure-awake:
     runs-on: ubuntu-latest
     steps:
       - name: Ping keepalive_ping RPC
+        continue-on-error: true # a failure here usually just means "paused" — the next step handles it
         run: |
           KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVnbG1obHlycGR3cXNmdWxpb2J0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MzQ3NjQsImV4cCI6MjA4OTUxMDc2NH0.J7ip9qpLqLXe5GPH-NftO_ve71ivtJd5NzRiwqjM6vY"
           CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
-            "https://eglmhlyrpdwqsfuliobt.supabase.co/rest/v1/rpc/keepalive_ping" \
+            "https://${PROJECT_REF}.supabase.co/rest/v1/rpc/keepalive_ping" \
             -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
             -H "Content-Type: application/json" -d '{}')
           cat /tmp/resp.txt
-          if [ "$CODE" != "200" ]; then
-            echo "Keepalive failed with HTTP $CODE — Supabase project may be paused or broken."
-            exit 1
+          echo "ping HTTP $CODE"
+
+      - name: Restore the project if it has paused
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::warning::SUPABASE_ACCESS_TOKEN is not set, so a paused project cannot be restored automatically."
+            echo "Add a Supabase personal access token at Settings -> Secrets and variables -> Actions."
+            exit 0
           fi
+
+          STATUS=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+            "https://api.supabase.com/v1/projects/${PROJECT_REF}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','UNKNOWN'))")
+          echo "project status: $STATUS"
+
+          case "$STATUS" in
+            ACTIVE_HEALTHY)
+              echo "Awake. Nothing to do."
+              ;;
+            RESTORING|COMING_UP|UNKNOWN)
+              # Already on its way up, or the API told us something we don't
+              # recognise. Either way, poking it again would not help.
+              echo "::notice::Status is $STATUS — leaving it alone this run."
+              ;;
+            *)
+              echo "::warning::Project is $STATUS — restoring."
+              CODE=$(curl -s -o /tmp/restore.txt -w "%{http_code}" -X POST \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                "https://api.supabase.com/v1/projects/${PROJECT_REF}/restore" -d '{}')
+              cat /tmp/restore.txt
+              if [ "$CODE" != "200" ] && [ "$CODE" != "201" ]; then
+                echo "::error::Restore failed with HTTP $CODE. The coach's book search is down until this is fixed by hand."
+                exit 1
+              fi
+              echo "::notice::Restore started. The library is usually back within ~4 minutes."
+              ;;
+          esac
