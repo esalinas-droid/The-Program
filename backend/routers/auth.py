@@ -602,6 +602,7 @@ async def delete_account(authorization: Optional[str] = Header(None)):
         "readiness_checks", "checkins", "calendar_overrides", "user_exercises",
         "rehab_protocols", "rehab_logs", "deload_history", "image_credits",
         "credit_transactions", "weekly_quests", "streak_freezes",
+        "session_finishes",
     ]
     for coll in user_collections:
         await db[coll].delete_many({"userId": user_id})

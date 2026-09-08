@@ -344,8 +344,18 @@ export const programApi = {
     api('/session/adjust-exercise', { method: 'POST', body: JSON.stringify({ exerciseId, exerciseName, reason }) }),
   applyAdjustment: (sessionId: string, oldExercise: string, newExercise: string, reason: string) =>
     api('/session/apply-adjustment', { method: 'POST', body: JSON.stringify({ sessionId, oldExercise, newExercise, reason }) }),
-  finishSession: (sessionId: string): Promise<PostWorkoutReviewData> =>
-    api('/session/finish', { method: 'POST', body: JSON.stringify({ sessionId }) }),
+  finishSession: (sessionId: string, date?: string): Promise<PostWorkoutReviewData> =>
+    api('/session/finish', { method: 'POST', body: JSON.stringify({ sessionId, date }) }),
+  /**
+   * Whether the athlete already finished training on a date. Server-side so the
+   * answer follows them to another device and survives a reinstall — the local
+   * 'today_finished_date' flag only ever knew about one phone.
+   */
+  getSessionFinished: (date?: string): Promise<{ date: string; finished: boolean; sessionId: string }> =>
+    api(`/session/finished${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  /** Reopen a day the athlete had marked finished — they logged another set. */
+  unfinishSession: (date?: string) =>
+    api(`/session/finish${date ? `?date=${encodeURIComponent(date)}` : ''}`, { method: 'DELETE' }),
 
   // Pain
   logPain: (data: { exerciseId?: string; sessionId?: string; location: string; score: number; note?: string }) =>

@@ -1365,31 +1365,35 @@ async def get_current_block_mongo(userId: str = Depends(get_current_user)):
 
 @api_router.post("/session/finish")
 async def finish_session(body: dict, userId: str = Depends(get_current_user)):
-    """Mark a session as complete. Non-critical — log entries already saved via /log.
-    Resets in-memory session cache so the next visit loads fresh."""
+    """Record that the athlete has finished training for the day.
+
+    Deliberately does NOT set session.status = COMPLETED. GET /plan/session/today
+    only ever returns sessions whose status is PLANNED or IN_PROGRESS, so a
+    completed session is skipped and Today quietly swaps in a different one —
+    whose exercises no longer match the sets just logged, which reads to the
+    athlete as though the whole session was lost.
+
+    db.log stays the source of truth for what was actually done. This is only
+    the "I'm done for today" marker, and it lives server-side and keyed by date
+    so it follows the athlete to their other devices instead of sitting in one
+    phone's local storage.
+    """
     session_id = body.get("sessionId", "")
+    finish_date = body.get("date") or datetime.now().strftime("%Y-%m-%d")
     try:
-        await _ensure_plan_loaded(userId)
-        plan = _prog_store["plans"].get(userId)
-        marked = False
-        if plan and session_id:
-            from models.schemas import SessionStatus as _SS
-            for phase in plan.phases:
-                for block in phase.blocks:
-                    for week in block.weeks:
-                        for session in week.sessions:
-                            if getattr(session, "sessionId", "") == session_id:
-                                session.status = _SS.COMPLETED
-                                marked = True
-                                logger.info(f"[FinishSession] Marked {session_id} complete for {userId}")
-        if marked:
-            # Marking the session only touched the in-memory copy of the plan.
-            # A restart — or simply a request landing on a different worker —
-            # put the session back to unfinished, so the athlete was invited to
-            # repeat a session they had already done.
-            await _save_plan_to_db(plan, userId)
+        await db.session_finishes.update_one(
+            {"userId": userId, "date": finish_date},
+            {"$set": {
+                "userId":     userId,
+                "date":       finish_date,
+                "sessionId":  session_id,
+                "finishedAt": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        logger.info(f"[FinishSession] {userId} finished {finish_date} (session {session_id or 'n/a'})")
     except Exception as e:
-        logger.warning(f"[FinishSession] Could not mark session in plan: {e}")
+        logger.warning(f"[FinishSession] Could not record finish marker: {e}")
     return {
         "sessionId": session_id,
         "completedSets": 0,
@@ -1400,6 +1404,30 @@ async def finish_session(body: dict, userId: str = Depends(get_current_user)):
         "coachNote": "Great work — sets saved to your log.",
         "whatsNext": "Rest up and come back for your next session.",
     }
+
+
+@api_router.get("/session/finished")
+async def get_session_finished(date: str = None, userId: str = Depends(get_current_user)):
+    """Has the athlete already finished training on this date?
+
+    Read by Today and Home so "session complete" survives a reinstall and shows
+    up on a second device, rather than living only in one phone's storage.
+    """
+    day = date or datetime.now().strftime("%Y-%m-%d")
+    doc = await db.session_finishes.find_one({"userId": userId, "date": day})
+    return {
+        "date":      day,
+        "finished":  bool(doc),
+        "sessionId": (doc or {}).get("sessionId", ""),
+    }
+
+
+@api_router.delete("/session/finish")
+async def unfinish_session(date: str = None, userId: str = Depends(get_current_user)):
+    """Reopen a day the athlete had marked finished — they logged another set."""
+    day = date or datetime.now().strftime("%Y-%m-%d")
+    result = await db.session_finishes.delete_one({"userId": userId, "date": day})
+    return {"date": day, "deleted": result.deleted_count > 0}
 
 
 class UpdateMaxesBody(BaseModel):

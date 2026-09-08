@@ -182,17 +182,31 @@ export default function Dashboard() {
       setProgramSession(null);
     }
 
-    // ── Check AsyncStorage for "session finished today" flag ──────────────────
-    // today.tsx writes AsyncStorage.setItem('today_finished_date', localDate) when
-    // the user presses FINISH SESSION. This is the authoritative completion signal.
-    // (The backend's finishSession API is intentionally skipped in today.tsx to
-    //  prevent re-sync bugs, so session.status stays 'planned' — never use that.)
+    // ── Has the athlete finished training today? ──────────────────────────────
+    // The local 'today_finished_date' key is checked first because it is instant
+    // and works offline, but it only ever knew about this one phone. The server
+    // marker is what makes the answer survive a reinstall and appear on a second
+    // device, so fall through to it when there's nothing local.
+    //
+    // session.status is still NOT the signal: /plan/session/today only returns
+    // PLANNED or IN_PROGRESS sessions, so completing one there makes Today hand
+    // back a different session entirely. /session/finish deliberately leaves
+    // status alone and writes a date-keyed marker instead.
+    const todayLocalDate = getLocalDateString();
+    let finishedToday = false;
     try {
-      const finishedDate = await AsyncStorage.getItem('today_finished_date');
-      setTodaySessionFinished(finishedDate === getLocalDateString());
+      finishedToday = (await AsyncStorage.getItem('today_finished_date')) === todayLocalDate;
     } catch {
-      setTodaySessionFinished(false);
+      finishedToday = false;
     }
+    if (!finishedToday) {
+      try {
+        finishedToday = !!(await programApi.getSessionFinished(todayLocalDate))?.finished;
+      } catch {
+        // Offline or endpoint unavailable — the local answer stands.
+      }
+    }
+    setTodaySessionFinished(finishedToday);
 
     // Compute this week's Mon-Sun date range (local time, matches Schedule page)
     const now = new Date();
@@ -370,10 +384,10 @@ export default function Dashboard() {
   const todayDateStr  = getLocalDateString();   // local time — safe for any timezone
 
   // ── 4-state session card logic ──────────────────────────────────────────────
-  // COMPLETE    : user hit FINISH SESSION today (AsyncStorage 'today_finished_date' == today)
-  //               This is the authoritative signal. today.tsx intentionally skips
-  //               the finishSession API so session.status stays 'planned' — never
-  //               rely on !programSession to detect completion.
+  // COMPLETE    : user hit FINISH SESSION today — local 'today_finished_date',
+  //               falling back to the server's date-keyed marker so it holds on a
+  //               second device. session.status stays 'planned' by design, so
+  //               never rely on !programSession to detect completion.
   // IN_PROGRESS : calendar has logs for today but FINISH hasn't been pressed yet
   // PENDING     : no logs yet, session waiting to start
   // REST_DAY    : today is Off (or no session data at all)

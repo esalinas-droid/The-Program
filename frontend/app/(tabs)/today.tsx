@@ -3107,6 +3107,28 @@ export default function TodayScreen() {
   const SKIPPED_EXERCISES_KEY = 'today_skipped_exercises'; // today-only prescribed skip list (coach REMOVE/SWAP)
   const TODAY_INVALIDATE_KEY  = 'today_pending_invalidation'; // set by coach → force re-load on next focus
 
+  /**
+   * Record "finished training today", locally and on the server.
+   *
+   * The local key is written first and never waits on the network, so the button
+   * flips to SESSION COMPLETE instantly and still reads correctly offline. The
+   * server call is what makes the answer survive a reinstall and show up on a
+   * second device — the local key only ever knew about one phone.
+   */
+  const markFinishedToday = useCallback((sessionIdForToday: string = '') => {
+    const day = getLocalDateString();
+    AsyncStorage.setItem(FINISHED_DATE_KEY, day).catch(() => {});
+    programApi.finishSession(sessionIdForToday, day)
+      .catch(err => console.warn('[Today] Could not record finish on the server:', err));
+  }, []);
+
+  /** The athlete logged or added another set, so the day is no longer finished. */
+  const clearFinishedToday = useCallback(() => {
+    AsyncStorage.removeItem(FINISHED_DATE_KEY).catch(() => {});
+    programApi.unfinishSession(getLocalDateString())
+      .catch(err => console.warn('[Today] Could not reopen the day on the server:', err));
+  }, []);
+
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
   ) => {
@@ -3477,6 +3499,19 @@ export default function TodayScreen() {
         const savedFinishedDate = await AsyncStorage.getItem(FINISHED_DATE_KEY);
         if (savedFinishedDate === todayStr) {
           setSessionFinished(true);
+        } else {
+          // Nothing local — but the athlete may have finished on another phone,
+          // or reinstalled since. Ask the server, and cache the answer so the
+          // next cold start doesn't need the network.
+          try {
+            const remote = await programApi.getSessionFinished(todayStr);
+            if (remote?.finished) {
+              setSessionFinished(true);
+              AsyncStorage.setItem(FINISHED_DATE_KEY, todayStr).catch(() => {});
+            }
+          } catch {
+            // Offline or endpoint unavailable — local state stands.
+          }
         }
         // Added exercises carry their OWN date — clear only when genuinely stale
         // (a prior day), never as collateral of a missing/stale LOGGED_SETS_KEY.
@@ -4425,7 +4460,7 @@ export default function TodayScreen() {
     // If user logs more sets after finishing, allow them to re-finish
     if (sessionFinished) {
       setSessionFinished(false);
-      AsyncStorage.removeItem(FINISHED_DATE_KEY).catch(() => {});
+      clearFinishedToday();
     }
 
     // Determine rest duration: user selection > category default
@@ -4699,7 +4734,7 @@ export default function TodayScreen() {
     // If user adds sets after finishing, re-enable the FINISH button
     if (sessionFinished) {
       setSessionFinished(false);
-      AsyncStorage.removeItem(FINISHED_DATE_KEY).catch(() => {});
+      clearFinishedToday();
     }
 
     const ex = exercises.find(e => e.id === exerciseId);
@@ -5319,7 +5354,7 @@ export default function TodayScreen() {
     });
     setShowSessionComplete(true);
     setSessionFinished(true);
-    AsyncStorage.setItem(FINISHED_DATE_KEY, getLocalDateString()).catch(() => {});
+    markFinishedToday();
   };
 
   const handleFinish = async () => {
@@ -5345,14 +5380,14 @@ export default function TodayScreen() {
 
     // ── Step 3: Clear AsyncStorage for the NEXT session ──────────────────────
 
-    // ── Step 4: Skip finishSession API call ─────────────────────────────────
-    // The calendar events endpoint determines completion by checking db.log,
-    // NOT session.status. Calling finishSession marks session.status = "completed"
-    // in the backend's plan memory, causing GET /api/plan/session/today to SKIP
-    // this session and return a DIFFERENT one — which breaks the re-sync and makes
-    // it look like all data was lost (exercises don't match the log entries).
-    // Log entries are already saved via individual handleLog POST calls.
-    console.log('[Today] Finish: skipping finishSession API (db.log is the source of truth)');
+    // ── Step 4: Record the finish server-side ────────────────────────────────
+    // db.log stays the source of truth for what was done — the calendar reads
+    // that, not session.status. /session/finish now only writes a date-keyed
+    // marker and no longer touches session.status, which is what used to make
+    // GET /plan/session/today skip this session and hand back a different one
+    // (its exercises wouldn't match the sets just logged, so it read as data
+    // loss). The marker is what lets "session complete" follow the athlete to
+    // another device. See markFinishedToday.
 
     // ── Step 5: Fetch streak + badges for celebration ─────────────────────────
     let streakData = null;
@@ -5370,8 +5405,7 @@ export default function TodayScreen() {
     });
     setShowSessionComplete(true);
     setSessionFinished(true); // hide FINISH SESSION button after completion
-    // Persist finish state so button stays "SESSION COMPLETE ✓" even if component remounts today
-    AsyncStorage.setItem(FINISHED_DATE_KEY, getLocalDateString()).catch(() => {});
+    markFinishedToday(sessionId);
 
     // ── Step 6: Do NOT reset load flags ─────────────────────────────────────────
     // CRITICAL: Resetting initialLoadDone = false here causes any subsequent
