@@ -2,7 +2,7 @@
  * SpeakerButton — Prompt 9B
  *
  * Renders a small speaker icon that fetches TTS audio from POST /api/coach/speak,
- * writes the MP3 to the device cache, then plays it via expo-av Audio.Sound.
+ * writes the MP3 to the device cache, then plays it via expo-audio.
  *
  * 4 states: idle → loading → playing → (idle | error)
  *
@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, TouchableOpacity } from 'react-native';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS } from '../constants/theme';
@@ -54,7 +54,7 @@ export default function SpeakerButton({ text, autoPlay = false }: Props) {
   const stateRef            = useRef<SpeakerState>('idle');
   const [visState, setVisState] = useState<SpeakerState>('idle');
 
-  const soundRef         = useRef<Audio.Sound | null>(null);
+  const soundRef         = useRef<AudioPlayer | null>(null);
   const tempUriRef       = useRef<string | null>(null);
   const isMountedRef     = useRef(true);
   const autoPlayFiredRef = useRef(false);
@@ -67,8 +67,10 @@ export default function SpeakerButton({ text, autoPlay = false }: Props) {
   // ── Internal stop + clean ─────────────────────────────────────────────────
   const stopAndClean = useCallback(() => {
     if (soundRef.current) {
-      soundRef.current.stopAsync().catch(() => {});
-      soundRef.current.unloadAsync().catch(() => {});
+      // remove() both stops playback and frees the native player, replacing the
+      // old stopAsync + unloadAsync pair. It throws if called twice, and the
+      // finish listener can race a tap on the button, so it is guarded.
+      try { soundRef.current.remove(); } catch { /* already released */ }
       soundRef.current = null;
     }
     if (tempUriRef.current) {
@@ -86,8 +88,7 @@ export default function SpeakerButton({ text, autoPlay = false }: Props) {
       isMountedRef.current = false;
       if (_activeSpeaker.stop === stopAndClean) _activeSpeaker.stop = null;
       // Stop without setState (component is gone)
-      soundRef.current?.stopAsync().catch(() => {});
-      soundRef.current?.unloadAsync().catch(() => {});
+      try { soundRef.current?.remove(); } catch { /* already released */ }
       soundRef.current = null;
       if (tempUriRef.current) {
         FileSystem.deleteAsync(tempUriRef.current, { idempotent: true }).catch(() => {});
@@ -136,29 +137,32 @@ export default function SpeakerButton({ text, autoPlay = false }: Props) {
       }
 
       // Switch audio session to playback
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: localUri },
-        { shouldPlay: true },
-      );
-      soundRef.current = sound;
+      // createAudioPlayer is the imperative counterpart to the useAudioPlayer
+      // hook — needed here because the source is fetched at runtime and this
+      // player's lifetime is owned by the module-level one-at-a-time lock
+      // rather than by the render cycle.
+      const player = createAudioPlayer({ uri: localUri });
+      soundRef.current = player;
 
       if (!isMountedRef.current) {
-        sound.unloadAsync().catch(() => {});
+        try { player.remove(); } catch { /* already released */ }
+        soundRef.current = null;
         return;
       }
 
-      setS('playing');
-
       // Auto-transition to idle when playback finishes
-      sound.setOnPlaybackStatusUpdate((status) => {
+      player.addListener('playbackStatusUpdate', (status) => {
         if (!status.isLoaded) return;
         if (status.didJustFinish) {
           if (_activeSpeaker.stop === stopAndClean) _activeSpeaker.stop = null;
           stopAndClean();
         }
       });
+
+      player.play();
+      setS('playing');
 
     } catch (err) {
       console.warn('[TTS] playback error:', err);
@@ -214,7 +218,7 @@ export default function SpeakerButton({ text, autoPlay = false }: Props) {
       ) : visState === 'playing' ? (
         <MaterialCommunityIcons name="volume-high" size={14} color={COLORS.accent} />
       ) : (
-        <MaterialCommunityIcons name="volume-medium-outline" size={14} color={COLORS.text.muted} />
+        <MaterialCommunityIcons name="volume-medium" size={14} color={COLORS.text.muted} />
       )}
     </TouchableOpacity>
   );

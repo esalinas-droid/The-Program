@@ -1,7 +1,7 @@
 /**
  * VoiceInputButton — Prompt 9A
  *
- * Tap-to-start / tap-to-stop voice input using expo-av (Whisper transcription).
+ * Tap-to-start / tap-to-stop voice input using expo-audio (Whisper transcription).
  * Transcribed text is passed to `onTranscribed` so the parent fills its input.
  *
  * States: idle → recording → processing → (idle | error)
@@ -17,7 +17,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SPACING, FONTS } from '../constants/theme';
@@ -45,7 +50,10 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [elapsed, setElapsed]       = useState(0);
 
-  const recordingRef  = useRef<Audio.Recording | null>(null);
+  // expo-audio hands back one stable recorder for the component's lifetime,
+  // rather than a new Recording object per take, so there is no instance to
+  // hold in a ref — `recorder.isRecording` is the source of truth.
+  const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const errorTimeout  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -60,10 +68,11 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
       stopTimer();
       if (errorTimeout.current) clearTimeout(errorTimeout.current);
       pulseAnim.current?.stop();
-      if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+      if (recorder.isRecording) {
+        recorder.stop().catch(() => {});
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Pulse animation control ──────────────────────────────────────────────
@@ -114,7 +123,7 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
   const startRecording = useCallback(async () => {
     try {
       // Check / request permission
-      const { status } = await Audio.requestPermissionsAsync();
+      const { status } = await requestRecordingPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert(
           'Microphone Access Required',
@@ -125,18 +134,14 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
       }
 
       // Configure audio session for recording
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      );
-      await recording.startAsync();
+      await recorder.prepareToRecordAsync();
+      recorder.record();
 
-      recordingRef.current = recording;
       setVoiceState('recording');
       startTimer();
       startPulse();
@@ -144,34 +149,34 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
       console.warn('[Voice] startRecording error:', err);
       showError();
     }
-  }, [startTimer, startPulse, showError]);
+  }, [recorder, startTimer, startPulse, showError]);
 
   // ── Stop recording and upload ────────────────────────────────────────────
   const stopRecording = useCallback(async () => {
-    if (!recordingRef.current) return;
+    if (!recorder.isRecording) return;
 
     stopTimer();
     stopPulse();
 
     // Guard: too short (< 0.5 s) → silent reset
     if (elapsed < 1) {
-      try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
-      recordingRef.current = null;
+      try { await recorder.stop(); } catch {}
       setVoiceState('idle');
       setElapsed(0);
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
       return;
     }
 
     setVoiceState('processing');
 
     try {
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
+      await recorder.stop();
+      // The recorder exposes the finished file as a property; unlike expo-av's
+      // getURI() it stays readable after stop().
+      const uri = recorder.uri;
 
       // Restore audio session
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
 
       if (!uri) throw new Error('No audio URI after recording');
 
@@ -224,7 +229,7 @@ export default function VoiceInputButton({ onTranscribed, disabled = false }: Pr
       }
       showError();
     }
-  }, [elapsed, stopTimer, stopPulse, onTranscribed, showError]);
+  }, [recorder, elapsed, stopTimer, stopPulse, onTranscribed, showError]);
 
   // ── Tap handler ──────────────────────────────────────────────────────────
   const handlePress = useCallback(() => {

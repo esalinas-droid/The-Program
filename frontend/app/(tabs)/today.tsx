@@ -14,6 +14,7 @@ import { setParsedSession } from '../../src/utils/parsedSessionStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureDetector, type GestureType } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { DragSection } from '../../src/components/DragSection';
 import { getProfile } from '../../src/utils/storage';
@@ -4338,6 +4339,11 @@ export default function TodayScreen() {
   };
 
   // ── Phase 4: audio beep on interval transitions ─────────────────────────────
+  // One long-lived player rather than building a new sound per beep: expo-audio
+  // loads the source when the hook mounts, so the beep fires without the load
+  // latency the old create-on-demand path had at each interval transition.
+  const beepPlayer = useAudioPlayer(require('../../assets/audio/beep.wav'));
+
   const playBeep = useCallback(async (type: 'round' | 'done' = 'round') => {
     try {
       Haptics.notificationAsync(
@@ -4345,17 +4351,16 @@ export default function TodayScreen() {
           ? Haptics.NotificationFeedbackType.Success
           : Haptics.NotificationFeedbackType.Warning
       );
-      // expo-av beep (foreground reliable; background requires UIBackgroundModes:audio)
-      const { Audio } = require('expo-av');
-      await Audio.setAudioModeAsync({ staysActiveInBackground: true, playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync(
-        require('../../assets/audio/beep.wav'),
-        { volume: type === 'done' ? 0.9 : 0.7 }
-      );
-      await sound.playAsync();
-      sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) sound.unloadAsync(); });
+      // Foreground reliable; background requires UIBackgroundModes:audio
+      await setAudioModeAsync({ shouldPlayInBackground: true, playsInSilentMode: true });
+      beepPlayer.volume = type === 'done' ? 0.9 : 0.7;
+      // expo-audio leaves the player parked at the end of the clip after it
+      // finishes — without rewinding first, only the very first beep of a
+      // session would ever be audible.
+      await beepPlayer.seekTo(0);
+      beepPlayer.play();
     } catch (_) { /* haptics already fired */ }
-  }, []);
+  }, [beepPlayer]);
 
   // ── Rest timer: COUNT-DOWN (supports count-up for Stopwatch / For Time) ──────
   useEffect(() => {

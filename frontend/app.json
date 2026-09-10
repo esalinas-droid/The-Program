@@ -8,7 +8,6 @@
     "icon": "./assets/logo-icon.png",
     "scheme": "theprogram",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "updates": {
       "url": "https://u.expo.dev/22450607-155d-450e-a3ad-5dfa37664b96",
       "fallbackToCacheTimeout": 0
@@ -43,7 +42,6 @@
         "foregroundImage": "./assets/logo-icon.png",
         "backgroundColor": "#0A0A0C"
       },
-      "edgeToEdgeEnabled": true,
       "package": "com.theprogramapp.ai",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
@@ -89,7 +87,13 @@
           "photosPermission": "Allow The Program to access your photos for uploading workout programs and medical documents."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-image",
+      "expo-sharing",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
