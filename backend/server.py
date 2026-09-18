@@ -6834,10 +6834,25 @@ async def complete_tour(userId: str = Depends(get_current_user)):
 
 @api_router.post("/profile/reset-tour")
 async def reset_tour(userId: str = Depends(get_current_user)):
-    """Reset the tour flag so it runs again on next Home mount. Used by Settings → Replay tour."""
+    """Reset the tour so it runs again on next Home mount. Settings → Replay tour.
+
+    tour_version has to go back to 0 as well. Home only starts the tour when
+    `tour_version < TOUR_VERSION_CONSTANT`, and complete-tour sets it to that
+    constant — so clearing has_completed_tour alone left the second half of the
+    condition false and the tour never ran again.
+
+    Settings papered over this by writing tour_version: 0 into the local profile
+    cache, which is why Replay tour appeared to work on the device you pressed it
+    on. On a fresh install or a second device the profile comes back from here
+    with the stale version and the tour silently never starts.
+    """
     await db.profile.update_one(
         {"userId": userId},
-        {"$set": {"has_completed_tour": False, "updatedAt": datetime.now(timezone.utc)}},
+        {"$set": {
+            "has_completed_tour": False,
+            "tour_version": 0,
+            "updatedAt": datetime.now(timezone.utc),
+        }},
         upsert=True,
     )
     doc = await db.profile.find_one({"userId": userId})
