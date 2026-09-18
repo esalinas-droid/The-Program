@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from bson.errors import InvalidId
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from typing import List, Optional, Any, Annotated
 from datetime import datetime, timezone, timedelta
@@ -2733,6 +2734,21 @@ async def patch_tracker_exercise_fields(
 class LogFieldShapeBody(BaseModel):
     fields: list   # serialized FieldSpec[]
 
+def _log_oid(entry_id: str) -> ObjectId:
+    """Parse a log entry id, answering 404 for a malformed one rather than 500.
+
+    The app mints client-side ids — "added-ex-…", "tracker-ex-…", "manual-…" —
+    that travel the same routes as real database ids, and ObjectId() raises
+    InvalidId on them. That escaped unhandled, so a set the client thought it had
+    logged returned a server error instead of a clean "no such entry". An id that
+    cannot name an entry describes a missing one, not a broken server.
+    """
+    try:
+        return ObjectId(entry_id)
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+
 @api_router.patch("/log/{entry_id}/fieldshape")
 async def patch_log_fieldshape(
     entry_id: str,
@@ -2740,11 +2756,12 @@ async def patch_log_fieldshape(
     userId: str = Depends(get_current_user),
 ):
     """Patch fieldShape on a single log entry (used for __legacy__ sessions)."""
-    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    oid = _log_oid(entry_id)
+    existing = await db.log.find_one({"_id": oid})
     if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
-        {"_id": ObjectId(entry_id)},
+        {"_id": oid},
         {"$set": {"fieldShape": body.fields}},
     )
     return {"success": True, "fields": body.fields}
@@ -2780,25 +2797,27 @@ async def reorder_tracker_exercises(
 
 @api_router.put("/log/{entry_id}")
 async def update_log_entry(entry_id: str, entry: WorkoutLogCreate, userId: str = Depends(get_current_user)):
-    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    oid = _log_oid(entry_id)
+    existing = await db.log.find_one({"_id": oid})
     if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     e1rm = _e1rm_or_zero(entry.weight, entry.reps, entry.weightUnit or "lbs")  # P4 guard
     data = entry.model_dump(exclude_none=True)   # exclude_none: don't wipe sessionId/other optional fields not in payload
     data["e1rm"] = e1rm
     data["userId"] = userId
-    await db.log.update_one({"_id": ObjectId(entry_id)}, {"$set": data})
-    doc = await db.log.find_one({"_id": ObjectId(entry_id)})
+    await db.log.update_one({"_id": oid}, {"$set": data})
+    doc = await db.log.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Entry not found")
     return WorkoutLogEntry.from_mongo(doc).model_dump(exclude={"id"}) | {"id": str(doc["_id"])}
 
 @api_router.delete("/log/{entry_id}")
 async def delete_log_entry(entry_id: str, userId: str = Depends(get_current_user)):
-    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    oid = _log_oid(entry_id)
+    existing = await db.log.find_one({"_id": oid})
     if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
-    await db.log.delete_one({"_id": ObjectId(entry_id)})
+    await db.log.delete_one({"_id": oid})
     return {"deleted": True}
 
 # ── Phase 6: PATCH effort signal on a logged set ──────────────────────────────
@@ -2812,11 +2831,12 @@ async def patch_log_effort(
     userId: str = Depends(get_current_user)
 ):
     """Store reps-left-in-tank effort signal for a logged set. Never overwrites notes/weight/etc."""
-    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    oid = _log_oid(entry_id)
+    existing = await db.log.find_one({"_id": oid})
     if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
-        {"_id": ObjectId(entry_id)},
+        {"_id": oid},
         {"$set": {"reps_in_tank": body.reps_in_tank}}
     )
     return {"updated": True, "reps_in_tank": body.reps_in_tank}
@@ -2831,11 +2851,12 @@ async def patch_log_notes(
     userId: str = Depends(get_current_user)
 ):
     """Patch only the notes field on a single log entry. Pass notes=null to clear."""
-    existing = await db.log.find_one({"_id": ObjectId(entry_id)})
+    oid = _log_oid(entry_id)
+    existing = await db.log.find_one({"_id": oid})
     if not existing or existing.get("userId") != userId:
         raise HTTPException(status_code=404, detail="Entry not found")
     await db.log.update_one(
-        {"_id": ObjectId(entry_id)},
+        {"_id": oid},
         {"$set": {"notes": body.notes}}
     )
     return {"updated": True, "notes": body.notes}
