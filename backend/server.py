@@ -1703,7 +1703,94 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
 
 @api_router.post("/plan/injury-preview")
 async def injury_preview(body: dict, userId: str = Depends(get_current_user)):
-    pass  # placeholder — actual implementation in program_router below
+    """What saving these injury flags would do to the program.
+
+    Read-only twin of /plan/apply-injury-update: it walks the same block with the
+    same rules through the same _injury_swap_for lookup, and changes nothing.
+
+    This was a `pass` stub returning null, so Settings showed athletes an empty
+    "Review Program Changes" sheet — they confirmed a change with no idea what it
+    was. The old comment claimed the real implementation lived in program_router;
+    it never did.
+    """
+    new_injuries = body.get("newInjuryFlags", []) or []
+
+    profile = await db.profile.find_one({"userId": userId})
+    if not profile:
+        raise HTTPException(404, "Profile not found for this user")
+
+    old_injuries = profile.get("injuryFlags", []) or []
+    added   = [i for i in new_injuries if i not in old_injuries]
+    removed = [i for i in old_injuries if i not in new_injuries]
+
+    restricted: list = []
+    prehab_count = 0
+    seen_names: set = set()   # the modal keys rows by name, and one exercise
+                              # recurs across every week of the block
+
+    if added and await _ensure_plan_loaded(userId):
+        plan  = _prog_store["plans"].get(userId)
+        block = _find_current_block(plan, profile.get("currentWeek", 1)) if plan else None
+        if block:
+            for inj_flag in added:
+                injury_type = _detect_injury_type(inj_flag)
+                injury_cfg  = _INJURY_MAP.get(injury_type) if injury_type else None
+                blocked     = _contraindicated_exercises(inj_flag)
+                restrict_kw = injury_cfg.get("restrict_keywords", []) if injury_cfg else []
+                if not blocked and not injury_cfg:
+                    logger.warning("[InjuryPreview] No config for: %s (type=%s)", inj_flag, injury_type)
+                    continue
+
+                for week_obj in block.weeks:
+                    for session in week_obj.sessions:
+                        for ex in session.exercises:
+                            ex_lower = ex.name.lower()
+                            if ex.name not in blocked and not any(rk in ex_lower for rk in restrict_kw):
+                                continue
+                            cat = ex.category.value if hasattr(ex.category, "value") else str(ex.category)
+                            new_name, reason = _injury_replacement(injury_cfg, cat, ex.name, blocked)
+                            if not new_name:
+                                continue
+                            if ex.name in seen_names:
+                                continue
+                            seen_names.add(ex.name)
+                            restricted.append({
+                                "name":     ex.name,
+                                "category": cat,
+                                "reason":   f"{reason} — becomes {new_name} ({inj_flag})",
+                            })
+
+                # Prehab is added once per week per injury; count it for the
+                # summary rather than listing it as a restriction, which it isn't.
+                prehab_count += len(injury_cfg.get("prehab_to_add", []))
+
+    # Resolving an injury deliberately reports nothing restored: apply-injury-update
+    # only acts on newly-added flags, so past swaps stay in place. Listing them as
+    # "restored" would promise a change that never happens.
+    restored: list = []
+
+    parts = []
+    if restricted:
+        parts.append(f"{len(restricted)} exercise{'s' if len(restricted) != 1 else ''} will be swapped")
+    if prehab_count:
+        parts.append(f"{prehab_count} prehab movement{'s' if prehab_count != 1 else ''} will be added")
+    if removed:
+        parts.append(
+            f"{len(removed)} injury marked resolved — earlier swaps stay in place, "
+            "rebuild your program to undo them"
+        )
+    if not parts:
+        parts.append("No changes to your current block" if (added or removed)
+                     else "Nothing to change")
+
+    return {
+        "addedInjuries":       added,
+        "removedInjuries":     removed,
+        "exercisesRestricted": restricted,
+        "exercisesRestored":   restored,
+        "hasChanges":          bool(restricted or prehab_count),
+        "summary":             ". ".join(parts) + ".",
+    }
 
 
 # ── Calendar Endpoints ─────────────────────────────────────────────────────────
@@ -2006,7 +2093,8 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
                     for inj_flag in added:
                         injury_type = _detect_injury_type(inj_flag)
                         injury_cfg  = _INJURY_MAP.get(injury_type) if injury_type else None
-                        if not injury_cfg:
+                        blocked     = _contraindicated_exercises(inj_flag)
+                        if not blocked and not injury_cfg:
                             logger.warning(f"No injury config found for: {inj_flag} (type={injury_type})")
                             continue
 
@@ -2016,25 +2104,11 @@ async def apply_injury_update(body: dict, userId: str = Depends(get_current_user
                                     ex_lower = ex.name.lower()
                                     cat = ex.category.value if hasattr(ex.category, "value") else str(ex.category)
 
-                                    restrict = injury_cfg.get("restrict_keywords", [])
-                                    if not any(rk in ex_lower for rk in restrict):
+                                    restrict = injury_cfg.get("restrict_keywords", []) if injury_cfg else []
+                                    if ex.name not in blocked and not any(rk in ex_lower for rk in restrict):
                                         continue
 
-                                    new_name, swap_reason = None, ""
-                                    if cat == "main":
-                                        pair = injury_cfg.get("main_swap")
-                                        if pair:
-                                            new_name, swap_reason = pair
-                                    elif cat == "supplemental":
-                                        for kw, (r, rs) in injury_cfg.get("supplemental_swaps", {}).items():
-                                            if kw in ex_lower:
-                                                new_name, swap_reason = r, rs
-                                                break
-                                    elif cat == "accessory":
-                                        for kw, (r, rs) in injury_cfg.get("accessory_swaps", {}).items():
-                                            if kw in ex_lower:
-                                                new_name, swap_reason = r, rs
-                                                break
+                                    new_name, swap_reason = _injury_replacement(injury_cfg, cat, ex.name, blocked)
 
                                     if new_name and new_name.lower() != ex_lower:
                                         old_name = ex.name
@@ -6174,6 +6248,102 @@ def _detect_injury_type(text: str) -> Optional[str]:
         if injury_type in text_lower:
             return injury_type
     return None
+
+
+def _contraindicated_exercises(injury_flag: str) -> set:
+    """Exercise names this injury rules out, taken from the generator's own table.
+
+    server.py kept a second, much smaller injury table whose restrict_keywords
+    were written against exercise names the generator does not produce —
+    "conventional deadlift", "good morning", "RDL", "stiff leg". Checked against
+    a real generated program, three of its five injuries (lower back, shoulder,
+    SI joint) matched nothing at all: an athlete could report a lumbar injury and
+    keep every deadlift in the block, gaining only two prehab movements.
+
+    services.plan_generator._INJURY_CONTRAINDICATIONS is keyed by the exact
+    labels onboarding offers and lists the exact names the generator emits, so it
+    is the authority on WHAT is unsafe. _INJURY_MAP is kept for what to swap TO,
+    and for its prehab work.
+    """
+    from services.plan_generator import _INJURY_CONTRAINDICATIONS as _CONTRA
+    flag_l = (injury_flag or "").strip().lower()
+    if not flag_l:
+        return set()
+
+    blocked = set()
+    for key, names in _CONTRA.items():
+        if key.lower() == flag_l:
+            blocked = set(names)
+            break
+    else:
+        # Tolerate label drift between the form and this table ("Knee" vs "Knee (general)")
+        for key, names in _CONTRA.items():
+            k = key.lower()
+            if k in flag_l or flag_l in k:
+                blocked = set(names)
+                break
+
+    # The two tables disagree in places. Lower back is the clearest case: the
+    # contraindication list rules out Reverse Hyper, while _INJURY_MAP prescribes
+    # it as prehab for that same injury ("lumbar decompression"). Left alone the
+    # apply path swaps the exercise out as unsafe and then adds it straight back
+    # as rehab, which is incoherent whichever view is right.
+    #
+    # An exercise an injury's own prehab prescribes is, by that config's account,
+    # safe for it — so the more specific coach-authored entry wins.
+    injury_type = _detect_injury_type(injury_flag)
+    cfg = _INJURY_MAP.get(injury_type) if injury_type else None
+    if cfg:
+        blocked -= {pb["name"] for pb in cfg.get("prehab_to_add", []) if pb.get("name")}
+    return blocked
+
+
+def _injury_replacement(injury_cfg: Optional[dict], category: str, ex_name: str, blocked: set):
+    """What should replace a contraindicated exercise, and why.
+
+    Prefers the curated swap when the injury has one, since those were chosen by
+    a coach. Falls back to any movement training the same pattern that this
+    injury doesn't also rule out — without it, the injuries that have no curated
+    swap for a given category would leave the unsafe exercise in place.
+    """
+    if injury_cfg:
+        new_name, reason = _injury_swap_for(injury_cfg, category, ex_name.lower())
+        if new_name and new_name.lower() != ex_name.lower() and new_name not in blocked:
+            return new_name, reason
+
+    from services.plan_generator import _safe_substitute
+    sub = _safe_substitute(ex_name, blocked)
+    if sub and sub.lower() != ex_name.lower():
+        return sub, "same movement pattern, not contraindicated for this injury"
+    return None, ""
+
+
+def _injury_swap_for(injury_cfg: dict, category: str, ex_lower: str):
+    """Which exercise replaces this one under a given injury, and why.
+
+    Shared by /plan/injury-preview and /plan/apply-injury-update so the preview
+    cannot promise a change the apply path won't make. A preview that disagrees
+    with what actually happens is worse than showing nothing.
+
+    Returns (replacement_name, reason), or (None, "") when nothing swaps.
+    """
+    if category == "main":
+        pair = injury_cfg.get("main_swap")
+        if pair:
+            return pair[0], pair[1]
+        return None, ""
+
+    swaps_key = {
+        "supplemental": "supplemental_swaps",
+        "accessory":    "accessory_swaps",
+    }.get(category)
+    if not swaps_key:
+        return None, ""
+
+    for kw, (replacement, reason) in injury_cfg.get(swaps_key, {}).items():
+        if kw in ex_lower:
+            return replacement, reason
+    return None, ""
 
 
 def _find_current_block(plan, current_week: int):
