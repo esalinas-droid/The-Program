@@ -6304,14 +6304,14 @@ def _contraindicated_exercises(injury_flag: str) -> set:
                 blocked = set(names)
                 break
 
-    # The two tables disagree in places. Lower back is the clearest case: the
-    # contraindication list rules out Reverse Hyper, while _INJURY_MAP prescribes
-    # it as prehab for that same injury ("lumbar decompression"). Left alone the
-    # apply path swaps the exercise out as unsafe and then adds it straight back
-    # as rehab, which is incoherent whichever view is right.
+    # Invariant: an exercise an injury's own prehab prescribes is, by that
+    # config's own account, safe for that injury — so it can never also be
+    # contraindicated for it. Without this the apply path could swap an exercise
+    # out as unsafe and then add it straight back as rehab.
     #
-    # An exercise an injury's own prehab prescribes is, by that config's account,
-    # safe for it — so the more specific coach-authored entry wins.
+    # The one real conflict (Reverse Hyper for lumbar) has since been settled in
+    # the contraindication table itself; this stays as a guard so a future edit
+    # to either table can't reintroduce that contradiction silently.
     injury_type = _detect_injury_type(injury_flag)
     cfg = _INJURY_MAP.get(injury_type) if injury_type else None
     if cfg:

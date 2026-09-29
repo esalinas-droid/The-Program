@@ -89,7 +89,11 @@ EXERCISE_DB = {
 _INJURY_CONTRAINDICATIONS: Dict[str, List[str]] = {
     "Shoulder (general)":     ["Floor Press", "Speed Bench", "2-Board Press", "Close-Grip Bench", "Incline Bench", "Log Press", "Axle Press"],
     "Rotator Cuff":           ["Floor Press", "Speed Bench", "2-Board Press", "Log Press", "Axle Press", "DB Lateral Raise"],
-    "Lower Back / Lumbar":    ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift", "Reverse Hyper"],
+    # Reverse Hyper is deliberately NOT listed here: it decompresses the lumbar
+    # spine and is prescribed as prehab for this same injury. Listing it made the
+    # two tables contradict each other — the apply path swapped it out as unsafe
+    # and then added it straight back as rehab. Coach's ruling, Sept 2026.
+    "Lower Back / Lumbar":    ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift"],
     "SI Joint / Pelvis":      ["Block Pull", "Deficit Deadlift", "Romanian Deadlift", "Speed Deadlift", "Bulgarian Split Squat"],
     "Hip / Hip Flexor":       ["Box Squat", "Bulgarian Split Squat", "Front Squat", "Yoke Walk", "Sled Push"],
     "Knee (general)":         ["Box Squat", "SSB Squat", "Bulgarian Split Squat", "Belt Squat", "Front Squat"],
