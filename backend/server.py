@@ -1431,6 +1431,54 @@ async def unfinish_session(date: str = None, userId: str = Depends(get_current_u
     return {"date": day, "deleted": result.deleted_count > 0}
 
 
+# Ad-hoc exercises are whole cards, but a day's session is small; this only
+# exists so a bug or a stale client can't write an unbounded document.
+_MAX_ADDED_EXERCISES = 50
+
+
+@api_router.post("/session/added-exercises")
+async def save_added_exercises(body: dict, userId: str = Depends(get_current_user)):
+    """Store the exercises an athlete added to one day's session by hand.
+
+    These lived only in a single phone's local storage, so a reinstall or a
+    second device lost them — while the sets logged against them stayed in
+    db.log, leaving the athlete with logged work for an exercise that appeared
+    nowhere in their session.
+
+    Date-scoped, like the rest of a day's overrides: the plan itself is never
+    modified and the addition clears at day roll. Posting an empty list removes
+    the day's record, which is how the client clears it.
+    """
+    day = body.get("date") or datetime.now().strftime("%Y-%m-%d")
+    exercises = body.get("exercises") or []
+    if not isinstance(exercises, list):
+        raise HTTPException(status_code=422, detail="exercises must be a list")
+    exercises = exercises[:_MAX_ADDED_EXERCISES]
+
+    if exercises:
+        await db.session_added_exercises.update_one(
+            {"userId": userId, "date": day},
+            {"$set": {
+                "userId":    userId,
+                "date":      day,
+                "exercises": exercises,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    else:
+        await db.session_added_exercises.delete_one({"userId": userId, "date": day})
+    return {"date": day, "count": len(exercises)}
+
+
+@api_router.get("/session/added-exercises")
+async def get_added_exercises(date: str = None, userId: str = Depends(get_current_user)):
+    """The exercises this athlete added to the given day, from any device."""
+    day = date or datetime.now().strftime("%Y-%m-%d")
+    doc = await db.session_added_exercises.find_one({"userId": userId, "date": day})
+    return {"date": day, "exercises": (doc or {}).get("exercises", [])}
+
+
 class UpdateMaxesBody(BaseModel):
     maxes: dict                      # {"squat": 455, "yoke_walk": 700, "Circus DB": 150, ...}
     rescaleProgram: bool = True      # scale the live plan's remaining loads

@@ -166,6 +166,67 @@ class TestReplayTour:
         assert self._would_tour_run(replayed), "tour will not run after Replay tour"
 
 
+class TestAddedExercises:
+    """Exercises added to a day by hand used to live only in one phone's local
+    storage, while the sets logged against them went to db.log — so a reinstall
+    left the athlete with logged work for an exercise that appeared nowhere."""
+
+    def _ex(self, name, ex_id):
+        return {"id": ex_id, "name": name, "category": "supplemental",
+                "prescription": "", "sets": [{"id": f"{ex_id}-set-0", "type": "work",
+                                              "weight": 0, "reps": "5", "label": "Set 1"}]}
+
+    def test_survives_with_no_local_cache(self, bare_account):
+        """A second device (or a fresh install) reads the same day back."""
+        day = "2026-09-28"
+        assert requests.get(f"{API}/session/added-exercises?date={day}",
+                            headers=bare_account, timeout=T).json()["exercises"] == []
+
+        sent = [self._ex("Zercher Carry", "added-ex-1"), self._ex("Sandbag Toss", "added-ex-2")]
+        saved = requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                              json={"date": day, "exercises": sent}, timeout=T).json()
+        assert saved["count"] == 2
+
+        got = requests.get(f"{API}/session/added-exercises?date={day}",
+                           headers=bare_account, timeout=T).json()["exercises"]
+        assert [e["name"] for e in got] == ["Zercher Carry", "Sandbag Toss"]
+
+    def test_is_scoped_to_its_day(self, bare_account):
+        """Additions are a day's override, not a permanent plan change."""
+        requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                      json={"date": "2026-09-28",
+                            "exercises": [self._ex("Zercher Carry", "added-ex-1")]}, timeout=T)
+        other = requests.get(f"{API}/session/added-exercises?date=2026-09-29",
+                             headers=bare_account, timeout=T).json()
+        assert other["exercises"] == []
+
+    def test_empty_list_clears_the_day(self, bare_account):
+        day = "2026-09-28"
+        requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                      json={"date": day, "exercises": [self._ex("Zercher Carry", "added-ex-1")]}, timeout=T)
+        requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                      json={"date": day, "exercises": []}, timeout=T)
+        assert requests.get(f"{API}/session/added-exercises?date={day}",
+                            headers=bare_account, timeout=T).json()["exercises"] == []
+
+    def test_oversized_payload_is_capped(self, bare_account):
+        day = "2026-09-28"
+        many = [self._ex(f"Ex {i}", f"added-ex-{i}") for i in range(80)]
+        saved = requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                              json={"date": day, "exercises": many}, timeout=T).json()
+        assert saved["count"] == 50, "a stale or buggy client must not write an unbounded doc"
+
+    def test_rejects_a_non_list(self, bare_account):
+        resp = requests.post(f"{API}/session/added-exercises", headers=bare_account,
+                             json={"date": "2026-09-28", "exercises": "not-a-list"}, timeout=T)
+        assert resp.status_code == 422
+
+    def test_requires_auth(self):
+        assert requests.get(f"{API}/session/added-exercises", timeout=T).status_code in (401, 403)
+        assert requests.post(f"{API}/session/added-exercises",
+                             json={"exercises": []}, timeout=T).status_code in (401, 403)
+
+
 class TestLogIdHandling:
     """The app mints its own ids ("added-ex-…") and stores them alongside real
     database ids, so these routes receive unparseable ids in normal use."""

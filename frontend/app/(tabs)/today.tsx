@@ -3129,6 +3129,47 @@ export default function TodayScreen() {
       .catch(err => console.warn('[Today] Could not reopen the day on the server:', err));
   }, []);
 
+  /**
+   * Today's hand-added exercises, local first and falling back to the server.
+   *
+   * These used to live only in this phone's storage, so a reinstall or a second
+   * device lost the cards — while the sets logged against them stayed in the
+   * log, leaving the athlete with logged work for an exercise that appeared
+   * nowhere in their session.
+   *
+   * Local stays the fast path: it is instant and correct offline. The server
+   * copy is consulted only when there is nothing local for today, and is cached
+   * on the way back so the next read costs nothing.
+   */
+  const loadAddedExercisesForToday = useCallback(async (todayStr: string): Promise<any[]> => {
+    try {
+      const raw = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length > 0) {
+          return parsed.exercises;
+        }
+      }
+    } catch { /* fall through to the server */ }
+
+    try {
+      const remote = await programApi.getAddedExercises(todayStr);
+      const exs = Array.isArray(remote?.exercises) ? remote.exercises : [];
+      if (exs.length > 0) {
+        AsyncStorage.setItem(
+          ADDED_EXERCISES_KEY,
+          JSON.stringify({ date: todayStr, exercises: exs }),
+        ).catch(() => {});
+      }
+      return exs;
+    } catch {
+      return [];   // offline — the empty local answer stands
+    }
+  }, []);
+
+  /** Debounce handle for mirroring added exercises to the server. */
+  const addedExsSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const saveSetValuesToStorage = useCallback(async (
     values: Record<string, { weight: string; reps: string }>
   ) => {
@@ -3582,14 +3623,28 @@ export default function TodayScreen() {
   useEffect(() => {
     if (!initialLoadDone.current) return;
     const addedExs = exercises.filter((e: any) => e.id.startsWith('added-ex-'));
+    const day = getLocalDateString();
     if (addedExs.length > 0) {
-      const payload = { date: getLocalDateString(), exercises: addedExs };
-      AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify(payload)).catch(() => {});
+      AsyncStorage.setItem(ADDED_EXERCISES_KEY, JSON.stringify({ date: day, exercises: addedExs }))
+        .catch(() => {});
     } else if (addedExercisesRestored.current) {
       // Only clear once a restore has actually run for today — otherwise a cold
       // start whose exercises array hasn't yet merged saved adds would wipe them.
       AsyncStorage.removeItem(ADDED_EXERCISES_KEY).catch(() => {});
+    } else {
+      // Nothing local yet and no restore has run: saying "no added exercises" to
+      // the server here would delete the very list a cold start is about to
+      // restore from it.
+      return;
     }
+
+    // Mirror to the server, debounced — this effect fires on every change to the
+    // exercises array, and the local write above is what keeps the UI instant.
+    if (addedExsSyncTimer.current) clearTimeout(addedExsSyncTimer.current);
+    addedExsSyncTimer.current = setTimeout(() => {
+      programApi.saveAddedExercises(addedExs, day)
+        .catch(err => console.warn('[Today] Could not sync added exercises:', err));
+    }, 1200);
   }, [exercises]);
 
   // ── Load session ────────────────────────────────────────────────────────────
@@ -3671,29 +3726,21 @@ export default function TodayScreen() {
 
         // ── Re-sync added exercises (exercises added via "+ Add Exercise") ────
         try {
-          const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
-          if (savedAddedExs) {
-            const parsedExs = JSON.parse(savedAddedExs);
-            if (parsedExs?.date === todayStr && Array.isArray(parsedExs?.exercises) && parsedExs.exercises.length > 0) {
-              setExercises(prev => {
-                const existingIds = new Set(prev.map(e => e.id));
-                const newOnes = parsedExs.exercises.filter((e: any) => !existingIds.has(e.id));
-                // Also drop coach-removed added exercises that are still in prev
-                const addedNamesInStore = new Set(parsedExs.exercises.map((e: any) => (e?.name || '').trim().toLowerCase()));
-                const pruned = prev.filter((e: any) => {
-                  if (!e?.id?.startsWith?.('added-ex-')) return true;
-                  return addedNamesInStore.has((e?.name || '').trim().toLowerCase());
-                });
-                return newOnes.length > 0 ? [...pruned, ...newOnes] : (pruned.length !== prev.length ? pruned : prev);
+          const storedAdded = await loadAddedExercisesForToday(todayStr);
+          if (storedAdded.length > 0) {
+            setExercises(prev => {
+              const existingIds = new Set(prev.map(e => e.id));
+              const newOnes = storedAdded.filter((e: any) => !existingIds.has(e.id));
+              // Also drop coach-removed added exercises that are still in prev
+              const addedNamesInStore = new Set(storedAdded.map((e: any) => (e?.name || '').trim().toLowerCase()));
+              const pruned = prev.filter((e: any) => {
+                if (!e?.id?.startsWith?.('added-ex-')) return true;
+                return addedNamesInStore.has((e?.name || '').trim().toLowerCase());
               });
-            } else {
-              // The store is empty for today → drop any lingering added-ex-* rows
-              setExercises(prev => {
-                const pruned = prev.filter((e: any) => !e?.id?.startsWith?.('added-ex-'));
-                return pruned.length !== prev.length ? pruned : prev;
-              });
-            }
+              return newOnes.length > 0 ? [...pruned, ...newOnes] : (pruned.length !== prev.length ? pruned : prev);
+            });
           } else {
+            // Nothing stored for today → drop any lingering added-ex-* rows
             setExercises(prev => {
               const pruned = prev.filter((e: any) => !e?.id?.startsWith?.('added-ex-'));
               return pruned.length !== prev.length ? pruned : prev;
@@ -3972,16 +4019,13 @@ export default function TodayScreen() {
 
           // ── Restore added exercises (from "+ Add Exercise") ─────────────────
           try {
-            const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
-            if (savedAddedExs) {
-              const parsed = JSON.parse(savedAddedExs);
-              if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length > 0) {
-                const existingIds = new Set(exsWithAdded.map((e: any) => e.id));
-                const newOnes = parsed.exercises.filter((e: any) => !existingIds.has(e.id));
-                if (newOnes.length > 0) {
-                  exsWithAdded = [...exsWithAdded, ...newOnes];
-                  console.log('[Today] Full-rebuild: restored', newOnes.length, 'added exercises');
-                }
+            const storedAdded = await loadAddedExercisesForToday(todayStr);
+            if (storedAdded.length > 0) {
+              const existingIds = new Set(exsWithAdded.map((e: any) => e.id));
+              const newOnes = storedAdded.filter((e: any) => !existingIds.has(e.id));
+              if (newOnes.length > 0) {
+                exsWithAdded = [...exsWithAdded, ...newOnes];
+                console.log('[Today] Full-rebuild: restored', newOnes.length, 'added exercises');
               }
             }
           } catch (err) {
@@ -4108,18 +4152,15 @@ export default function TodayScreen() {
       // hardcoded fallback session renders — but stored added exercises must STILL
       // be re-hydrated on cold start. Merge them into whatever base list exists.
       try {
-        const savedAddedExs = await AsyncStorage.getItem(ADDED_EXERCISES_KEY);
-        if (savedAddedExs) {
-          const parsed = JSON.parse(savedAddedExs);
-          if (parsed?.date === todayStr && Array.isArray(parsed?.exercises) && parsed.exercises.length > 0) {
-            setExercises(prev => {
-              const ids = new Set(prev.map((e: any) => e.id));
-              const missing = parsed.exercises.filter((e: any) => !ids.has(e.id));
-              if (!missing.length) return prev;
-              console.log('[Today] Path-independent: restored', missing.length, 'added exercises');
-              return [...prev, ...missing];
-            });
-          }
+        const storedAdded = await loadAddedExercisesForToday(todayStr);
+        if (storedAdded.length > 0) {
+          setExercises(prev => {
+            const ids = new Set(prev.map((e: any) => e.id));
+            const missing = storedAdded.filter((e: any) => !ids.has(e.id));
+            if (!missing.length) return prev;
+            console.log('[Today] Path-independent: restored', missing.length, 'added exercises');
+            return [...prev, ...missing];
+          });
         }
       } catch (err) { console.warn('[Today] Path-independent added-exercise restore failed:', err); }
       addedExercisesRestored.current = true;  // a restore attempt ran → persist may now prune

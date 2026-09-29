@@ -356,6 +356,15 @@ export const programApi = {
   /** Reopen a day the athlete had marked finished — they logged another set. */
   unfinishSession: (date?: string) =>
     api(`/session/finish${date ? `?date=${encodeURIComponent(date)}` : ''}`, { method: 'DELETE' }),
+  /**
+   * Mirror the day's hand-added exercises to the server. Passing an empty list
+   * clears the day. Local storage stays the fast path; this is what survives a
+   * reinstall and reaches a second device.
+   */
+  saveAddedExercises: (exercises: any[], date?: string) =>
+    api('/session/added-exercises', { method: 'POST', body: JSON.stringify({ exercises, date }) }),
+  getAddedExercises: (date?: string): Promise<{ date: string; exercises: any[] }> =>
+    api(`/session/added-exercises${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
   // Pain
   logPain: (data: { exerciseId?: string; sessionId?: string; location: string; score: number; note?: string }) =>
