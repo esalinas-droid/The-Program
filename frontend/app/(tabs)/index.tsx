@@ -126,6 +126,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [expandedCoach, setExpandedCoach] = useState(false);
   const [expandedAlerts, setExpandedAlerts] = useState(false);
+  const [expandedRecap, setExpandedRecap] = useState(false);
 
   // ── Tour refs & state ────────────────────────────────────────────────────────
   const sessionCardRef  = useRef<View>(null);
@@ -154,7 +155,6 @@ export default function Dashboard() {
   // badges / quest / userRank / groupPrompt state was dropped along with the cards
   // that rendered them — they live on the Track tab now.
   const [streak, setStreak] = useState<any>(null);
-  const streakGlowAnim = useRef(new Animated.Value(0.7)).current;
 
   // ── Week overview state ───────────────────────────────────────────────────────
   const [weekEvents, setWeekEvents] = useState<any[]>([]);
@@ -278,17 +278,8 @@ export default function Dashboard() {
       const strk = await streakApi.get().catch(() => null);
       setStreak(strk);
 
-      // Part 11B: streak glow on first-time streak
-      if (strk?.currentStreak === 1) {
-        const seen = await AsyncStorage.getItem('streakIntroSeen');
-        if (!seen) {
-          await AsyncStorage.setItem('streakIntroSeen', 'true');
-          Animated.loop(Animated.sequence([
-            Animated.timing(streakGlowAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
-            Animated.timing(streakGlowAnim, { toValue: 0.6, duration: 700, useNativeDriver: true }),
-          ]), { iterations: 3 }).start();
-        }
-      }
+      // The first-streak glow animation went with the streak card it animated —
+      // the streak is a header chip now (declutter round 2, Oct 2026).
     } catch { /* Streak is non-critical */ }
 
     // ── Fetch this week's training events for the "THIS WEEK" section ─────────
@@ -414,8 +405,8 @@ export default function Dashboard() {
   const alerts: AlertData[] = [];
   if (flaggedRegions.length > 0)
     alerts.push({ type: 'pain', color: '#EF5350', icon: 'alert-circle', title: 'PAIN PATTERN DETECTED', sub: `${flaggedRegions[0]} flagged 3+ times this week`, actionRoute: '/(tabs)/today' });
-  if (!hasReadinessToday && hasReadinessToday !== null && !isRestDay)
-    alerts.push({ type: 'readiness', color: COLORS.accent, icon: 'lightning-bolt', title: 'PRE-SESSION CHECK-IN', sub: "Rate today's readiness — takes 20 seconds", actionRoute: '/(tabs)/today' });
+  // Readiness check-in is no longer an alert card — it renders inside the
+  // session card itself, next to the START button it shares a destination with.
   if (rotationStatus?.count > 0)
     alerts.push({ type: 'rotation', color: COLORS.accentBlue, icon: 'rotate-3d-variant', title: 'EXERCISE ROTATION DUE', sub: `${rotationStatus.count} exercise${rotationStatus.count > 1 ? 's' : ''} overdue for variation` });
   if (deloadStatus?.deloadRecommended)
@@ -432,23 +423,39 @@ export default function Dashboard() {
         showsVerticalScrollIndicator={false}
       >
 
-        {/* ── COMPETITION SLIM BANNER (above header when active) ── */}
-        {competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0 && (
-          <View style={s.compSlimBanner} testID="competition-banner">
-            <MaterialCommunityIcons name="trophy-outline" size={12} color={competitionStatus.color || TEAL_COLOR} />
-            <Text style={[s.compSlimText, { color: competitionStatus.color || TEAL_COLOR }]}>
-              {(competitionStatus.weeksOut ?? 0) <= 0 ? '🏆 COMPETITION DAY' : `🏆 ${competitionStatus.weeksOut} WEEKS OUT`}
-            </Text>
-            <MaterialCommunityIcons name="circle-small" size={12} color={COLORS.text.muted} />
-            <Text style={s.compSlimPhase}>{competitionStatus.phaseLabel || `${phase} Phase`}</Text>
-          </View>
-        )}
-
         {/* ── HEADER ── */}
+        {/* The competition banner and the standalone streak card both collapsed
+            into header chips (homepage declutter, round 2 — Eric's call, Oct 2026).
+            Same information, two fewer full-width cards before today's session. */}
         <View style={s.header}>
           <View style={{ flex: 1 }}>
             <Text style={s.greeting}>{getGreeting()}, {profile.name || authUserName || 'Athlete'}</Text>
             <Text style={s.date}>{getFormattedDate()}</Text>
+            {((streak && streak.currentStreak > 0) || (competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0)) && (
+              <View style={s.chipRow}>
+                {streak && streak.currentStreak > 0 && (
+                  <TouchableOpacity
+                    style={[s.chip, s.chipStreak]}
+                    onPress={() => router.push('/achievements')}
+                    activeOpacity={0.7}
+                    testID="streak-chip"
+                  >
+                    <MaterialCommunityIcons name="fire" size={12} color="#FF6B35" />
+                    <Text style={[s.chipText, { color: '#FF6B35' }]}>
+                      {streak.currentStreak} week{streak.currentStreak !== 1 ? 's' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {competitionStatus?.hasCompetition && (competitionStatus.weeksOut ?? 0) >= 0 && (
+                  <View style={s.chip} testID="competition-banner">
+                    <MaterialCommunityIcons name="trophy-outline" size={12} color={competitionStatus.color || TEAL_COLOR} />
+                    <Text style={[s.chipText, { color: competitionStatus.color || TEAL_COLOR }]}>
+                      {(competitionStatus.weeksOut ?? 0) <= 0 ? 'Competition day' : `${competitionStatus.weeksOut} wks out`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
           <TouchableOpacity
             ref={settingsGearRef as any}
@@ -595,6 +602,16 @@ export default function Dashboard() {
               {programSession?.session?.coachNote ? (
                 <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
               ) : null}
+              <Text style={s.sessionMeta}>Week {week} · Block {block} of 7</Text>
+              {/* The readiness check-in used to be a separate alert card below the
+                  stats strip; it routes to the same place as this button, so it now
+                  lives inside the session it belongs to. */}
+              {!hasReadinessToday && hasReadinessToday !== null && (
+                <View style={s.nudgeRow}>
+                  <MaterialCommunityIcons name="lightning-bolt" size={13} color={COLORS.accent} />
+                  <Text style={s.nudgeText}>Rate your readiness first — takes 20 seconds</Text>
+                </View>
+              )}
               <TouchableOpacity
                 testID="today-session-card"
                 style={s.startBtn}
@@ -604,40 +621,23 @@ export default function Dashboard() {
                 <Text style={s.startBtnText}>START SESSION</Text>
                 <MaterialCommunityIcons name="arrow-right" size={18} color={COLORS.primary} />
               </TouchableOpacity>
+              <TouchableOpacity
+                style={s.ghostBtn}
+                onPress={() => router.push('/tools/coach')}
+                activeOpacity={0.85}
+              >
+                <Text style={s.ghostBtnText}>Ask Coach about today</Text>
+              </TouchableOpacity>
             </View>
           ))
         )}
 
-        {/* ── STREAK ── */}
-
-        {/* Part 5C: Streak card */}
-        {streak && streak.currentStreak > 0 && (
-          <Animated.View style={{ opacity: streakGlowAnim }}>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#111114', borderRadius: 14, borderWidth: 1, borderColor: '#FF6B3530', padding: 14, marginHorizontal: 16, marginBottom: 8 }}
-              onPress={() => router.push('/achievements')}
-              activeOpacity={0.7}>
-              <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#FF6B3515', alignItems: 'center', justifyContent: 'center' }}>
-                <MaterialCommunityIcons name="fire" size={22} color="#FF6B35" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF6B35' }}>{streak.currentStreak}-week streak</Text>
-                <Text style={{ fontSize: 11, color: '#666' }}>
-                  {streak.currentStreak >= streak.longestStreak ? 'New record!' : `Best: ${streak.longestStreak} weeks`}
-                </Text>
-              </View>
-              <View style={{ backgroundColor: '#FF6B3515', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#FF6B35' }}>{streak.freezesAvailable} freeze{streak.freezesAvailable !== 1 ? 's' : ''}</Text>
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
         {/* Badges, the weekly quest, the leaderboard preview and the group invite
-            prompt used to stack here as four more cards. All of them are reachable
-            from the Track tab, and the streak above opens the same achievements
-            screen. On the homepage they buried the one thing this screen exists
-            for: starting today's session. */}
+            prompt used to stack here as four more cards, and the streak had a
+            full-width card of its own. All of them are reachable from the Track
+            tab, and the streak is now the flame chip in the header — it opens the
+            same achievements screen. On the homepage they buried the one thing
+            this screen exists for: starting today's session. */}
 
         {/* ── COACH REBALANCE CARD ── */}
         <CoachRebalanceCard />
@@ -664,12 +664,23 @@ export default function Dashboard() {
               <Text style={s.readMoreText}>{expandedCoach ? '↑ Less' : 'Read more →'}</Text>
             </TouchableOpacity>
           )}
+          {/* Block progress lives here now — the separate Current Block card said
+              "Block X of 7 · Phase" a second time, eight rows below this footer. */}
           <View style={s.coachCardFooter}>
             <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.accent} />
             <Text style={s.coachCardTag}>Block {block} of 7</Text>
             <MaterialCommunityIcons name="circle-small" size={16} color={COLORS.text.muted} />
             <Text style={s.coachCardTag}>{phase} Phase</Text>
+            {deload && (
+              <View style={s.deloadPill}>
+                <Text style={s.deloadPillText}>RECOVERY</Text>
+              </View>
+            )}
           </View>
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${Math.round(blockProgress * 100)}%` as any }]} />
+          </View>
+          <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
         </View>
         )}{/* end program-only coach directive */}
 
@@ -713,71 +724,34 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ── CURRENT BLOCK (program mode only, compact) ── */}
-        {profile?.training_mode !== 'free' && (
-        <View style={s.compactBlockCard}>
-          <View style={s.compactBlockRow}>
-            <Text style={s.compactBlockLine}>
-              <Text style={s.compactBlockAccent}>Block {block}</Text>
-              <Text style={s.compactBlockMuted}> of 7  ·  </Text>
-              <Text style={s.compactBlockBold}>{blockName}</Text>
-              <Text style={s.compactBlockMuted}>  ·  </Text>
-              <Text style={s.compactBlockBold}>{phase} Phase</Text>
-            </Text>
-            {deload && (
-              <View style={s.deloadPill}>
-                <Text style={s.deloadPillText}>RECOVERY</Text>
-              </View>
-            )}
-          </View>
-          <View style={s.progressTrack}>
-            <View style={[s.progressFill, { width: `${Math.round(blockProgress * 100)}%` as any }]} />
-          </View>
-          <Text style={s.progressLabel}>Week {week} · Programme weeks {blockStart}–{blockEnd}</Text>
-        </View>
-        )}{/* end program-only current block */}
+        {/* The Current Block card is gone — its progress bar and week label moved
+            into the Coach's Directive footer above, which already named the block
+            and phase. EST. MAXES is gone too: the Track tab has its own Est. Maxes
+            section, so this was a second copy of long-term history on a screen
+            about today. */}
 
-        {/* ── EST. MAXES ── */}
-        {bests && (
-          <>
-            <View style={s.sectionRow}>
-              <Text style={s.sectionTitle}>EST. MAXES</Text>
-              <Text style={s.sectionSub}>From training logs</Text>
-            </View>
-            <View style={s.e1rmRow}>
-              {featuredLifts.length >= 3 ? (
-                featuredLifts.slice(0, 3).map(lift => (
-                  <E1RMCard
-                    key={lift.id}
-                    label={lift.exercise.split(' ').slice(0, 2).join(' ').toUpperCase()}
-                    data={{ e1rm: lift.bestE1rm, exercise: lift.exercise }}
-                    units={units}
-                  />
-                ))
-              ) : (
-                <>
-                  <E1RMCard label="SQUAT" data={bests.squat} units={units} />
-                  <E1RMCard label="PRESS" data={bests.press} units={units} />
-                  <E1RMCard label="PULL"  data={bests.pull}  units={units} />
-                </>
-              )}
-            </View>
-          </>
-        )}
-
-        {/* ── QUICK ACTIONS (4 in a single row) ── */}
+        {/* ── QUICK ACTIONS ── */}
+        {/* "Log Session" dropped — the Schedule tab is one tap away in the tab bar. */}
         <View style={s.sectionRow}>
           <Text style={s.sectionTitle}>QUICK ACTIONS</Text>
         </View>
         <View style={s.actionsRow}>
-          <QuickAction icon="pencil-outline"          label="Log Session"  onPress={() => router.push('/(tabs)/log')} />
           <QuickAction icon="brain"                   label="Coach"        onPress={() => router.push('/tools/coach')} accent />
           <QuickAction icon="clipboard-check-outline" label="Check-In"     onPress={() => router.push('/tools/checkin')} />
           <QuickAction icon="history"                 label="Change Log"   onPress={() => router.push('/tools/changelog')} />
         </View>
 
-        {/* ── WEEKLY REVIEW (only if data exists) ── */}
+        {/* ── WEEKLY REVIEW — one line until the athlete asks for it ── */}
         {weeklyReview?.hasReview && (
+          <TouchableOpacity style={s.recapLink} onPress={() => setExpandedRecap(v => !v)} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="calendar-check-outline" size={14} color={COLORS.accentBlue} />
+            <Text style={s.recapLinkText}>
+              Week {weeklyReview.week} recap ready — {weeklyReview.stats?.sessionsCompleted ?? 0}/{weeklyReview.stats?.sessionsPlanned ?? 4} sessions
+            </Text>
+            <Text style={{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.semibold, color: COLORS.accentBlue }}>{expandedRecap ? 'Hide ↑' : 'Read ›'}</Text>
+          </TouchableOpacity>
+        )}
+        {expandedRecap && weeklyReview?.hasReview && (
           <View style={s.weeklyReviewCard} testID="weekly-review-card">
             <View style={s.priorityCardHeader}>
               <View style={[s.priorityIconBadge, { backgroundColor: COLORS.accentBlue + '25' }]}>
@@ -1017,4 +991,17 @@ const s = StyleSheet.create({
   priorityCardBody:   { fontSize: FONTS.sizes.sm, color: COLORS.text.secondary, lineHeight: 20, marginBottom: SPACING.md },
   nextWeekBox:        { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border },
   nextWeekText:       { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.accentBlue, lineHeight: 17, fontStyle: 'italic' },
+
+  // ── Homepage declutter round 2 (Option B, Oct 2026) ─────────────────────────
+  chipRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  chip:          { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: COLORS.border, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 },
+  chipStreak:    { borderColor: '#FF6B3540', backgroundColor: '#FF6B350D' },
+  chipText:      { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
+  sessionMeta:   { fontSize: FONTS.sizes.xs, color: COLORS.text.muted, marginTop: 4 },
+  nudgeRow:      { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: SPACING.sm },
+  nudgeText:     { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.accent },
+  ghostBtn:      { borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: SPACING.sm },
+  ghostBtnText:  { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
+  recapLink:     { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, backgroundColor: COLORS.card },
+  recapLinkText: { flex: 1, fontSize: FONTS.sizes.xs, color: COLORS.text.secondary },
 });
