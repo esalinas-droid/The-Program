@@ -1943,7 +1943,7 @@ const wd = StyleSheet.create({
 });
 
 
-function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, isLast,
+function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, onUnlog, isLast,
   removeMode, editMode, onRemove, onEditSave, adjustActive, isActive, units = 'lbs' }: {
   set: ExSet;
   setNum: number;
@@ -1954,6 +1954,8 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
   setValues: SetValueMap;
   onValueChange: (key: keyof SetValueMap, value: string) => void;
   onLog: () => void;
+  /** Tapping the logged checkmark reverses an accidental log (tester item 8). */
+  onUnlog?: () => void;
   isLast?: boolean;
   removeMode?: boolean;
   editMode?: boolean;
@@ -2187,7 +2189,8 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
         </>
       )}
 
-      {/* LOG / Done */}
+      {/* LOG / Done — the checkmark is a button too: tapping it un-logs the set,
+          so an accidental tap doesn't force the athlete through edit mode. */}
       {!logged ? (
         <TouchableOpacity
           onPress={onLog}
@@ -2197,9 +2200,15 @@ function SetRow({ set, setNum, logged, fields, setValues, onValueChange, onLog, 
           <Text style={sr.logBtnText}>{fields.length === 0 ? 'DONE' : 'LOG'}</Text>
         </TouchableOpacity>
       ) : (
-        <View style={sr.doneWrap}>
+        <TouchableOpacity
+          onPress={onUnlog}
+          style={sr.doneWrap}
+          activeOpacity={0.6}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityLabel="Un-log this set"
+        >
           <MaterialCommunityIcons name="check-circle" size={22} color={TEAL} />
-        </View>
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -2267,7 +2276,7 @@ function DragHandle({ gesture }: { gesture: GestureType }) {
 
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
 function ExerciseCard({
-  exercise, expanded, loggedSets, onToggle, onLog, onAdjust,
+  exercise, expanded, loggedSets, onToggle, onLog, onUnlog, onAdjust,
   onReportPain, onAddSet, swap, setValues, onSetValueChange,
   inRemoveMode, inEditMode, onRemoveSet, onEditSave, onEnterRemoveMode, onEnterEditMode, onExitMode,
   restConfig, adjustActive, previousData, prExercises, onKebab,
@@ -2281,6 +2290,7 @@ function ExerciseCard({
   loggedSets: Set<string>;
   onToggle: () => void;
   onLog: (setId: string, exerciseName: string, set: ExSet) => void;
+  onUnlog?: (setId: string) => void;
   onAdjust: (id: string, name: string) => void;
   onReportPain: (exerciseName: string) => void;
   onAddSet: (exerciseId: string) => void;
@@ -2666,6 +2676,7 @@ function ExerciseCard({
                   setValues={setValues[set.id] ?? { weight: '', reps: '' }}
                   onValueChange={(key, v) => onSetValueChange(set.id, key as keyof SetValueMap, v)}
                   onLog={() => onLog(set.id, displayName, set)}
+                  onUnlog={onUnlog ? () => onUnlog(set.id) : undefined}
                   isLast={idx === exercise.sets.length - 1}
                   removeMode={inRemoveMode}
                   editMode={inEditMode}
@@ -4475,9 +4486,12 @@ export default function TodayScreen() {
   const totalSets   = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
   const loggedCount = loggedSets.size;
   const progressPct = totalSets > 0 ? (loggedCount / totalSets) * 100 : 0;
-  // Allow finish if user has logged at least 1 set (not percentage-based)
-  // This ensures added sets don't push the threshold out of reach
-  const canFinish   = progressPct >= 50;
+  // Allow finish if user has logged at least 1 set (not percentage-based).
+  // An athlete who can't complete the whole workout still closes out what they
+  // did — the old >=50% gate greyed the button for exactly the sessions where
+  // finishing early matters most (tester item 7). The code now matches this
+  // comment, which had been promising one-set behaviour all along.
+  const canFinish   = loggedCount > 0;
 
   // Session header values
   const block        = getBlock(week);
@@ -4906,6 +4920,32 @@ export default function TodayScreen() {
       // The row on the server is still the pre-edit one, so logEntryIds stays
       // valid — don't drop it. Tell the athlete their change didn't land.
       Alert.alert('Edit not saved', 'Your change could not be saved. Please try again.');
+    }
+  };
+
+  // ── Un-log: tapping a logged set's checkmark reverses it (tester item 8) ─────
+  // Guarded per-set so a double-tap can't race the server write.
+  const unlogInFlight = useRef<Set<string>>(new Set());
+
+  const handleUnlog = async (setId: string) => {
+    if (unlogInFlight.current.has(setId) || !loggedSets.has(setId)) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    unlogInFlight.current.add(setId);
+    const entryId = logEntryIds[setId];
+    // Optimistic: the row flips back instantly; restored below if the server says no.
+    setLoggedSets(prev => { const n = new Set(prev); n.delete(setId); return n; });
+    // A finished session with a set withdrawn isn't finished any more.
+    if (sessionFinished) { setSessionFinished(false); clearFinishedToday(); }
+    try {
+      if (entryId) {
+        await logApi.delete(entryId);
+        setLogEntryIds(prev => { const n = { ...prev }; delete n[setId]; return n; });
+      }
+    } catch (e) {
+      console.warn('[Today] Unlog failed:', e);
+      setLoggedSets(prev => new Set([...prev, setId]));
+    } finally {
+      unlogInFlight.current.delete(setId);
     }
   };
 
@@ -5609,6 +5649,19 @@ export default function TodayScreen() {
     const exForSet    = trackerExercises.find(e => e.sets.some(s => s.id === setId));
     if (!exForSet) return;
 
+    // Start the rest timer, exactly as program mode does on every logged set —
+    // the timer machinery lived entirely in the other branch, so tracker mode
+    // never started one and its REST pill was inert (tester item 1). Mode is
+    // reset to 'rest' deliberately: a leftover stopwatch/EMOM mode must not
+    // hijack the between-sets countdown.
+    const trackerRestDuration = exerciseRestDurations[exForSet.id] ?? REST_CONFIG[exForSet.category]?.default ?? 120;
+    setTimerMode('rest');
+    setTimerIsCountUp(false);
+    setTimerSeconds(trackerRestDuration);
+    setTimerTarget(trackerRestDuration);
+    setTimerExerciseName(exForSet.name);
+    setTimerRunning(true);
+
     const exFields   = exForSet.fields ?? [{ type: 'weight' as FieldType }, { type: 'reps' as FieldType }];
     const hasWeight  = exFields.some(f => f.type === 'weight');
     const hasReps    = exFields.some(f => f.type === 'reps');
@@ -5762,6 +5815,41 @@ export default function TodayScreen() {
     }
   };
 
+  // ── Tracker un-log (tester item 8) ────────────────────────────────────────────
+  // Unlike program mode, the tracker row is kept on the server as an uncompleted
+  // prescription (completed: 'no') rather than deleted, so the set survives a
+  // reload as a fillable target instead of vanishing from the session.
+  const handleTrackerUnlog = async (setId: string) => {
+    if (unlogInFlight.current.has(setId) || !loggedSets.has(setId)) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    unlogInFlight.current.add(setId);
+    const ex = trackerExercises.find(e => e.sets.some(s => s.id === setId));
+    const entryId = logEntryIds[setId];
+    setLoggedSets(prev => { const n = new Set(prev); n.delete(setId); return n; });
+    if (sessionFinished) { setSessionFinished(false); clearFinishedToday(); }
+    try {
+      if (entryId && ex) {
+        const setIdx = ex.sets.findIndex(s => s.id === setId);
+        const { values } = buildSetFieldPayload(ex, setId);
+        await logApi.update(entryId, {
+          date: getLocalDateString(),
+          week: 0,
+          day: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+          sessionType: 'Tracker',
+          exercise: ex.name,
+          setIndex: setIdx >= 0 ? setIdx : undefined,
+          ...values,
+          completed: 'no',   // after the spread, so it wins over values.completed
+        });
+      }
+    } catch (e) {
+      console.warn('[Today] Tracker unlog failed:', e);
+      setLoggedSets(prev => new Set([...prev, setId]));
+    } finally {
+      unlogInFlight.current.delete(setId);
+    }
+  };
+
   // ── Tracker Mode: field change — persist fieldShape so the choice survives reload ──
   const handleTrackerFieldsChange = (exercise: Exercise, newFields: FieldSpec[], _scope: 'today' | 'everyTime') => {
     // 1. Update local state immediately so UI feels instant
@@ -5899,6 +5987,213 @@ export default function TodayScreen() {
   }
 
   // ── Tracker Mode: smart Today view (shows logged exercises or empty state) ───
+  // ── Overlays shared by BOTH mode branches ────────────────────────────────────
+  // This screen has two top-level returns: tracker mode exits early, program mode
+  // follows. Anything rendered in only one branch simply does not exist in the
+  // other — which is exactly how tracker mode shipped with a REST pill that
+  // opened an unmounted modal and a finish handler whose completion stats set
+  // state no mounted overlay was reading (tester items 1 and 6).
+  const renderTimerModals = (timerExList: Exercise[]) => (
+    <>
+      {/* ── CUSTOM REST MODAL (on-card: per-exercise rest duration) ── */}
+      <CustomRestModal
+        visible={customRestVisible}
+        currentSeconds={(() => {
+          const ex = timerExList.find(e => e.id === customRestExerciseId);
+          if (!ex) return 120;
+          return exerciseRestDurations[customRestExerciseId] ?? REST_CONFIG[ex.category]?.default ?? 120;
+        })()}
+        defaultSeconds={(() => {
+          const ex = timerExList.find(e => e.id === customRestExerciseId);
+          return ex ? (REST_CONFIG[ex.category]?.default ?? 120) : undefined;
+        })()}
+        onConfirm={(secs) => {
+          setExerciseRestDurations(prev => ({ ...prev, [customRestExerciseId]: secs }));
+          setCustomRestVisible(false);
+        }}
+        onClose={() => setCustomRestVisible(false)}
+      />
+
+      {/* ── TIMER ADJUST MODAL (bar pencil: re-target active timer, keep elapsed) ── */}
+      <CustomRestModal
+        visible={timerAdjustVisible}
+        currentSeconds={timerTarget}
+        onConfirm={(secs) => {
+          // Phase 3: adjust target only, keep elapsed seconds → timer continues toward new target
+          if (timerRunning) {
+            setTimerTarget(secs);
+          } else {
+            // Paused or done: fresh start with new target
+            setTimerSeconds(secs);
+            setTimerTarget(secs);
+          }
+          setTimerAdjustVisible(false);
+        }}
+        onClose={() => setTimerAdjustVisible(false)}
+      />
+
+      {/* ── PHASE 4: TIMER PICKER MODAL (cog button — 7 modes flat grid) ─────── */}
+      {/* NOTE: onClose only hides the picker, it does NOT touch timerRunning.       */}
+      {/* Closing/tapping-outside never kills a running timer.                        */}
+      <TimerPickerModal
+        visible={timerPickerVisible}
+        selectedMode={timerMode}
+        restCurrentSecs={timerTarget > 0 ? timerTarget : 300}
+        onClose={() => setTimerPickerVisible(false)}
+
+        onConfirmRest={(secs) => {
+          setTimerMode('rest');
+          setTimerIsCountUp(false);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmHold={(secs, hasSides) => {
+          setTimerMode('hold');
+          setTimerIsCountUp(false);
+          setTimerHasSides(hasSides);
+          setTimerSide(hasSides ? 'left' : null);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmCountUp={(mode) => {
+          setTimerMode(mode);
+          setTimerIsCountUp(true);
+          setTimerSeconds(0);
+          setTimerTarget(0);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmAmrap={(secs) => {
+          setTimerMode('amrap');
+          setTimerIsCountUp(false);
+          setTimerSeconds(secs);
+          setTimerTarget(secs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmEmom={(periodSecs, totalRounds) => {
+          setTimerMode('emom');
+          setTimerIsCountUp(false);
+          setTimerRound(1);
+          setTimerTotalRounds(totalRounds);
+          setTimerSeconds(periodSecs);
+          setTimerTarget(periodSecs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+
+        onConfirmCustom={(workSecs, restSecs, rounds) => {
+          setTimerMode('custom_interval');
+          setTimerIsCountUp(false);
+          setTimerPhase('work');
+          setTimerWorkSecs(workSecs);
+          setTimerRestIntervalSecs(restSecs);
+          setTimerRound(1);
+          setTimerTotalRounds(rounds);
+          setTimerSeconds(workSecs);
+          setTimerTarget(workSecs);
+          setTimerExerciseName('');
+          setTimerRunning(true);
+          setTimerPickerVisible(false);
+        }}
+      />
+    </>
+  );
+
+  const renderRestTimerBar = () => (
+    <RestTimerBar
+      running={timerRunning}
+      seconds={timerSeconds}
+      targetSeconds={timerTarget}
+      exerciseName={timerExerciseName}
+      onToggle={() => setTimerRunning(r => !r)}
+      onSkip={() => { setTimerRunning(false); setTimerSeconds(0); setTimerMode('rest'); setTimerIsCountUp(false); }}
+      onAdjust={() => setTimerAdjustVisible(true)}
+      onOpenPicker={() => setTimerPickerVisible(true)}
+      timerMode={timerMode}
+      timerPhase={timerPhase}
+      timerRound={timerRound}
+      timerSide={timerSide}
+    />
+  );
+
+  const renderSessionCompleteOverlay = () => (
+    <>
+      {/* ── Part 4B: SESSION COMPLETE OVERLAY ── */}
+      {showSessionComplete && sessionStats && (
+        <Modal transparent visible animationType="slide" onRequestClose={() => setShowSessionComplete(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#C9A84C20', borderWidth: 2, borderColor: '#C9A84C', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <MaterialCommunityIcons name="check" size={32} color="#C9A84C" />
+            </View>
+            <Text style={{ fontSize: 11, color: '#C9A84C', letterSpacing: 2, fontWeight: '700', marginBottom: 6 }}>SESSION COMPLETE</Text>
+            <Text style={{ fontSize: 24, fontWeight: '800', color: '#E8E8E6', marginBottom: 20 }}>{sessionStats.sessionType}</Text>
+            {/* Stats row */}
+            <View style={{ flexDirection: 'row', gap: 24, marginBottom: 20 }}>
+              {[
+                { label: 'SETS',   value: String(sessionStats.sets) },
+                { label: 'VOLUME', value: sessionStats.volume > 0 ? `${(sessionStats.volume/1000).toFixed(1)}k` : '0' },
+                { label: 'RPE',    value: sessionStats.rpe > 0 ? sessionStats.rpe.toFixed(1) : '—' },
+              ].map(({ label, value }) => (
+                <View key={label} style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 22, fontWeight: '700', color: '#E8E8E6' }}>{value}</Text>
+                  <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>{label}</Text>
+                </View>
+              ))}
+            </View>
+            {/* Streak info */}
+            {sessionStats.streak?.currentStreak > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FF6B3515', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#FF6B3530' }}>
+                <MaterialCommunityIcons name="fire" size={18} color="#FF6B35" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#FF6B35' }}>{sessionStats.streak.currentStreak}-week streak!</Text>
+                <Text style={{ fontSize: 11, color: '#888' }}>Keep it going</Text>
+              </View>
+            )}
+            {/* Badge info (BUG 1B) */}
+            {sessionStats.badges?.earned?.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#C9A84C15', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#C9A84C30' }}>
+                <MaterialCommunityIcons name="trophy" size={18} color="#C9A84C" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#C9A84C' }}>{sessionStats.badges.totalEarned} badge{sessionStats.badges.totalEarned !== 1 ? 's' : ''} earned</Text>
+              </View>
+            )}
+            {/* Buttons (BUG 3) */}
+            <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => shareSessionCard()}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A0A0C' }}>SHARE SESSION</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, borderWidth: 1, borderColor: '#444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                onPress={() => {
+                  setShowSessionComplete(false);
+                  router.push({ pathname: '/review', params: { setsLogged: String(sessionStats.sets), totalSets: String(totalSets), sessionType: sessionStats.sessionType, week: String(week) } } as any);
+                }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#E8E8E6' }}>DONE</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => { setShowSessionComplete(false); (router as any).push('/leaderboard'); }}>
+              <Text style={{ fontSize: 12, color: '#888', textAlign: 'center' }}>Train with friends? <Text style={{ color: COLORS.accent }}>Create a group</Text></Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
+    </>
+  );
+
   if (trainingMode === 'free') {
     const GOLD = COLORS.accent;
     const todayFormatted = (() => {
@@ -5971,7 +6266,7 @@ export default function TodayScreen() {
                       expanded={expanded.has(ex.id)}
                       loggedSets={loggedSets}
                       onToggle={() => handleToggleExpand(ex.id)}
-                      onLog={handleTrackerLog}
+                      onLog={handleTrackerLog} onUnlog={handleTrackerUnlog}
                       onAdjust={() => {}}
                       onReportPain={() => {}}
                       onAddSet={handleTrackerAddSet}
@@ -6158,6 +6453,16 @@ export default function TodayScreen() {
           }}
           title="Add Exercise"
         />
+
+        {/* ── STICKY REST TIMER + its modals — tracker mode never mounted these,
+            so logging a set started nothing and the REST pill opened nothing
+            (tester item 1). Shared with the program branch. ── */}
+        {renderRestTimerBar()}
+        {renderTimerModals(trackerExercises)}
+
+        {/* ── SESSION COMPLETE overlay — handleTrackerFinish has always set its
+            state; the modal just wasn't mounted in this branch (tester item 6). ── */}
+        {renderSessionCompleteOverlay()}
       </SafeAreaView>
     );
   }
@@ -6328,7 +6633,7 @@ export default function TodayScreen() {
                   expanded={expanded.has(ex.id)}
                   loggedSets={loggedSets}
                   onToggle={() => handleToggleExpand(ex.id)}
-                  onLog={handleLog}
+                  onLog={handleLog} onUnlog={handleUnlog}
                   onAdjust={openAdjust}
                   onReportPain={openPainModal}
                   onAddSet={handleAddSet}
@@ -6416,7 +6721,7 @@ export default function TodayScreen() {
             expanded={expanded.has(ex.id)}
             loggedSets={loggedSets}
             onToggle={() => handleToggleExpand(ex.id)}
-            onLog={handleLog}
+            onLog={handleLog} onUnlog={handleUnlog}
             onAdjust={openAdjust}
             onReportPain={openPainModal}
             onAddSet={handleAddSet}
@@ -6483,7 +6788,7 @@ export default function TodayScreen() {
                   expanded={expanded.has(ex.id)}
                   loggedSets={loggedSets}
                   onToggle={() => handleToggleExpand(ex.id)}
-                  onLog={handleLog}
+                  onLog={handleLog} onUnlog={handleUnlog}
                   onAdjust={openAdjust}
                   onReportPain={openPainModal}
                   onAddSet={handleAddSet}
@@ -6547,7 +6852,7 @@ export default function TodayScreen() {
                 expanded={expanded.has(ex.id)}
                 loggedSets={loggedSets}
                 onToggle={() => handleToggleExpand(ex.id)}
-                onLog={handleLog}
+                onLog={handleLog} onUnlog={handleUnlog}
                 onAdjust={openAdjust}
                 onReportPain={openPainModal}
                 onAddSet={handleAddSet}
@@ -6640,20 +6945,7 @@ export default function TodayScreen() {
       </ScrollView>
 
       {/* ── STICKY REST TIMER (between scroll and bottom bar) ── */}
-      <RestTimerBar
-        running={timerRunning}
-        seconds={timerSeconds}
-        targetSeconds={timerTarget}
-        exerciseName={timerExerciseName}
-        onToggle={() => setTimerRunning(r => !r)}
-        onSkip={() => { setTimerRunning(false); setTimerSeconds(0); setTimerMode('rest'); setTimerIsCountUp(false); }}
-        onAdjust={() => setTimerAdjustVisible(true)}
-        onOpenPicker={() => setTimerPickerVisible(true)}
-        timerMode={timerMode}
-        timerPhase={timerPhase}
-        timerRound={timerRound}
-        timerSide={timerSide}
-      />
+      {renderRestTimerBar()}
 
       {/* ── FIXED BOTTOM BAR ── */}
       <View style={s.bottomBar}>
@@ -7037,124 +7329,8 @@ export default function TodayScreen() {
         );
       })()}
 
-      {/* ── CUSTOM REST MODAL (on-card: per-exercise rest duration) ── */}
-      <CustomRestModal
-        visible={customRestVisible}
-        currentSeconds={(() => {
-          const ex = exercises.find(e => e.id === customRestExerciseId);
-          if (!ex) return 120;
-          return exerciseRestDurations[customRestExerciseId] ?? REST_CONFIG[ex.category].default;
-        })()}
-        defaultSeconds={(() => {
-          const ex = exercises.find(e => e.id === customRestExerciseId);
-          return ex ? REST_CONFIG[ex.category].default : undefined;
-        })()}
-        onConfirm={(secs) => {
-          setExerciseRestDurations(prev => ({ ...prev, [customRestExerciseId]: secs }));
-          setCustomRestVisible(false);
-        }}
-        onClose={() => setCustomRestVisible(false)}
-      />
-
-      {/* ── TIMER ADJUST MODAL (bar pencil: re-target active timer, keep elapsed) ── */}
-      <CustomRestModal
-        visible={timerAdjustVisible}
-        currentSeconds={timerTarget}
-        onConfirm={(secs) => {
-          // Phase 3: adjust target only, keep elapsed seconds → timer continues toward new target
-          if (timerRunning) {
-            setTimerTarget(secs);
-          } else {
-            // Paused or done: fresh start with new target
-            setTimerSeconds(secs);
-            setTimerTarget(secs);
-          }
-          setTimerAdjustVisible(false);
-        }}
-        onClose={() => setTimerAdjustVisible(false)}
-      />
-
-      {/* ── PHASE 4: TIMER PICKER MODAL (cog button — 7 modes flat grid) ─────── */}
-      {/* NOTE: onClose only hides the picker, it does NOT touch timerRunning.       */}
-      {/* Closing/tapping-outside never kills a running timer.                        */}
-      {/* ⚠️  Phase 7 TODO (EAS native build required):                               */}
-      {/*     backgrounded timer survival + audio when screen is off.                */}
-      {/*     Set UIBackgroundModes:audio + staysActiveInBackground:true in app.json. */}
-      <TimerPickerModal
-        visible={timerPickerVisible}
-        selectedMode={timerMode}
-        restCurrentSecs={timerTarget > 0 ? timerTarget : 300}
-        onClose={() => setTimerPickerVisible(false)}
-
-        onConfirmRest={(secs) => {
-          setTimerMode('rest');
-          setTimerIsCountUp(false);
-          setTimerSeconds(secs);
-          setTimerTarget(secs);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-
-        onConfirmHold={(secs, hasSides) => {
-          setTimerMode('hold');
-          setTimerIsCountUp(false);
-          setTimerHasSides(hasSides);
-          setTimerSide(hasSides ? 'left' : null);
-          setTimerSeconds(secs);
-          setTimerTarget(secs);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-
-        onConfirmCountUp={(mode) => {
-          setTimerMode(mode);
-          setTimerIsCountUp(true);
-          setTimerSeconds(0);
-          setTimerTarget(0);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-
-        onConfirmAmrap={(secs) => {
-          setTimerMode('amrap');
-          setTimerIsCountUp(false);
-          setTimerSeconds(secs);
-          setTimerTarget(secs);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-
-        onConfirmEmom={(periodSecs, totalRounds) => {
-          setTimerMode('emom');
-          setTimerIsCountUp(false);
-          setTimerRound(1);
-          setTimerTotalRounds(totalRounds);
-          setTimerSeconds(periodSecs);
-          setTimerTarget(periodSecs);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-
-        onConfirmCustom={(workSecs, restSecs, rounds) => {
-          setTimerMode('custom_interval');
-          setTimerIsCountUp(false);
-          setTimerPhase('work');
-          setTimerWorkSecs(workSecs);
-          setTimerRestIntervalSecs(restSecs);
-          setTimerRound(1);
-          setTimerTotalRounds(rounds);
-          setTimerSeconds(workSecs);
-          setTimerTarget(workSecs);
-          setTimerExerciseName('');
-          setTimerRunning(true);
-          setTimerPickerVisible(false);
-        }}
-      />
+      {/* Timer modals are shared with tracker mode — see renderTimerModals. */}
+      {renderTimerModals(exercises)}
 
       {/* ── PHASE 5: HOW-TO MODAL (YouTube WebView + in-app browser fallback) ── */}
       <HowToModal
@@ -7256,65 +7432,8 @@ export default function TodayScreen() {
         </Modal>
       )}
 
-      {/* ── Part 4B: SESSION COMPLETE OVERLAY ── */}
-      {showSessionComplete && sessionStats && (
-        <Modal transparent visible animationType="slide" onRequestClose={() => setShowSessionComplete(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#C9A84C20', borderWidth: 2, borderColor: '#C9A84C', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-              <MaterialCommunityIcons name="check" size={32} color="#C9A84C" />
-            </View>
-            <Text style={{ fontSize: 11, color: '#C9A84C', letterSpacing: 2, fontWeight: '700', marginBottom: 6 }}>SESSION COMPLETE</Text>
-            <Text style={{ fontSize: 24, fontWeight: '800', color: '#E8E8E6', marginBottom: 20 }}>{sessionStats.sessionType}</Text>
-            {/* Stats row */}
-            <View style={{ flexDirection: 'row', gap: 24, marginBottom: 20 }}>
-              {[
-                { label: 'SETS',   value: String(sessionStats.sets) },
-                { label: 'VOLUME', value: sessionStats.volume > 0 ? `${(sessionStats.volume/1000).toFixed(1)}k` : '0' },
-                { label: 'RPE',    value: sessionStats.rpe > 0 ? sessionStats.rpe.toFixed(1) : '—' },
-              ].map(({ label, value }) => (
-                <View key={label} style={{ alignItems: 'center' }}>
-                  <Text style={{ fontSize: 22, fontWeight: '700', color: '#E8E8E6' }}>{value}</Text>
-                  <Text style={{ fontSize: 9, color: '#555', fontWeight: '700', letterSpacing: 0.8 }}>{label}</Text>
-                </View>
-              ))}
-            </View>
-            {/* Streak info */}
-            {sessionStats.streak?.currentStreak > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FF6B3515', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#FF6B3530' }}>
-                <MaterialCommunityIcons name="fire" size={18} color="#FF6B35" />
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#FF6B35' }}>{sessionStats.streak.currentStreak}-week streak!</Text>
-                <Text style={{ fontSize: 11, color: '#888' }}>Keep it going</Text>
-              </View>
-            )}
-            {/* Badge info (BUG 1B) */}
-            {sessionStats.badges?.earned?.length > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#C9A84C15', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#C9A84C30' }}>
-                <MaterialCommunityIcons name="trophy" size={18} color="#C9A84C" />
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#C9A84C' }}>{sessionStats.badges.totalEarned} badge{sessionStats.badges.totalEarned !== 1 ? 's' : ''} earned</Text>
-              </View>
-            )}
-            {/* Buttons (BUG 3) */}
-            <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
-              <TouchableOpacity
-                style={{ flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
-                onPress={() => shareSessionCard()}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0A0A0C' }}>SHARE SESSION</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ flex: 1, borderWidth: 1, borderColor: '#444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
-                onPress={() => {
-                  setShowSessionComplete(false);
-                  router.push({ pathname: '/review', params: { setsLogged: String(sessionStats.sets), totalSets: String(totalSets), sessionType: sessionStats.sessionType, week: String(week) } } as any);
-                }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#E8E8E6' }}>DONE</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => { setShowSessionComplete(false); (router as any).push('/leaderboard'); }}>
-              <Text style={{ fontSize: 12, color: '#888', textAlign: 'center' }}>Train with friends? <Text style={{ color: COLORS.accent }}>Create a group</Text></Text>
-            </TouchableOpacity>
-          </View>
-        </Modal>
-      )}
+      {/* Session-complete overlay is shared with tracker mode. */}
+      {renderSessionCompleteOverlay()}
 
       {/* ── Part 3C: Hidden PR share card — P4: handles conditioning PRs too ── */}
       <View style={{ height: 0, overflow: 'hidden' }}>
