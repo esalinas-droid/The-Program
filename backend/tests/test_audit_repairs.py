@@ -93,7 +93,9 @@ class TestTrackerCommitUnits:
             "weight": 100, "reps": 3, "rpe": 8, "weightUnit": "kg"})
         rows = requests.get(f"{API}/log?week=0&exercise=Front%20Squat",
                             headers=live_account, timeout=T).json()
-        row = next(r for r in rows if r.get("setId") == "aud-set-1")
+        # Match on the exercise: the API's response model does not echo setId,
+        # and this throwaway account has exactly one Front Squat entry.
+        row = next(r for r in rows if r.get("exercise") == "Front Squat")
         assert row["weightUnit"] == "kg"
         # 100 kg x3 ≈ 220.5 lb x3 → Epley ≈ 242.5; unitless-as-lbs would be ~110.
         assert 230 < row["e1rm"] < 255, f"e1rm {row['e1rm']} looks unit-blind"
@@ -106,7 +108,7 @@ class TestTrackerCommitUnits:
             "heightVal": 30, "heightUnit": "in", "reps": 3, "rpe": 7})
         rows = requests.get(f"{API}/log?week=0&exercise=Box%20Jump",
                             headers=live_account, timeout=T).json()
-        row = next(r for r in rows if r.get("setId") == "aud-set-2")
+        row = next(r for r in rows if r.get("exercise") == "Box Jump")
         assert row["e1rm"] == 0
 
 
