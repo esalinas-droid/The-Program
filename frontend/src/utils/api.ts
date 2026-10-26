@@ -129,6 +129,8 @@ export const profileApi = {
   switchMode: (mode: 'program' | 'free'): Promise<{ success: boolean; mode: string; needsPathChoice: boolean; profile: any }> =>
     api('/profile/switch-mode', { method: 'POST', body: JSON.stringify({ mode }) }),
   completeTour: (): Promise<AthleteProfile> => api('/profile/complete-tour', { method: 'POST' }),
+  /** Everything the athlete owns, as one JSON document — the counterpart to delete-account. */
+  exportData: (): Promise<any> => api('/export'),
   resetTour:    (): Promise<AthleteProfile> => api('/profile/reset-tour',    { method: 'POST' }),
 };
 

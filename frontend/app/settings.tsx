@@ -12,6 +12,8 @@ import { profileApi, planApi, authApi, coachApi, InjuryPreviewResult } from '../
 import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
 import { AthleteProfile, InjuryDetail } from '../src/types';
 import { clearAuth, getStoredUser, getAuthToken } from '../src/utils/auth';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -426,6 +428,42 @@ export default function SettingsScreen() {
     } catch (e) { console.warn('[ModeSwitchProgram] error', e); }
     setModeSwitching(false);
     router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } });
+  };
+
+  // ── Data export ─────────────────────────────────────────────────────────────
+  // The counterpart to the delete/reset buttons below: months of training
+  // history could be erased in one guarded tap, with no way to take a copy out
+  // first. Fetches everything the athlete owns and hands it over as a JSON file.
+  const [exporting, setExporting] = useState(false);
+  const handleExportData = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const data = await profileApi.exportData();
+      const json = JSON.stringify(data, null, 2);
+      const fileName = `the-program-export-${new Date().toISOString().slice(0, 10)}.json`;
+      if (Platform.OS === 'web') {
+        const doc: any = (globalThis as any).document;
+        const blob = new (globalThis as any).Blob([json], { type: 'application/json' });
+        const url = (globalThis as any).URL.createObjectURL(blob);
+        const a = doc.createElement('a');
+        a.href = url; a.download = fileName; a.click();
+        (globalThis as any).URL.revokeObjectURL(url);
+      } else {
+        const uri = `${FileSystem.cacheDirectory}${fileName}`;
+        await FileSystem.writeAsStringAsync(uri, json);
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/json',
+          dialogTitle: 'Save your training data',
+        });
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[Settings] export failed:', e);
+      Alert.alert('Export failed', 'Could not prepare your data. Please try again.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ── Beta reset modal state ─────────────────────────────────────────────────
@@ -976,6 +1014,28 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="logout" size={16} color="#EF5350" />
             </View>
             <Text style={s.signOutText}>Sign out</Text>
+          </TouchableOpacity>
+
+          {/* Export — deliberately beside the destructive buttons it balances */}
+          <TouchableOpacity
+            style={[s.accountRow, { marginTop: 2 }]}
+            onPress={handleExportData}
+            disabled={exporting}
+            activeOpacity={0.7}
+          >
+            <View style={[s.accountIconWrap, { backgroundColor: COLORS.accent + '15' }]}>
+              {exporting
+                ? <ActivityIndicator size="small" color={COLORS.accent} />
+                : <MaterialCommunityIcons name="download-outline" size={16} color={COLORS.accent} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.signOutText, { color: COLORS.text.primary }]}>
+                {exporting ? 'Preparing your data…' : 'Export my data'}
+              </Text>
+              <Text style={[s.accountRowDesc, { color: COLORS.text.muted, marginTop: 2 }]}>
+                Download everything — workouts, PRs, program, coach history
+              </Text>
+            </View>
           </TouchableOpacity>
 
           {/* C.3 — Delete Account (App Store compliance) */}

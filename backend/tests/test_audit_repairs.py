@@ -163,3 +163,29 @@ class TestGamificationRepairs:
             assert "userId" not in e, "internal user ids are being handed to every client"
         me = [e for e in board["entries"] if e.get("isCurrentUser")]
         assert me and me[0]["rank"] >= 1, "the requesting athlete fell off their own leaderboard"
+
+
+class TestDataExport:
+    def test_export_returns_everything_and_leaks_nothing(self, live_account):
+        """The counterpart to delete-account: a copy out before anything is erased."""
+        requests.post(f"{API}/log", headers=live_account, timeout=T, json={
+            "date": "2026-10-26", "week": 1, "day": "Monday", "sessionType": "Training",
+            "exercise": "Export Probe Lift", "sets": 1, "weight": 100, "reps": 5,
+            "rpe": 7, "pain": 0, "completed": "yes", "weightUnit": "kg"})
+        resp = requests.get(f"{API}/export", headers=live_account, timeout=T)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["format"] == "the-program-export"
+        assert body["account"].get("email", "").startswith("zz-aud-")
+        # the probe entry made it out, unit included
+        logs = body["data"]["log"]
+        probe = next(l for l in logs if l["exercise"] == "Export Probe Lift")
+        assert probe["weightUnit"] == "kg"
+        assert body["counts"]["log"] >= 1
+        # no credentials anywhere in the document
+        flat = resp.text.lower()
+        for secret_key in ("passwordhash", "password_hash", "codehash"):
+            assert secret_key not in flat, f"export leaks {secret_key}"
+
+    def test_export_requires_auth(self):
+        assert requests.get(f"{API}/export", timeout=T).status_code in (401, 403)

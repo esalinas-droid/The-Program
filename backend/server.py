@@ -1479,6 +1479,73 @@ async def get_added_exercises(date: str = None, userId: str = Depends(get_curren
     return {"date": day, "exercises": (doc or {}).get("exercises", [])}
 
 
+# ── Data export ────────────────────────────────────────────────────────────────
+
+_EXPORT_COLLECTIONS = [
+    # Mirrors the delete-account purge list in routers/auth.py: if the app is
+    # willing to erase it in one tap, the athlete is entitled to a copy of it.
+    "profile", "saved_plans", "log", "tracked_lifts", "pain_reports",
+    "substitutions", "user_documents", "conversations", "coach_memory",
+    "weekly_reviews", "session_ratings", "readiness_checks", "checkins",
+    "calendar_overrides", "user_exercises", "rehab_protocols", "rehab_logs",
+    "deload_history", "image_credits", "credit_transactions", "weekly_quests",
+    "streak_freezes", "session_finishes", "session_added_exercises",
+]
+# Deliberately absent: user_document_chunks (embedding vectors — megabytes of
+# model numbers, not athlete data) and the voice transcription/TTS caches.
+
+_EXPORT_DOC_CAP = 50_000   # per collection; years of daily logging stays far under this
+
+
+def _export_scrub(value):
+    """Make a Mongo document JSON-safe: ObjectId and datetime become strings."""
+    if isinstance(value, dict):
+        return {("id" if k == "_id" else k): _export_scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_export_scrub(v) for v in value]
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+@api_router.get("/export")
+async def export_my_data(userId: str = Depends(get_current_user)):
+    """The athlete's complete data, as one JSON document.
+
+    The app has long had a guarded button that permanently erases everything,
+    and until now no way to take a copy out first. Every query here is
+    userId-scoped; the account block never includes password hashes or reset
+    codes.
+    """
+    user = await db.users.find_one({"userId": userId}) or {}
+    account = _export_scrub({
+        "userId":           user.get("userId"),
+        "email":            user.get("email"),
+        "name":             user.get("name"),
+        "createdAt":        user.get("createdAt"),
+        "subscriptionTier": user.get("subscriptionTier", "free"),
+        "training_mode":    user.get("training_mode"),
+    })
+
+    data: dict = {}
+    counts: dict = {}
+    for coll in _EXPORT_COLLECTIONS:
+        docs = await db[coll].find({"userId": userId}).to_list(_EXPORT_DOC_CAP)
+        counts[coll] = len(docs)
+        data[coll] = [_export_scrub(d) for d in docs]
+
+    return {
+        "format":     "the-program-export",
+        "version":    1,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "account":    account,
+        "counts":     counts,
+        "data":       data,
+    }
+
+
 class UpdateMaxesBody(BaseModel):
     maxes: dict                      # {"squat": 455, "yoke_walk": 700, "Circus DB": 150, ...}
     rescaleProgram: bool = True      # scale the live plan's remaining loads
