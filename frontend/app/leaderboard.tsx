@@ -281,7 +281,7 @@ export default function LeaderboardScreen() {
           {/* All Athletes */}
           <Text style={s.allLabel}>ALL ATHLETES ({data?.totalAthletes ?? 0})</Text>
           {rest.map((entry: any) => (
-            <View key={entry.userId} style={[s.row, entry.isCurrentUser && s.rowMe]}>
+            <View key={`${entry.rank}-${entry.initials}`} style={[s.row, entry.isCurrentUser && s.rowMe]}>
               <Text style={[s.rowRank, entry.rank <= 3 && { color: GOLD }]}>#{entry.rank}</Text>
               <Avatar initials={entry.initials} isCurrentUser={entry.isCurrentUser} rank={entry.rank} />
               <View style={s.rowInfo}>

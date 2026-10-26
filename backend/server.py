@@ -9154,6 +9154,19 @@ async def debug_sync_status(userId: str = Depends(get_current_user)):
 @api_router.get("/streaks")
 async def get_streak(userId: str = Depends(get_current_user)):
     """Calculate training streak (consecutive weeks with at least 1 session)."""
+    return await _compute_streak(userId, persist_auto_freeze=True)
+
+
+async def _compute_streak(userId: str, persist_auto_freeze: bool = True):
+    """Streak math, separated from the route so other readers can call it.
+
+    persist_auto_freeze matters: the auto-freeze below WRITES to the user's
+    streak_freezes. The leaderboard computes streaks for up to dozens of OTHER
+    athletes per view, and calling the route function directly meant any user
+    opening the leaderboard silently spent other people's streak freezes —
+    database writes buried in a GET, on accounts that weren't even present.
+    Only a user's own streak view is allowed to consume their freeze.
+    """
     user_filter = _user_or_orphan(userId)
     all_logs = await db.log.find(user_filter).sort("date", -1).to_list(5000)
     if not all_logs:
@@ -9220,10 +9233,11 @@ async def get_streak(userId: str = Depends(get_current_user)):
     used_this_month = sum(1 for f in freezes_used if f >= now.replace(day=1).strftime("%Y-%m-%d"))
     freezes_available = max(0, earned_freezes - used_this_month)
 
-    # Auto-freeze: consume freeze for previous week if missed
+    # Auto-freeze: consume freeze for previous week if missed — but never as a
+    # side effect of someone ELSE's read (see _compute_streak docstring).
     prev_monday = current_monday - timedelta(weeks=1)
     prev_str = prev_monday.strftime("%Y-%m-%d")
-    if prev_str not in trained_weeks and prev_str not in freezes_used and freezes_available > 0:
+    if persist_auto_freeze and prev_str not in trained_weeks and prev_str not in freezes_used and freezes_available > 0:
         freezes_used.append(prev_str)
         await db.streak_freezes.update_one(
             {"userId": userId},
@@ -9247,6 +9261,39 @@ async def get_streak(userId: str = Depends(get_current_user)):
 # BADGE SYSTEM
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _count_real_prs(user_filter: dict) -> int:
+    """Exercises where the athlete has beaten their own first-day best.
+
+    A record needs a prior mark to beat. The previous definition — any set with
+    a positive e1rm — made the PR badges and the PRs leaderboard measure nothing
+    beyond "has logged a weighted set". Here the best estimated 1RM must exceed
+    the best from the FIRST day the exercise was ever logged.
+
+    One query instead of one per exercise; the newest 5000 e1rm-bearing sets is
+    the same window the streak scan uses.
+    """
+    rows = await db.log.find(
+        {**user_filter, "e1rm": {"$gt": 0}},
+        {"exercise": 1, "date": 1, "e1rm": 1},
+    ).sort("date", -1).to_list(5000)
+
+    first_day: dict = {}
+    first_day_best: dict = {}
+    overall_best: dict = {}
+    for r in reversed(rows):                     # chronological
+        ex, d = r.get("exercise"), r.get("date")
+        e1 = float(r.get("e1rm") or 0)
+        if not ex or not d:
+            continue
+        if ex not in first_day:
+            first_day[ex] = d
+        if d == first_day[ex]:
+            first_day_best[ex] = max(first_day_best.get(ex, 0.0), e1)
+        if e1 > overall_best.get(ex, 0.0):
+            overall_best[ex] = e1
+    return sum(1 for ex, best in overall_best.items() if best > first_day_best.get(ex, 0.0))
+
+
 @api_router.get("/badges")
 async def get_badges(userId: str = Depends(get_current_user)):
     """Calculate earned and locked badges."""
@@ -9255,18 +9302,14 @@ async def get_badges(userId: str = Depends(get_current_user)):
     unique_dates = len(await db.log.distinct("date", user_filter))
     unique_exs   = len(await db.log.distinct("exercise", user_filter))
 
-    streak_data    = await get_streak(userId)
+    streak_data    = await _compute_streak(userId)
     current_streak = streak_data.get("currentStreak", 0)
     total_weeks    = streak_data.get("totalWeeksTrained", 0)
 
-    # Count unique exercises with at least one logged set with positive e1rm (actual training PRs)
-    exercises_with_logs = await db.log.distinct("exercise", user_filter)
-    pr_exercises = set()
-    for ex in exercises_with_logs:
-        best_doc = await db.log.find_one({**user_filter, "exercise": ex, "e1rm": {"$gt": 0}})
-        if best_doc:
-            pr_exercises.add(ex)
-    pr_count = len(pr_exercises)
+    # Real PRs: exercises where the athlete has beaten their own first-day best.
+    # The old rule counted any exercise with any e1rm-bearing set, so everyone
+    # "hit their first PR" the moment they logged a single weighted set.
+    pr_count = await _count_real_prs(user_filter)
 
     BADGE_DEFS = [
         {"id": "first_session",  "name": "First Rep",         "desc": "Logged your first session",         "icon": "dumbbell",            "check": unique_dates >= 1,    "current": unique_dates,    "target": 1},
@@ -9385,8 +9428,17 @@ async def get_leaderboard(
     if userId not in member_ids:
         member_ids.append(userId)
 
+    # Cap the per-request computation (each member costs several queries), but
+    # never slice the requesting athlete out of their own leaderboard — the old
+    # [:50] inside the loop could drop exactly the person asking, leaving them
+    # rankless on a board that claimed to include them. Past ~50 users the true
+    # fix is an aggregation pipeline; noted for the post-beta pass.
+    computed_ids = member_ids[:50]
+    if userId not in computed_ids:
+        computed_ids = computed_ids[:49] + [userId]
+
     entries = []
-    for mid in member_ids[:50]:  # Cap at 50 for perf
+    for mid in computed_ids:
         user    = await db.users.find_one({"userId": mid}) or {}
         profile = await db.profile.find_one({"userId": mid}) or {}
         uf      = _user_or_orphan(mid)
@@ -9396,16 +9448,12 @@ async def get_leaderboard(
         planned    = int(profile.get("trainingDaysCount", 4)) * 4
         compliance = round(sessions_completed / max(planned, 1) * 100)
 
-        streak_data = await get_streak(mid)
+        # persist_auto_freeze=False: computing someone's rank must never spend
+        # their streak freezes.
+        streak_data = await _compute_streak(mid, persist_auto_freeze=False)
         pr_count = 0
         if tab == "prs":
-            # Count exercises with at least one logged set with positive e1rm
-            uf_for_pr = _user_or_orphan(mid)
-            ex_list = await db.log.distinct("exercise", uf_for_pr)
-            for ex in ex_list:
-                has_pr = await db.log.find_one({**uf_for_pr, "exercise": ex, "e1rm": {"$gt": 0}})
-                if has_pr:
-                    pr_count += 1
+            pr_count = await _count_real_prs(_user_or_orphan(mid))
 
         name       = user.get("name", "Athlete")
         name_parts = name.strip().split()
@@ -9413,7 +9461,10 @@ async def get_leaderboard(
         initials   = "".join(w[0].upper() for w in name_parts[:2]) if name_parts else "?"
 
         entries.append({
-            "userId": mid, "name": display, "initials": initials,
+            # No userId: the response goes to every client, and handing out the
+            # internal ids of up to 50 other accounts is an IDOR invitation this
+            # codebase has already paid for once. The frontend only keyed on it.
+            "name": display, "initials": initials,
             "goal": profile.get("goal", "Strength"),
             "sessionsCompleted": sessions_completed, "sessionsPlanned": planned,
             "compliance": min(100, compliance),

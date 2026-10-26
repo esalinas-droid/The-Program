@@ -132,3 +132,34 @@ class TestPrListCarriesUnit:
         prs = requests.get(f"{API}/prs", headers=live_account, timeout=T).json()
         row = next(p for p in prs if p["exercise"] == "Front Squat" and p.get("bestWeight"))
         assert row.get("bestUnit") == "kg", "a kg best displayed as a bare number reads as lbs"
+
+
+class TestGamificationRepairs:
+    def test_one_logged_set_is_not_a_pr(self, live_account):
+        """Every athlete used to earn 'PR Hunter' for logging a single weighted
+        set. A record needs a prior mark to beat."""
+        requests.post(f"{API}/log", headers=live_account, timeout=T, json={
+            "date": "2026-10-20", "week": 1, "day": "Monday", "sessionType": "Training",
+            "exercise": "Front Squat", "sets": 1, "weight": 225, "reps": 5,
+            "rpe": 7, "pain": 0, "completed": "yes"})
+        badges = requests.get(f"{API}/badges", headers=live_account, timeout=T).json()
+        earned_ids = {b["id"] for b in badges["earned"]}
+        assert "pr_1" not in earned_ids, "a single set minted a 'first PR' badge"
+
+    def test_beating_first_day_best_is_a_pr(self, live_account):
+        for date, weight in (("2026-10-20", 225), ("2026-10-24", 245)):
+            requests.post(f"{API}/log", headers=live_account, timeout=T, json={
+                "date": date, "week": 1, "day": "Monday", "sessionType": "Training",
+                "exercise": "Front Squat", "sets": 1, "weight": weight, "reps": 5,
+                "rpe": 8, "pain": 0, "completed": "yes"})
+        badges = requests.get(f"{API}/badges", headers=live_account, timeout=T).json()
+        earned_ids = {b["id"] for b in badges["earned"]}
+        assert "pr_1" in earned_ids, "a genuine improvement did not count as a PR"
+
+    def test_leaderboard_exposes_no_internal_ids_and_includes_requester(self, live_account):
+        board = requests.get(f"{API}/leaderboard", headers=live_account, timeout=T).json()
+        assert board["entries"], "leaderboard came back empty"
+        for e in board["entries"]:
+            assert "userId" not in e, "internal user ids are being handed to every client"
+        me = [e for e in board["entries"] if e.get("isCurrentUser")]
+        assert me and me[0]["rank"] >= 1, "the requesting athlete fell off their own leaderboard"
