@@ -13,6 +13,7 @@ import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
@@ -93,6 +94,8 @@ export default function ImportDocumentScreen() {
   const [progress, setProgress]   = useState(0);
   const [errorMsg, setErrorMsg]   = useState('');
   const [showParseTips, setShowParseTips] = useState(false);
+  const [showPasteBox, setShowPasteBox]   = useState(false);
+  const [pastedText, setPastedText]       = useState('');
 
   // Animated progress bar width
   const animWidth = useRef(new Animated.Value(0)).current;
@@ -163,6 +166,34 @@ export default function ImportDocumentScreen() {
       setErrorMsg('');
     } catch {
       setErrorMsg('Could not open photo picker. Please try again.');
+    }
+  };
+
+  // ── Paste text instead of a file (tester item 3) ─────────────────────────────
+  // The backend endpoint only accepts files, so typed text is packaged as a
+  // .txt and sent through the exact same upload, parse, and build-plan pipeline
+  // a picked document uses — no second code path to drift.
+  const usePastedText = async () => {
+    const text = pastedText.trim();
+    if (text.length < 20) {
+      setErrorMsg('Paste at least a few lines of your workout first.');
+      return;
+    }
+    try {
+      let uri: string;
+      if (Platform.OS === 'web') {
+        // uploadWeb() fetch()es the uri into a blob; a data: URI satisfies that.
+        uri = `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+      } else {
+        uri = `${FileSystem.cacheDirectory}pasted-workout.txt`;
+        await FileSystem.writeAsStringAsync(uri, text);
+      }
+      setFile({ uri, name: 'pasted-workout.txt', mimeType: 'text/plain', size: text.length });
+      setPhase('selected');
+      setErrorMsg('');
+      setShowPasteBox(false);
+    } catch {
+      setErrorMsg('Could not prepare the pasted text. Please try again.');
     }
   };
 
@@ -398,6 +429,50 @@ export default function ImportDocumentScreen() {
                 <Text style={s.pickSub}>Camera Roll</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Paste text (tester item 3) — no file needed */}
+            {!showPasteBox ? (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.accent + '40', backgroundColor: COLORS.accent + '08', marginBottom: SPACING.lg }}
+                onPress={() => { setShowPasteBox(true); setErrorMsg(''); }}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="text-box-edit-outline" size={18} color={COLORS.accent} />
+                <Text style={{ color: COLORS.accent, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold }}>
+                  Or paste your workout as text
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={{ borderWidth: 1, borderColor: COLORS.accent + '40', borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.lg, gap: SPACING.sm }}>
+                <Text style={{ color: COLORS.text.muted, fontSize: FONTS.sizes.xs }}>
+                  Paste or type your program — exercise names with sets, reps and weights work best.
+                </Text>
+                <TextInput
+                  style={{ minHeight: 140, maxHeight: 260, color: COLORS.text.primary, fontSize: FONTS.sizes.sm, lineHeight: 20, textAlignVertical: 'top', backgroundColor: COLORS.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md }}
+                  value={pastedText}
+                  onChangeText={t => { setPastedText(t); if (errorMsg) setErrorMsg(''); }}
+                  placeholder={'Week 1\nSquat 5x5 @ 315\nBench 4x8 @ 225\n…'}
+                  placeholderTextColor={COLORS.text.muted}
+                  multiline
+                />
+                <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: SPACING.md, borderRadius: RADIUS.md, backgroundColor: COLORS.accent }}
+                    onPress={usePastedText}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ color: COLORS.primary, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.bold }}>Use this text</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ paddingVertical: SPACING.md, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' }}
+                    onPress={() => setShowPasteBox(false)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={{ color: COLORS.text.secondary, fontSize: FONTS.sizes.sm }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* Format notes */}
             <View style={s.formatBox}>

@@ -437,6 +437,12 @@ async def build_plan_from_document(
                 "skeletonMode":           True,
                 "skeleton_mode":          True,
                 "is_likely_single_session": True,
+                # The extractor is explicitly told to fill raw_exercises in
+                # skeleton mode (plan_extractor.py), but this response never
+                # included them — so the app redirected the user to a Review
+                # screen with an empty list and "Save" rightly refused to save
+                # nothing. The work was done, then dropped on the doorstep.
+                "raw_exercises":          extracted.get("raw_exercises", []),
                 "extraction_summary":     confidence.get("summary"),
                 "user_has_active_program": bool(active_plan),
                 "approxCostUsd":          extraction_meta.get("approx_cost_usd", 0),

@@ -135,11 +135,16 @@ export default function BuildPlanScreen() {
       // We redirect to /tracker-review so the user can save it as a workout log
       // entry rather than forcing an unusable skeleton plan.
       if ((res as any).is_likely_single_session) {
+        // raw_exercises arrives in the exact ParsedExercise[] shape the review
+        // screen reads ({name, prescriptionType, sets:[{weight,reps,rpe}]}).
+        const rawExercises = Array.isArray((res as any).raw_exercises)
+          ? (res as any).raw_exercises
+          : [];
         setParsedSession({
           session_title: null,
           session_date:  null,
-          confidence:    'medium',  // single-session ≠ bad parse; just needs review
-          exercises:     [],        // backend doesn't return raw_exercises yet
+          confidence:    rawExercises.length > 0 ? 'medium' : 'low',
+          exercises:     rawExercises,
         });
         router.replace({
           pathname: '/tracker-review' as any,
