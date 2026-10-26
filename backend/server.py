@@ -1497,7 +1497,7 @@ async def get_maxes(userId: str = Depends(get_current_user)):
         "maxes": base,
         "programmingKeys": sorted(MAX_TO_EXERCISES.keys()),
         "units": profile.get("units", "lbs"),
-        "prSuggestions": detect_pr_candidates(base, logs),
+        "prSuggestions": detect_pr_candidates(base, logs, max_unit=profile.get("units", "lbs")),
     }
 
 
@@ -2284,6 +2284,10 @@ async def get_log_entries(week: Optional[int] = None, exercise: Optional[str] = 
         query["date"] = {"$gte": start_date}
     elif end_date:
         query["date"] = {"$lte": end_date}
+    # Clamp: the default 200 silently truncated a month view for a consistent
+    # tracker user (the history page now asks for more), and an unbounded value
+    # must not let one request pull an entire collection into memory.
+    limit = max(1, min(limit, 1000))
     docs = await db.log.find(query).sort("date", -1).limit(limit).to_list(limit)
     return [WorkoutLogEntry.from_mongo(d).model_dump(exclude={"id"}) | {"id": str(d["_id"])} for d in docs]
 
@@ -2345,6 +2349,10 @@ class TrackerSetCommit(BaseModel):
     # calories
     calories: Optional[int] = None
     elapsedTime: Optional[str] = None
+    # P4: per-set weight unit. This endpoint was the ONE write path that never
+    # stored it, so a kg lifter's tracker sets were saved unitless and scored
+    # as pounds — permanently, since the unit could never be recovered.
+    weightUnit: Optional[str] = None        # 'lb' or 'kg'; None = legacy (treated as lbs)
 
 @api_router.post("/tracker/commit-set")
 async def tracker_commit_set(
@@ -2367,6 +2375,7 @@ async def tracker_commit_set(
         "sets": 1,
         "setIndex": body.setIndex,
         "prescriptionType": body.prescriptionType,
+        "weightUnit": body.weightUnit,
         "completed": "yes",
         "notes": body.notes,
         "pain": 0,
@@ -2380,7 +2389,9 @@ async def tracker_commit_set(
         doc["weight"] = w
         doc["reps"]   = r
         doc["rpe"]    = body.rpe or 0.0
-        doc["e1rm"]   = epley_e1rm(w, r)
+        # Normalize kg → lbs like every other write path, instead of scoring a
+        # 100 kg set as a 100 lb one.
+        doc["e1rm"]   = _e1rm_or_zero(w, r, body.weightUnit or "lbs")
     elif pt == "timed":
         dur = body.duration or 0.0
         if body.durationUnit == "min":
@@ -2402,7 +2413,9 @@ async def tracker_commit_set(
         doc["reps"]   = r
         doc["rpe"]    = body.rpe or 0.0
         doc["unit"]   = body.heightUnit or "in"
-        doc["e1rm"]   = epley_e1rm(w, r)
+        # A 30-inch box jump is not a 30 lb lift. Feeding jump height into the
+        # e1RM formula minted fake strength PRs for every height-based set.
+        doc["e1rm"]   = 0.0
     elif pt == "calories":
         doc["reps"] = body.calories or 0
         if body.elapsedTime:
@@ -2997,6 +3010,7 @@ async def get_prs(userId: str = Depends(get_current_user)):
             "exercise":   exercise,
             "lastDate":   latest.get("date"),
             "bestWeight": best.get("weight", 0),
+            "bestUnit":   best.get("weightUnit") or "lb",   # a kg best shown as a bare number reads as lbs
             "bestReps":   best.get("reps", 0),
             "bestE1rm":   best.get("e1rm", 0),
             "latestNote": latest.get("notes", "")
@@ -3017,6 +3031,7 @@ async def get_prs(userId: str = Depends(get_current_user)):
                     "exercise":   exercise,
                     "lastDate":   latest.get("date"),
                     "bestWeight": best.get("weight", 0),
+                    "bestUnit":   best.get("weightUnit") or "lb",
                     "bestReps":   best.get("reps", 0),
                     "bestE1rm":   best.get("e1rm", 0),
                     "latestNote": latest.get("notes", "")
@@ -3059,7 +3074,11 @@ async def get_bests_overview(userId: str = Depends(get_current_user)):
 
 @api_router.get("/prs/{exercise}")
 async def get_pr_history(exercise: str, userId: str = Depends(get_current_user)):
-    docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("date", 1).to_list(500)
+    # Newest 500, then back to chronological order for the chart. The old
+    # ascending-sort-plus-cap kept the OLDEST 500 entries, so a frequently
+    # trained lift's progress chart froze on year-one history forever.
+    docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("date", -1).to_list(500)
+    docs.reverse()
     history = []
     for d in docs:
         history.append({
@@ -3239,7 +3258,10 @@ async def delete_tracked_lift(lift_id: str, userId: str = Depends(get_current_us
 # ── Bodyweight Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/bodyweight")
 async def get_bodyweight_history(userId: str = Depends(get_current_user)):
-    docs = await db.log.find({**_user_or_orphan(userId), "bodyweight": {"$ne": None}}).sort("date", 1).to_list(200)
+    # Newest 200, restored to chronological order — ascending + cap froze this
+    # chart on the first 200 bodyweight entries ever logged.
+    docs = await db.log.find({**_user_or_orphan(userId), "bodyweight": {"$ne": None}}).sort("date", -1).to_list(200)
+    docs.reverse()
     seen = set()
     bw_list = []
     for d in docs:
@@ -4252,6 +4274,11 @@ async def load_models():
     await db.credit_transactions.create_index([("userId", 1), ("created_at", -1)])
     await db.credit_transactions.create_index("related_id")
     await db.log.create_index([("userId", 1), ("imageId", 1)], sparse=True)
+    # Every history read (schedule, analytics, PRs, charts) filters by userId and
+    # sorts or ranges on date or exercise; without these, each request scanned
+    # and memory-sorted the user's whole log, degrading with every month of use.
+    await db.log.create_index([("userId", 1), ("date", -1)], background=True)
+    await db.log.create_index([("userId", 1), ("exercise", 1), ("e1rm", -1)], background=True)
     logger.info("Tracker Phase 2 indexes ensured.")
     # Phase 3: setId index for per-set upsert query performance
     # Non-unique sparse — the update_one(setId+userId) upsert is atomic dedup
@@ -6637,7 +6664,10 @@ async def apply_recommendation(body: ApplyRecommendationRequest, userId: str = D
 # ── Analytics Endpoints ───────────────────────────────────────────────────────
 @api_router.get("/analytics/overview")
 async def get_analytics_overview(userId: str = Depends(get_current_user)):
-    all_logs = await db.log.find(_user_or_orphan(userId)).to_list(5000)
+    # Sorted newest-first: unsorted, the 5000-document window was whichever
+    # entries Mongo returned first — in practice the oldest — so a consistent
+    # athlete's overview stats froze after their first ~year of training.
+    all_logs = await db.log.find(_user_or_orphan(userId)).sort("date", -1).to_list(5000)
     profile = await db.profile.find_one({"userId": userId})
     current_week = profile.get("currentWeek", 1) if profile else 1
 
@@ -6722,7 +6752,10 @@ async def get_volume_trends(userId: str = Depends(get_current_user)):
 
 @api_router.get("/analytics/pain")
 async def get_pain_analytics(userId: str = Depends(get_current_user)):
-    docs = await db.log.find({**_user_or_orphan(userId), "pain": {"$gt": 0}}).sort("date", 1).to_list(500)
+    # Newest 500 pain entries, chronological — a pain TREND computed from the
+    # oldest 500 sets described injuries the athlete had years ago.
+    docs = await db.log.find({**_user_or_orphan(userId), "pain": {"$gt": 0}}).sort("date", -1).to_list(500)
+    docs.reverse()
     if not docs:
         return {"hasPain": False, "locations": [], "trend": "clean", "weeklyData": []}
     weekly: dict = {}
@@ -6849,7 +6882,8 @@ async def get_conditioning_history(
         **_user_or_orphan(userId),
         "category":  "gpp",
         "exercise":  exercise,
-    }).sort("date", 1).to_list(500)
+    }).sort("date", -1).to_list(500)
+    docs.reverse()   # newest 500, back in chronological order for the chart
 
     if not docs:
         return []

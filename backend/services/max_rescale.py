@@ -9,7 +9,24 @@ Deliberately a rescale, not a regeneration: rebuilding the plan would reset the
 athlete's place in it. Changing a number should adjust the training, not restart
 it.
 """
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Optional, Tuple
+
+_KG_TO_LB = 2.2046226218
+
+
+def _to_max_unit(weight: float, entry_unit: Optional[str], max_unit: str) -> float:
+    """Convert a logged weight (tagged with its own per-entry unit, None = lbs)
+    into the unit the athlete's maxes are stored in.
+
+    Without this, 'you beat your max' compared raw numbers across unit systems:
+    315 logged in lbs read as above a 180 kg max — which is 397 lbs — while a
+    genuine kg PR could sit below the max's number and never be noticed.
+    """
+    src = "kg" if (entry_unit or "lb").lower().startswith("kg") else "lb"
+    dst = "kg" if (max_unit or "lbs").lower().startswith("kg") else "lb"
+    if src == dst:
+        return weight
+    return weight / _KG_TO_LB if dst == "kg" else weight * _KG_TO_LB
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,9 +35,11 @@ logger = logging.getLogger(__name__)
 # plan_generator builds each session.
 MAX_TO_EXERCISES: Dict[str, set] = {
     "squat": {
-        "Box Squat", "SSB Squat", "Front Squat", "Belt Squat", "Cambered Bar Box Squat",
-        "SSB Box Squat", "Speed Box Squat", "Speed Squat", "Bulgarian Split Squat",
-        "Pause Squat", "Goblet Squat", "Leg Press",
+        # "Back Squat" was missing — the one canonical name for the lift this
+        # max IS. A back-squat PR never triggered a squat-max suggestion.
+        "Back Squat", "Box Squat", "SSB Squat", "Front Squat", "Belt Squat",
+        "Cambered Bar Box Squat", "SSB Box Squat", "Speed Box Squat", "Speed Squat",
+        "Bulgarian Split Squat", "Pause Squat", "Goblet Squat", "Leg Press",
     },
     "bench": {
         "Floor Press", "Close-Grip Bench", "2-Board Press", "Incline Bench",
@@ -126,10 +145,12 @@ def _rescale_numbers_in_text(text: str, mult: float) -> str:
     return re.sub(r"\b(\d{2,4})(\s?(?:lbs?|kgs?)\b|(?=\s|$))", repl, text)
 
 
-def detect_pr_candidates(basePRs: Dict[str, Any], logs: List[dict]) -> List[dict]:
+def detect_pr_candidates(basePRs: Dict[str, Any], logs: List[dict], max_unit: str = "lbs") -> List[dict]:
     """Logged lifts that beat the athlete's recorded max.
 
     Advisory only — returns candidates for the athlete to confirm. Never writes.
+    max_unit is the unit basePRs are stored in; every logged weight is converted
+    into it before comparing, so the suggestion compares like with like.
     """
     best: Dict[str, float] = {}
     for log in logs or []:
@@ -141,8 +162,9 @@ def detect_pr_candidates(basePRs: Dict[str, Any], logs: List[dict]) -> List[dict
         # Only treat near-singles as max attempts; a set of 8 is not a new 1RM.
         if reps > 3:
             continue
+        w = _to_max_unit(float(w), log.get("weightUnit"), max_unit)
         if w > best.get(name, 0):
-            best[name] = float(w)
+            best[name] = w
 
     out = []
     for max_key, ex_names in MAX_TO_EXERCISES.items():

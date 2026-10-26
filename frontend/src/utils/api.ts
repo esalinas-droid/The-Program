@@ -170,6 +170,20 @@ export const logApi = {
     const qs = entries.length > 0 ? '?' + new URLSearchParams(entries).toString() : '';
     return api(`/log${qs}`);
   },
+  /**
+   * History listing with an explicit cap. The server default of 200 silently
+   * truncated a month view for a consistent tracker user — the oldest days in
+   * the window rendered as "no training" and tapping one started a blank
+   * duplicate session. Server clamps to 1000.
+   */
+  listWithLimit: (params: { startDate?: string; endDate?: string; week?: number }, limit = 1000) => {
+    const q = new URLSearchParams();
+    if (params.startDate) q.set('start_date', params.startDate);
+    if (params.endDate)   q.set('end_date', params.endDate);
+    if (params.week !== undefined) q.set('week', String(params.week));
+    q.set('limit', String(limit));
+    return api(`/log?${q.toString()}`);
+  },
   create: (entry: any) => api('/log', { method: 'POST', body: JSON.stringify(entry) }),
   update: (id: string, entry: any) => api(`/log/${id}`, { method: 'PUT', body: JSON.stringify(entry) }),
   delete: (id: string) => api(`/log/${id}`, { method: 'DELETE' }),
@@ -256,6 +270,7 @@ export const logApi = {
     exercise: string; setIndex: number; prescriptionType: string;
     notes?: string;
     weight?: number; reps?: number; rpe?: number;
+    weightUnit?: 'lb' | 'kg';
     duration?: number; durationUnit?: string; side?: string;
     load?: number; distance?: number; distanceUnit?: string;
     heightVal?: number; heightUnit?: string;

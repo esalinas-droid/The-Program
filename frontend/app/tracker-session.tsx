@@ -15,6 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
 import { logApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
+import { getProfile } from '../src/utils/storage';
 import AddExerciseSheet, {
   PrescriptionType, AddedExercise, PRESCRIPTION_TYPES,
 } from '../src/components/AddExerciseSheet';
@@ -778,6 +779,13 @@ export default function TrackerSessionScreen() {
   const [isEditingLabel,  setIsEditingLabel]  = useState(false);
   const [sessionNotes,    setSessionNotes]    = useState('');
   const [exercises,       setExercises]       = useState<SessionExercise[]>([]);
+
+  // The athlete's weight unit, loaded once from the cached profile. A ref, not
+  // state: it's read inside commitSet and never drives a render.
+  const profileUnitsRef = useRef<'lbs' | 'kgs'>('lbs');
+  useEffect(() => {
+    getProfile().then(p => { if ((p as any)?.units === 'kgs') profileUnitsRef.current = 'kgs'; }).catch(() => {});
+  }, []);
   const [showAddSheet,    setShowAddSheet]    = useState(false);
   const [howToVisible,    setHowToVisible]    = useState(false);
   const [howToExercise,   setHowToExercise]   = useState('');
@@ -936,6 +944,10 @@ export default function TrackerSessionScreen() {
         entry.weight = parseFloat(set.weight) || 0;
         entry.reps   = parseInt(set.reps, 10) || 0;
         entry.rpe    = parseFloat(set.rpe)   || 0;
+        // This screen was the one write path that never sent the athlete's
+        // unit, so a kg lifter's sets were stored unitless and read as pounds
+        // — unrecoverably. The unit comes from their profile.
+        entry.weightUnit = profileUnitsRef.current === 'kgs' ? 'kg' : 'lb';
       } else if (pt === 'timed') {
         entry.duration     = parseFloat(set.duration) || 0;
         entry.durationUnit = set.durationUnit;

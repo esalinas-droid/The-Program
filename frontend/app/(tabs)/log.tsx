@@ -966,10 +966,13 @@ export default function ScheduleScreen() {
   const loadTrackerLogs = useCallback(async () => {
     setTrackerLoading(true);
     try {
-      // Fetch 4 complete weeks: This Week back to 3 Weeks Ago
+      // Fetch 4 complete weeks: This Week back to 3 Weeks Ago.
+      // Explicit limit: the server default of 200 was fewer sets than a
+      // consistent athlete logs in 4 weeks, so the oldest days rendered as
+      // "no training" and tapping one started a blank duplicate session.
       const startDate = getWeekDates(-3)[0];  // Mon of 3 weeks ago
       const endDate   = getWeekDates(0)[6];   // Sun of current week
-      const result = await logApi.list({ startDate, endDate });
+      const result = await logApi.listWithLimit({ startDate, endDate });
       const logs = Array.isArray(result) ? result : ((result as any)?.logs ?? []);
       setTrackerLogs(logs);
     } catch (err) {
@@ -1018,7 +1021,7 @@ export default function ScheduleScreen() {
           console.warn('[Schedule] Calendar fetch FAILED:', err?.message || err);
           return { events: [] };
         }),
-        logApi.list({ startDate, endDate }).catch((err: any) => {
+        logApi.listWithLimit({ startDate, endDate }).catch((err: any) => {
           console.warn('[Schedule] Log fetch FAILED:', err?.message || err);
           return [];
         }),
