@@ -3,7 +3,7 @@
     "name": "The Program",
     "slug": "the-program-app",
     "owner": "the_program",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/logo-icon.png",
     "scheme": "theprogram",
@@ -36,7 +36,7 @@
           "Default"
         ]
       },
-      "buildNumber": "37"
+      "buildNumber": "38"
     },
     "android": {
       "adaptiveIcon": {
