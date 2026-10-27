@@ -14,9 +14,27 @@ import { AthleteProfile, InjuryDetail } from '../src/types';
 import { clearAuth, getStoredUser, getAuthToken } from '../src/utils/auth';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import AskCoachButton from '../src/components/AskCoachButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+// "The Program · v1.0.3 (39) · ota a1b2c3d4" — the ota tag only appears when the
+// app is running an over-the-air update instead of the store build's bundled JS.
+function appVersionLabel(): string {
+  const version = Constants.expoConfig?.version || '1.0.3';
+  const buildNum = Constants.expoConfig?.ios?.buildNumber;
+  let label = `The Program  ·  v${version}${buildNum ? ` (${buildNum})` : ''}`;
+  try {
+    if (!Updates.isEmbeddedLaunch && Updates.updateId) {
+      label += `  ·  ota ${Updates.updateId.slice(0, 8)}`;
+    }
+  } catch {
+    // expo-updates is unavailable on web / in Expo Go — footer just omits the tag
+  }
+  return label;
+}
 
 // Merge rich injuryDetails with legacy injuryFlags (flags without a detail
 // entry are treated as active/moderate) into a single editable list.
@@ -1094,7 +1112,7 @@ export default function SettingsScreen() {
             resizeMode="contain"
             style={s.appVersionIcon}
           />
-          <Text style={s.appVersionText}>The Program  ·  v1.0.0</Text>
+          <Text style={s.appVersionText}>{appVersionLabel()}</Text>
         </View>
 
         <View style={{ height: 40 }} />
