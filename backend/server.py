@@ -20,6 +20,7 @@ from services.training_analytics import (
 from services import image_credits as _image_credits
 from services import supabase_storage as _supabase_storage
 from services import vision_parser as _vision_parser
+from user_collections import USER_COLLECTIONS
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, Query, UploadFile as FAUploadFile
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -159,6 +160,7 @@ class AthleteProfile(BaseDocument):
     goal: str = "strength"
     primaryWeaknesses: List[str] = []
     specialtyEquipment: List[str] = []
+    cardioPreferences: List[str] = []    # how the athlete likes to condition, e.g. ["boxing", "rowing"]; [] = no preference
     sleepHours: float = 7.0
     stressLevel: str = "moderate"
     occupationType: str = "sedentary"
@@ -198,6 +200,7 @@ class AthleteProfileUpdate(BaseModel):
     goal: Optional[str] = None
     primaryWeaknesses: Optional[List[str]] = None
     specialtyEquipment: Optional[List[str]] = None
+    cardioPreferences: Optional[List[str]] = None
     sleepHours: Optional[float] = None
     stressLevel: Optional[str] = None
     occupationType: Optional[str] = None
@@ -507,6 +510,7 @@ _ONBOARDING_EDIT_MAP = {
     "goal": "goal", "experience": "experience", "currentBodyweight": "bodyweight",
     "basePRs": "lifts", "injuryFlags": "injuries", "gymTypes": "gym",
     "specialtyEquipment": "specialtyEquipment", "primaryWeaknesses": "primaryWeaknesses",
+    "cardioPreferences": "cardioPreferences",
     "sleepHours": "sleepHours", "stressLevel": "stressLevel", "occupationType": "occupationType",
     "hasCompetition": "hasCompetition", "competitionDate": "competitionDate",
     "competitionType": "competitionType", "trainingDaysCount": "frequency",
@@ -537,6 +541,7 @@ def _intake_raw_answers(intake) -> dict:
         "gym": intake.gym or [], "bodyweight": intake.bodyweight,
         "primaryWeaknesses": intake.primaryWeaknesses or [],
         "specialtyEquipment": intake.specialtyEquipment or [],
+        "cardioPreferences": getattr(intake, "cardioPreferences", None) or [],
         "sleepHours": intake.sleepHours, "stressLevel": intake.stressLevel,
         "occupationType": intake.occupationType,
         "hasCompetition": bool(intake.hasCompetition or intake.competitionDate),
@@ -1481,18 +1486,21 @@ async def get_added_exercises(date: str = None, userId: str = Depends(get_curren
 
 # ── Data export ────────────────────────────────────────────────────────────────
 
-_EXPORT_COLLECTIONS = [
-    # Mirrors the delete-account purge list in routers/auth.py: if the app is
-    # willing to erase it in one tap, the athlete is entitled to a copy of it.
-    "profile", "saved_plans", "log", "tracked_lifts", "pain_reports",
-    "substitutions", "user_documents", "conversations", "coach_memory",
-    "weekly_reviews", "session_ratings", "readiness_checks", "checkins",
-    "calendar_overrides", "user_exercises", "rehab_protocols", "rehab_logs",
-    "deload_history", "image_credits", "credit_transactions", "weekly_quests",
-    "streak_freezes", "session_finishes", "session_added_exercises",
-]
-# Deliberately absent: user_document_chunks (embedding vectors — megabytes of
-# model numbers, not athlete data) and the voice transcription/TTS caches.
+# Derived from the shared per-user collection inventory (user_collections.py),
+# which the delete-account purge in routers/auth.py also uses: if the app is
+# willing to erase it in one tap, the athlete is entitled to a copy of it.
+# Deliberately excluded from export (but still purged on delete): machine-derived
+# data that is rebuilt from the records that ARE exported —
+#   user_document_chunks          embedding vectors (megabytes of model numbers)
+#   coach_voice_transcriptions    voice transcription cache
+#   coach_voice_tts               TTS audio cache
+#   training_analytics            analytics derived from the exported logs
+#   llm_extractions               LLM document-parsing intermediates
+_EXPORT_EXCLUDED = {
+    "user_document_chunks", "coach_voice_transcriptions", "coach_voice_tts",
+    "training_analytics", "llm_extractions",
+}
+_EXPORT_COLLECTIONS = [c for c in USER_COLLECTIONS if c not in _EXPORT_EXCLUDED]
 
 _EXPORT_DOC_CAP = 50_000   # per collection; years of daily logging stays far under this
 
@@ -1558,7 +1566,10 @@ async def get_maxes(userId: str = Depends(get_current_user)):
     profile = await db.profile.find_one({"userId": userId}) or {}
     base = profile.get("basePRs") or {}
     logs = await db.log.find(
-        {"userId": userId, "weight": {"$gt": 0}}
+        # Skip un-logged sets and scanned prescriptions (completed:'no') — a
+        # target load never lifted must not suggest a new max. Missing
+        # completed = legacy row, treated as done.
+        {"userId": userId, "weight": {"$gt": 0}, "completed": {"$ne": "no"}}
     ).sort("date", -1).limit(300).to_list(300)
     return {
         "maxes": base,
@@ -1690,16 +1701,29 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     # Fetch user goal for boxing filter (BUG 5)
     profile = await db.profile.find_one({"userId": userId})
     user_goal = (profile.get("goal") or "") if profile else ""
+    _cardio_prefs = [str(c).lower() for c in ((profile.get("cardioPreferences") or []) if profile else [])]
     _boxing_names = {"1:1 Boxing Intervals", "Shadowboxing", "Boxing / Recovery / Mobility"}
-    is_boxing_user = any(kw in user_goal.lower() for kw in ("boxing", "mma", "martial"))
+    is_boxing_user = (
+        any(kw in user_goal.lower() for kw in ("boxing", "mma", "martial"))
+        or "boxing" in _cardio_prefs
+    )
 
     def _apply_boxing_filter(result: dict) -> dict:
-        """Remove boxing exercises for non-boxing users (BUG 5). Also injects planId."""
+        """Remove boxing exercises for non-boxing users (BUG 5). Also injects
+        planId and isImported. Changes the response copy only — the stored plan
+        is never written back."""
         if result and plan:
             result["planId"] = getattr(plan, "planId", "")
+            # Imported plans carry their own warm-up/cool-down content.
+            result["isImported"] = bool(getattr(plan, "sourceDocumentId", None))
         if is_boxing_user or not result:
             return result
         session = result.get("session", {})
+        # Old stored plans may still title the conditioning day with the boxing
+        # name — rename it in the response copy for non-boxing users.
+        if (session.get("sessionType") or "") == "Boxing / Recovery / Mobility":
+            session["sessionType"] = "Recovery / Conditioning"
+            result["session"] = session
         exercises = session.get("exercises", [])
         if exercises:
             session["exercises"] = [ex for ex in exercises if ex.get("name") not in _boxing_names]
@@ -1716,18 +1740,28 @@ async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     moved_from_today = await db.calendar_overrides.find_one({"userId": userId, "originalDate": today_str})
 
     if moved_to_today:
-        # A session was moved TO today — find and return the matching session from the plan
+        # A session was moved TO today — find and return the matching session
+        # from the plan. Prefer the CURRENT week's instance of that session
+        # type, falling back to the nearest week that contains it; the old
+        # first-match walk always returned Week 1's exercises and loads no
+        # matter where the athlete actually was in the program.
         moved_session_type = moved_to_today.get("sessionType", "")
+        _best = None   # (distance from current week, phase, block, week, session)
         for phase in plan.phases:
             for block in (phase.blocks or []):
                 for week in (block.weeks or []):
                     for session in (week.sessions or []):
                         if session.sessionType == moved_session_type:
-                            return _apply_boxing_filter({
-                                "phase": phase.phaseName, "block": block.blockName,
-                                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
-                                "session": session.model_dump(),
-                            })
+                            _dist = abs((week.weekNumber or 1) - current_week_num)
+                            if _best is None or _dist < _best[0]:
+                                _best = (_dist, phase, block, week, session)
+        if _best:
+            _, phase, block, week, session = _best
+            return _apply_boxing_filter({
+                "phase": phase.phaseName, "block": block.blockName,
+                "week": f"Week {week.weekNumber}", "currentWeek": current_week_num,
+                "session": session.model_dump(),
+            })
 
     if moved_from_today and not moved_to_today:
         # Today's session was moved away and nothing moved here → rest day
@@ -1938,6 +1972,11 @@ def _generate_calendar_events(
         [d.lower() for d in preferred_days if d.lower() in _DAY_TO_OFFSET],
         key=lambda d: _DAY_TO_OFFSET[d],
     )
+    if not sorted_pref:
+        # Every stored entry was an unrecognized day name (e.g. "mon"). Without
+        # this fallback the loop below drops every session and the calendar
+        # renders completely empty.
+        sorted_pref = ['monday', 'tuesday', 'thursday', 'friday']
 
     override_map: dict = {}
     for ov in overrides:
@@ -2017,46 +2056,88 @@ async def get_calendar_events(
     end_date: str = "",
     userId: str = Depends(get_current_user),
 ):
-    """Return calendar events for the user's program mapped to their preferred training days."""
+    """Return calendar events for the user's program mapped to their preferred
+    training days, plus logged/uploaded workouts and finished sessions.
+    Read-only: the stored plan and session statuses are never modified here."""
     await _ensure_plan_loaded(userId)
     plan = _prog_store["plans"].get(userId)
-    if not plan:
-        return {"events": [], "preferredDays": [], "notificationHour": 7, "notificationMinute": 0}
 
     profile = await db.profile.find_one({"userId": userId}) or {}
     preferred_days = profile.get("preferredDays", [])
     notif_hour   = profile.get("notificationHour", 7)
     notif_minute = profile.get("notificationMinute", 0)
 
-    overrides = await db.calendar_overrides.find({"userId": userId}).to_list(2000)
-
     # ── Fetch log data for completion status ─────────────────────────────────────
     # Schedule page uses db.log to determine "completed" — we do the same here
     # so Home, Today, and Schedule pages all stay in sync
     user_filter = _user_or_orphan(userId)
-    logged_dates: set = set(await db.log.distinct("date", user_filter))
-
-    # Build date → session types map for "same session type this week" check
-    logged_date_to_types: dict = {}
+    logged_dates: set = set()
+    logged_date_to_types: dict = {}       # date → session types logged that day
+    logged_by_date: dict = {}             # date → {session title → [exercise names]}
     all_user_logs = await db.log.find(
         user_filter,
-        {"date": 1, "sessionType": 1, "_id": 0}
+        {"date": 1, "sessionType": 1, "sessionTitle": 1, "exercise": 1, "_id": 0}
     ).to_list(5000)
     for lg in all_user_logs:
-        d  = lg.get("date")
+        # Dates are "YYYY-MM-DD" strings from toISODate; normalize defensively
+        # in case legacy rows hold datetimes.
+        d = str(lg.get("date") or "")[:10]
+        if not d:
+            continue
+        logged_dates.add(d)
         st = lg.get("sessionType")
-        if d and st:
+        if st:
             if d not in logged_date_to_types:
                 logged_date_to_types[d] = set()
             logged_date_to_types[d].add(st)
+        _title = lg.get("sessionTitle") or "Logged Workout"
+        _names = logged_by_date.setdefault(d, {}).setdefault(_title, [])
+        _ex = lg.get("exercise")
+        if _ex and _ex not in _names:
+            _names.append(_ex)
 
-    all_events = _generate_calendar_events(
-        plan, preferred_days, overrides,
-        logged_dates, logged_date_to_types,
-    )
+    # Sessions finished via the finish button count as completed even with no
+    # logged sets. Completion lives in db.session_finishes — the plan's session
+    # status is never read or written for this.
+    _finish_rows = await db.session_finishes.find(
+        {"userId": userId}, {"date": 1, "_id": 0}
+    ).to_list(5000)
+    finished_dates = {str(r.get("date") or "")[:10] for r in _finish_rows if r.get("date")}
+
+    all_events = []
+    if plan:
+        overrides = await db.calendar_overrides.find({"userId": userId}).to_list(2000)
+        all_events = _generate_calendar_events(
+            plan, preferred_days, overrides,
+            logged_dates | finished_dates, logged_date_to_types,
+        )
 
     if start_date and end_date:
         all_events = [e for e in all_events if start_date <= e["date"] <= end_date]
+
+    # ── Logged / uploaded workouts without a plan event on that date ─────────────
+    # Tracker-mode sessions, scanned uploads, and plan-less accounts show up as
+    # their own events. A plan event already on a date suppresses the synthetic
+    # one so a training day is never shown twice.
+    plan_event_dates = {e["date"] for e in all_events}
+    for d in sorted(logged_by_date.keys()):
+        if d in plan_event_dates:
+            continue
+        if start_date and end_date and not (start_date <= d <= end_date):
+            continue
+        for _title, _ex_names in logged_by_date[d].items():
+            all_events.append({
+                "date":        d,
+                "sessionType": _title,
+                "kind":        "logged",
+                "isCompleted": True,
+                "exercises":   _ex_names,
+            })
+    all_events.sort(key=lambda e: e["date"])
+
+    if not plan:
+        return {"events": all_events, "preferredDays": preferred_days,
+                "notificationHour": notif_hour, "notificationMinute": notif_minute}
 
     return {
         "events":           all_events,
@@ -2104,9 +2185,19 @@ async def undo_reschedule(original_date: str, userId: str = Depends(get_current_
 @api_router.put("/profile/preferred-days")
 async def update_preferred_days(body: dict, userId: str = Depends(get_current_user)):
     """Update the user's preferred training days and notification time."""
-    preferred_days   = body.get("preferredDays", [])
+    raw_days         = body.get("preferredDays", []) or []
     notif_hour       = body.get("notificationHour", 7)
     notif_minute     = body.get("notificationMinute", 0)
+
+    # Only real day names are stored. Abbreviations or typos used to be saved
+    # as-is, and the calendar generator silently produced zero events for them.
+    preferred_days = [d.lower() for d in raw_days
+                      if isinstance(d, str) and d.lower() in _DAY_TO_OFFSET]
+    if not preferred_days:
+        raise HTTPException(
+            status_code=400,
+            detail="Pick at least one training day, using full day names like 'monday'.",
+        )
 
     await db.profile.update_one(
         {"userId": userId},
@@ -3006,6 +3097,10 @@ async def get_week_stats(
     else:
         # Legacy week-number query
         query = {**user_filter, "week": week_num}
+    # Un-logged sets and scanned prescriptions (completed:'no') must not earn
+    # session credit or move the averages. Missing completed = legacy row,
+    # treated as done.
+    query["completed"] = {"$ne": "no"}
 
     docs = await db.log.find(query).to_list(500)
     if not docs:
@@ -3060,7 +3155,10 @@ TRACKED_EXERCISES = [
 
 @api_router.get("/prs")
 async def get_prs(userId: str = Depends(get_current_user)):
-    user_filter = _user_or_orphan(userId)
+    # Un-logged sets and scanned prescriptions (completed:'no') keep their
+    # weight/reps/e1rm values but are not lifts that happened — a target you
+    # never hit must not mint a PR. Missing completed = legacy row, kept.
+    user_filter = {**_user_or_orphan(userId), "completed": {"$ne": "no"}}
     prs = []
     seen_exercises = set()
 
@@ -3144,7 +3242,11 @@ async def get_pr_history(exercise: str, userId: str = Depends(get_current_user))
     # Newest 500, then back to chronological order for the chart. The old
     # ascending-sort-plus-cap kept the OLDEST 500 entries, so a frequently
     # trained lift's progress chart froze on year-one history forever.
-    docs = await db.log.find({**_user_or_orphan(userId), "exercise": exercise}).sort("date", -1).to_list(500)
+    docs = await db.log.find({
+        **_user_or_orphan(userId), "exercise": exercise,
+        # Skip un-logged sets / scanned prescriptions; missing completed = legacy row, kept
+        "completed": {"$ne": "no"},
+    }).sort("date", -1).to_list(500)
     docs.reverse()
     history = []
     for d in docs:
@@ -3957,33 +4059,45 @@ async def _migrate_warmup_cooldown():
     Phase 5 update: warmup drills are now served exclusively by warmupApi.getToday()
     (the WarmupDrillsCard component).  The plan structure no longer stores
     category:'warmup' exercises.  This migration:
-      • strips any existing category:'warmup' exercises from every plan session
-      • still fixes stale cooldown placeholder names as before
+      • strips any existing category:'warmup' exercises from every GENERATED plan session
+      • still fixes stale cooldown placeholder names as before, seeding from the
+        shared per-session-type templates in services/warmup_cooldown.py
+      • SKIPS imported plans (sourceDocumentId set) entirely — an upload's own
+        warm-up/cool-down content must survive backend restarts
     _wu_steps / _make_wu_ex helpers removed — WarmupDrillsCard is the single source.
     """
     import uuid as _uuid
 
     _OLD_COOLDOWN_NAMES = {"Static Stretching", "Recovery Breathing"}
 
-    _COOLDOWN_ITEMS = [
-        ("cd-sled-drag",   "Backward Sled Drag / Walk",      "6 trips × 40ft or 5 min walk",    "Sled drag backward or brisk 5-min walk"),
-        ("cd-hip-flexor",  "Hip Flexor Stretch",             "2×45s per side",                   "Kneeling hip flexor — hold the stretch"),
-        ("cd-foam-roll",   "Foam Roll Major Muscle Groups",  "2 min per area",                   "Quads, hamstrings, calves, lats, upper back"),
-        ("cd-breathing",   "Deep Breathing / Box Breathing", "2 min",                            "4 count in, 4 count hold, 4 count out"),
-    ]
-
-    def _make_cd_exercises() -> list:
-        return [
-            {"exerciseId": ex_id, "name": name, "prescription": rx, "order": i + 1,
-             "notes": notes, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
-             "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""}
-            for i, (ex_id, name, rx, notes) in enumerate(_COOLDOWN_ITEMS)
-        ]
+    def _make_cd_exercises(items) -> list:
+        exercises = []
+        for i, item in enumerate(items):
+            if isinstance(item, dict):
+                ex_id = item.get("exerciseId") or item.get("id") or f"cd-{i + 1}"
+                name  = item.get("name", "")
+                rx    = item.get("prescription", "")
+                notes = item.get("notes", "")
+            else:
+                ex_id, name, rx, notes = item
+            exercises.append(
+                {"exerciseId": ex_id, "name": name, "prescription": rx, "order": i + 1,
+                 "notes": notes, "sessionExerciseId": str(_uuid.uuid4()), "category": "cooldown",
+                 "targetSets": [], "cues": [], "lastPerformance": "", "recentBest": ""})
+        return exercises
 
     try:
+        # Shared templates — the same source GET /warmup/today and the document
+        # import path use, so cooldown content can't drift between them.
+        from services.warmup_cooldown import classify_session, COOLDOWN_TEMPLATES
         all_plans = await db.saved_plans.find({}).to_list(5000)
         updated_count = 0
         for plan in all_plans:
+            if plan.get("sourceDocumentId"):
+                # Imported plans keep their own warm-up/cool-down content.
+                # Re-seeding here on every restart would overwrite the upload
+                # (the reload-overwrite bug, backend edition) — skip entirely.
+                continue
             modified = False
             for _ph in plan.get("phases", []):
                 for _bl in _ph.get("blocks", []):
@@ -4000,9 +4114,12 @@ async def _migrate_warmup_cooldown():
                             if needs_wu_strip or needs_cd_fix:
                                 main_exs = [e for e in existing if e.get("category") not in ("warmup", "cooldown")]
 
-                                new_cd = (_make_cd_exercises()
-                                          if needs_cd_fix else
-                                          [e for e in existing if e.get("category") == "cooldown"])
+                                if needs_cd_fix:
+                                    _kind = classify_session(str(_sess.get("sessionType") or ""))
+                                    _items = COOLDOWN_TEMPLATES.get(_kind) or COOLDOWN_TEMPLATES.get("full") or []
+                                    new_cd = _make_cd_exercises(_items)
+                                else:
+                                    new_cd = [e for e in existing if e.get("category") == "cooldown"]
 
                                 # No warmup exercises in plan — empty list intentional
                                 _sess["exercises"] = main_exs + new_cd
@@ -6511,10 +6628,11 @@ def _injury_swap_for(injury_cfg: dict, category: str, ex_lower: str):
 
 def _find_current_block(plan, current_week: int):
     from models.schemas import PhaseStatus
-    for phase in plan.phases:
-        for block in phase.blocks:
-            if block.status == PhaseStatus.CURRENT:
-                return block
+    # Week-range match FIRST: block statuses are only ever written at plan
+    # generation (block 1 stays flagged "current" forever), so trusting the
+    # flag meant injury updates and coach applies always edited weeks 1-4
+    # instead of the weeks the athlete is actually in. The status flag is
+    # kept only as a fallback for plans whose weeks carry no usable numbers.
     for phase in plan.phases:
         for block in phase.blocks:
             if block.weeks:
@@ -6522,6 +6640,10 @@ def _find_current_block(plan, current_week: int):
                 max_w = max(w.weekNumber for w in block.weeks)
                 if min_w <= current_week <= max_w:
                     return block
+    for phase in plan.phases:
+        for block in phase.blocks:
+            if block.status == PhaseStatus.CURRENT:
+                return block
     if plan.phases and plan.phases[0].blocks:
         return plan.phases[0].blocks[0]
     return None
@@ -7147,6 +7269,8 @@ async def rebuild_plan(intake: _IntakeRequest, userId: str = Depends(get_current
         profile_update["primaryWeaknesses"] = intake.primaryWeaknesses
     if intake.specialtyEquipment:
         profile_update["specialtyEquipment"] = intake.specialtyEquipment
+    if intake.cardioPreferences:
+        profile_update["cardioPreferences"] = intake.cardioPreferences
     if intake.preferredDays:
         profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
     else:
@@ -7580,6 +7704,8 @@ async def submit_intake_rag(intake: _IntakeRequest, userId: str = Depends(get_cu
         profile_update["primaryWeaknesses"] = intake.primaryWeaknesses
     if intake.specialtyEquipment:
         profile_update["specialtyEquipment"] = intake.specialtyEquipment
+    if intake.cardioPreferences:
+        profile_update["cardioPreferences"] = intake.cardioPreferences
     if intake.preferredDays:
         profile_update["preferredDays"] = [d.lower() for d in intake.preferredDays]
     else:
@@ -8144,23 +8270,32 @@ async def get_personalized_warmup(userId: str = Depends(get_current_user)):
     readiness_doc = await db.readiness_checks.find_one({"userId": userId, "date": today_str})
     readiness_score = float(readiness_doc.get("totalScore", 5.0)) if readiness_doc else 5.0
 
+    # Shared warm-up templates + session classifier (services/warmup_cooldown.py)
+    # — the same source the plan migration and document import use.
+    from services.warmup_cooldown import classify_session, WARMUP_TEMPLATES
+
     # Determine session focus
     today_day = datetime.now().weekday() + 1  # 1=Mon … 7=Sun
     CALENDAR = {1: "lower", 2: "upper", 4: "lower", 5: "upper"}
     session_focus = CALENDAR.get(today_day, "upper")
 
-    # Override with actual plan session type if available
+    # Override with the actual plan session type if available — scoped to the
+    # CURRENT week only. The old walk let the last dayNumber match anywhere in
+    # the whole plan decide today's focus.
     plan_available = await _ensure_plan_loaded(userId)
     if plan_available:
         plan = _prog_store["plans"].get(userId)
         if plan:
+            _plan_start = getattr(plan, "planStartDate", None) or getattr(plan, "startDate", None) or ""
+            _current_week_num = _calculate_current_week(str(_plan_start)) if _plan_start else 1
             for phase in plan.phases:
                 for block in phase.blocks:
                     for week in block.weeks:
+                        if week.weekNumber != _current_week_num:
+                            continue
                         for session in week.sessions:
                             if session.dayNumber == today_day:
-                                stype = str(session.sessionType or "").lower()
-                                session_focus = "lower" if "lower" in stype else "upper"
+                                session_focus = classify_session(str(session.sessionType or ""))
 
     # Injury flags
     inj_lower = any(
@@ -8173,14 +8308,11 @@ async def get_personalized_warmup(userId: str = Depends(get_current_user)):
     )
     extended = readiness_score < 3.5
 
+    # Base steps come from the shared per-session-type templates; a copy is
+    # taken so the injury/readiness inserts below never mutate the module lists.
+    steps = list(WARMUP_TEMPLATES.get(session_focus) or WARMUP_TEMPLATES.get("upper") or [])
+
     if session_focus == "lower":
-        steps = [
-            "Hip circles — 10 reps each direction (slow, deliberate)",
-            "Leg swings — 10 forward / 10 lateral per leg",
-            "Goblet squat — 10 reps bodyweight (pause 1s at bottom)",
-            "Hip flexor stretch — 30s per side",
-            "Band walks — 15 steps each direction",
-        ]
         if extended:
             steps += ["Cossack squat — 5 per side (mobility)", "Glute bridge — 15 reps (hip activation)"]
         if inj_lower:
@@ -8192,17 +8324,12 @@ async def get_personalized_warmup(userId: str = Depends(get_current_user)):
             if any(k in i.lower() for i in injuries for k in ["back", "lumbar"]):
                 steps.insert(1, "Cat-cow — 10 reps (lumbar mobility)")
                 steps.insert(2, "McGill bird-dog — 6 per side")
-        steps.append("Empty bar squat — 2 × 10 (groove the pattern)")
+        _finisher = "Empty bar squat — 2 × 10 (groove the pattern)"
+        if _finisher not in steps:
+            steps.append(_finisher)
         duration = "10–15 min" if extended else "8–12 min"
         title = "Lower Body Warm-Up"
-    else:
-        steps = [
-            "Band pull-aparts — 3 × 20 (scapular retraction)",
-            "Shoulder dislocates (band) — 15 reps slow",
-            "Face pulls (light) — 20 reps",
-            "Light dumbbell press — 12 reps (not taxing)",
-            "Thoracic extension over foam roller — 30s",
-        ]
+    elif session_focus == "upper":
         if extended:
             steps += ["Wrist circles — 10 each direction", "Scapular push-ups — 10 reps"]
         if inj_upper:
@@ -8212,9 +8339,29 @@ async def get_personalized_warmup(userId: str = Depends(get_current_user)):
             if any("elbow" in i.lower() for i in injuries):
                 steps.insert(0, "Forearm flexor stretch — 30s per arm")
                 steps.insert(1, "Forearm extensor stretch — 30s per arm")
-        steps.append("Empty bar press — 2 × 10 slow tempo (groove the press)")
+        _finisher = "Empty bar press — 2 × 10 slow tempo (groove the press)"
+        if _finisher not in steps:
+            steps.append(_finisher)
         duration = "8–12 min" if extended else "6–10 min"
         title = "Upper Body Warm-Up"
+    else:
+        # Conditioning / event / full-body days: template steps plus injury
+        # additions, no barbell-specific finisher.
+        if inj_lower:
+            if any("knee" in i.lower() for i in injuries):
+                steps.append("Terminal knee extensions (band) — 20 reps per leg")
+            if any(k in i.lower() for i in injuries for k in ["si", "hip"]):
+                steps.append("Dead bug — 8 per side (core / SI stability)")
+            if any(k in i.lower() for i in injuries for k in ["back", "lumbar"]):
+                steps.append("Cat-cow — 10 reps (lumbar mobility)")
+        if inj_upper:
+            if any(k in i.lower() for i in injuries for k in ["shoulder", "rotator"]):
+                steps.append("External rotation (band) — 20 per arm")
+        duration = "10–15 min" if extended else "8–12 min"
+        title = {
+            "gpp":   "Conditioning Warm-Up",
+            "event": "Event Day Warm-Up",
+        }.get(session_focus, "Full Body Warm-Up")
 
     readiness_note = ""
     if readiness_score < 2.5:
@@ -9235,7 +9382,12 @@ async def _compute_streak(userId: str, persist_auto_freeze: bool = True):
     Only a user's own streak view is allowed to consume their freeze.
     """
     user_filter = _user_or_orphan(userId)
-    all_logs = await db.log.find(user_filter).sort("date", -1).to_list(5000)
+    # Streaks count training that happened — un-logged sets and scanned
+    # prescriptions (completed:'no') earn no credit. Missing completed =
+    # legacy row, treated as done.
+    all_logs = await db.log.find(
+        {**user_filter, "completed": {"$ne": "no"}}
+    ).sort("date", -1).to_list(5000)
     if not all_logs:
         return {"currentStreak": 0, "longestStreak": 0, "totalWeeksTrained": 0,
                 "lastTrainedDate": None, "freezesAvailable": 1, "freezesUsed": [], "trainedWeeks": []}

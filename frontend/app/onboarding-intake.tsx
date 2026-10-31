@@ -79,6 +79,12 @@ const STEP_META = [
     canSkip:   true,
   },
   {
+    greeting:  "Conditioning counts too.",
+    question:  "How do you like\nto condition?",
+    subtext:   "Pick any you enjoy — we'll work them into your conditioning days. Skip for coach's choice.",
+    canSkip:   true,
+  },
+  {
     greeting:  "Your coach needs to know what to work around.",
     question:  "Any injuries or pain\nto manage?",
     subtext:   "Select all that apply. Your program will work around these.",
@@ -110,7 +116,7 @@ const STEP_META = [
   },
 ];
 
-const TOTAL_STEPS = STEP_META.length; // 13
+const TOTAL_STEPS = STEP_META.length; // 14
 
 const GOALS = [
   { label: 'Strength',             icon: 'weight-lifter'    },
@@ -193,6 +199,19 @@ const SPECIALTY_EQUIPMENT = [
   { label: 'Monolift',                  key: 'monolift'        },
   { label: 'Calibrated Plates',         key: 'calibrated'      },
   { label: 'None of the above',         key: 'none'            },
+];
+
+// Cardio / conditioning preferences — keys are the backend contract
+// (cardioPreferences: string[]); selecting nothing means no preference.
+const CARDIO_OPTIONS = [
+  { label: 'Sled work',       key: 'sled_work'    },
+  { label: 'Rowing',          key: 'rowing'       },
+  { label: 'Assault bike',    key: 'assault_bike' },
+  { label: 'Jump rope',       key: 'jump_rope'    },
+  { label: 'Incline walking', key: 'incline_walk' },
+  { label: 'Running',         key: 'running'      },
+  { label: 'Boxing',          key: 'boxing'       },
+  { label: 'Swimming',        key: 'swimming'     },
 ];
 
 const INJURIES = [
@@ -309,6 +328,9 @@ export default function OnboardingIntake() {
   // Step 7 — Specialty equipment
   const [specialtyEquipment, setSpecialtyEquipment] = useState<string[]>([]);
 
+  // Cardio preferences (optional — feeds conditioning days; [] = no preference)
+  const [cardioPreferences, setCardioPreferences] = useState<string[]>([]);
+
   // Step 8 — Injuries
   const [injuries, setInjuries] = useState<string[]>([]);
   // Per-injury severity + status (defaults: moderate / active)
@@ -415,6 +437,9 @@ export default function OnboardingIntake() {
         // Step 8 — Specialty equipment
         if (p.specialtyEquipment?.length) setSpecialtyEquipment(p.specialtyEquipment);
 
+        // Cardio preferences
+        if (p.cardioPreferences?.length) setCardioPreferences(p.cardioPreferences);
+
         // Step 9 — Injuries (ensure at least 'None' so canContinue passes)
         const inj: string[] = p.injuryFlags || [];
         const dets: any[] = (p as any).injuryDetails || [];
@@ -512,15 +537,16 @@ export default function OnboardingIntake() {
       case 6:  return trainingDays > 0 && selectedDays.length === trainingDays;
       case 7:  return true; // optional, can skip
       case 8:  return true; // optional, can skip
-      case 9:  return injuries.length > 0;
-      case 10: return true; // optional — medical documents
-      case 11: return !!selectedSleep && !!stressLevel && !!occupationType;
-      case 12: {
+      case 9:  return true; // optional, can skip — cardio preferences ([] = coach's choice)
+      case 10: return injuries.length > 0;
+      case 11: return true; // optional — medical documents
+      case 12: return !!selectedSleep && !!stressLevel && !!occupationType;
+      case 13: {
         if (gymTypes.length === 0 || hasCompetition === null) return false;
         if (hasCompetition === true) return competitionType !== '' && competitionDate.trim() !== '';
         return true; // hasCompetition === false → no date needed
       }
-      case 13: return true; // optional, can skip — current program
+      case 14: return true; // optional, can skip — current program
       default: return false;
     }
   };
@@ -563,6 +589,13 @@ export default function OnboardingIntake() {
       const clean = prev.filter(e => e !== 'None of the above');
       return clean.includes(item) ? clean.filter(e => e !== item) : [...clean, item];
     });
+  };
+
+  const toggleCardio = (key: string) => {
+    haptic();
+    setCardioPreferences(prev =>
+      prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key]
+    );
   };
 
   const toggleGym = (item: string) => {
@@ -680,6 +713,7 @@ export default function OnboardingIntake() {
         bw12WeekGoal:    bw12wNum,
         primaryWeaknesses,
         specialtyEquipment: cleanEquip,
+        cardioPreferences,
         sleepHours:      sleepNum,
         stressLevel,
         occupationType,
@@ -716,6 +750,7 @@ export default function OnboardingIntake() {
         bodyweight:         bwNum,
         primaryWeaknesses,
         specialtyEquipment: cleanEquip,
+        cardioPreferences,
         sleepHours:         sleepNum,
         stressLevel:        stressLevel || undefined,
         occupationType:     occupationType || undefined,
@@ -754,6 +789,7 @@ export default function OnboardingIntake() {
           bw12WeekGoal:      bw12wNum,
           primaryWeaknesses,
           specialtyEquipment: cleanEquip,
+          cardioPreferences,
           sleepHours:         sleepNum,
           stressLevel,
           occupationType,
@@ -841,6 +877,7 @@ export default function OnboardingIntake() {
           goal:              GOAL_MAP[goal] || goal,  // Title Case — no toLowerCase
           primaryWeaknesses,
           specialtyEquipment: cleanEquip,
+          cardioPreferences,
           sleepHours:         sleepNum,
           stressLevel,
           occupationType,
@@ -1335,6 +1372,36 @@ export default function OnboardingIntake() {
       </View>
     );
   };
+
+  // Cardio preferences — chips (optional, nothing selected = coach's choice)
+  const renderCardioStep = () => (
+    <View>
+      <View style={s.chipWrap}>
+        {CARDIO_OPTIONS.map(({ label, key }) => {
+          const active = cardioPreferences.includes(key);
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[s.chip, active && s.pillActive]}
+              onPress={() => toggleCardio(key)}
+              activeOpacity={0.8}
+            >
+              {active && (
+                <MaterialCommunityIcons name="check" size={12} color={COLORS.primary} style={{ marginRight: 4 }} />
+              )}
+              <Text style={[s.chipText, active && s.pillTextActive]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      {cardioPreferences.length > 0 && (
+        <View style={s.selectionPill}>
+          <MaterialCommunityIcons name="check-circle" size={13} color={COLORS.accent} />
+          <Text style={s.selectionPillTxt}>{cardioPreferences.length} selected</Text>
+        </View>
+      )}
+    </View>
+  );
 
   // A.11 — Injuries — BODY MAP reference + chips
   const renderStep8 = () => (
@@ -1965,11 +2032,12 @@ export default function OnboardingIntake() {
       case 6:  return renderStep5();
       case 7:  return renderStep6();
       case 8:  return renderStep7();
-      case 9:  return renderStep8();
-      case 10: return renderMedicalStep();
-      case 11: return renderStep9();
-      case 12: return renderStep10();
-      case 13: return renderProgramStep();
+      case 9:  return renderCardioStep();
+      case 10: return renderStep8();
+      case 11: return renderMedicalStep();
+      case 12: return renderStep9();
+      case 13: return renderStep10();
+      case 14: return renderProgramStep();
       default: return null;
     }
   };

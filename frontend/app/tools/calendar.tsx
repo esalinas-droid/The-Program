@@ -63,6 +63,10 @@ const SESSION_DOTS: Record<string, string> = {
   default:                  '#888',
 };
 
+// Logged (non-plan) workouts — scanned/uploaded/manually logged history.
+// Neutral slate, deliberately distinct from the plan-session palette above.
+const LOGGED_COLOR = '#94A3B8';
+
 function sessionColor(type: string) {
   for (const key of Object.keys(SESSION_COLORS)) {
     if (type?.includes(key.replace(' Lower','').replace(' Upper',''))) return SESSION_COLORS[key];
@@ -165,6 +169,7 @@ export default function WorkoutCalendarScreen() {
   const router = useRouter();
 
   const [loading,         setLoading]         = useState(true);
+  const [loadError,       setLoadError]       = useState(false);
   const [events,          setEvents]          = useState<any[]>([]);
   const [markedDates,     setMarkedDates]     = useState<any>({});
   const [selectedDate,    setSelectedDate]    = useState<string>(todayStr());
@@ -211,6 +216,7 @@ export default function WorkoutCalendarScreen() {
   // ── Fetch calendar events ──────────────────────────────────────────────────
   const loadCalendar = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const { start, end } = monthRange(currentMonth);
       // Fetch ±3 months for smoother scrolling
@@ -229,7 +235,13 @@ export default function WorkoutCalendarScreen() {
       for (const ev of allEvents) {
         const key = ev.date;
         if (!marks[key]) marks[key] = { dots: [], events: [] };
-        marks[key].dots.push({ color: sessionDot(ev.sessionType), key: ev.sessionType });
+        // Logged (non-plan) workouts get their own neutral dot so they read
+        // differently from planned sessions on the month grid.
+        const isLogged = ev.kind === 'logged';
+        marks[key].dots.push({
+          color: isLogged ? LOGGED_COLOR : sessionDot(ev.sessionType),
+          key: isLogged ? `logged-${ev.sessionType}` : ev.sessionType,
+        });
         marks[key].events.push(ev);
       }
       // Mark today
@@ -243,7 +255,10 @@ export default function WorkoutCalendarScreen() {
       setMarkedDates(marks);
       setSelectedEvents(marks[selectedDate]?.events || []);
     } catch (e) {
+      // Don't mask failures as an all-rest-days calendar — surface an error
+      // state with a retry affordance instead.
       console.warn('[Calendar] load error:', e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -316,11 +331,15 @@ export default function WorkoutCalendarScreen() {
         return;
       }
       setNotifGranted(true);
-      await calendarApi.updatePreferredDays({
-        preferredDays,
-        notificationHour: notifHour,
-        notificationMinute: notifMinute,
-      });
+      // The server rejects an empty day list — only sync the schedule when
+      // days are picked; reminders alone can still be enabled.
+      if (preferredDays.length > 0) {
+        await calendarApi.updatePreferredDays({
+          preferredDays,
+          notificationHour: notifHour,
+          notificationMinute: notifMinute,
+        });
+      }
       await scheduleTrainingReminders(preferredDays, notifHour, notifMinute);
       setNotifModal(false);
 
@@ -407,6 +426,10 @@ export default function WorkoutCalendarScreen() {
               <Text style={s.legendTxt}>{label}</Text>
             </View>
           ))}
+          <View style={s.legendChip}>
+            <View style={[s.legendDot, { backgroundColor: LOGGED_COLOR }]} />
+            <Text style={s.legendTxt}>Logged</Text>
+          </View>
         </ScrollView>
 
         {/* Calendar */}
@@ -415,6 +438,12 @@ export default function WorkoutCalendarScreen() {
             <View style={{ paddingVertical: 40, alignItems: 'center' }}>
               <ActivityIndicator color={COLORS.accent} />
             </View>
+          ) : loadError ? (
+            <TouchableOpacity style={s.errorBox} onPress={loadCalendar} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="cloud-off-outline" size={26} color={COLORS.text.muted} />
+              <Text style={s.errorTitle}>Couldn't load your calendar.</Text>
+              <Text style={s.errorRetry}>Tap to retry</Text>
+            </TouchableOpacity>
           ) : (
             <Calendar
               key={currentMonth}
@@ -436,7 +465,9 @@ export default function WorkoutCalendarScreen() {
           )}
         </View>
 
-        {/* Selected Day Panel */}
+        {/* Selected Day Panel — hidden while the calendar failed to load, so a
+            fetch error never shows up as a misleading "Rest day" */}
+        {!loadError && (
         <View style={s.dayPanel}>
           <View style={s.dayPanelHeader}>
             <MaterialCommunityIcons name="calendar-today" size={15} color={COLORS.accent} />
@@ -453,15 +484,20 @@ export default function WorkoutCalendarScreen() {
             </View>
           ) : (
             selectedEvents.map((ev, i) => (
-              <SessionCard
-                key={i}
-                event={ev}
-                onMove={() => openMoveModal(ev)}
-                onUndo={ev.isOverridden ? () => undoMove(ev) : undefined}
-              />
+              ev.kind === 'logged' ? (
+                <LoggedCard key={i} event={ev} />
+              ) : (
+                <SessionCard
+                  key={i}
+                  event={ev}
+                  onMove={() => openMoveModal(ev)}
+                  onUndo={ev.isOverridden ? () => undoMove(ev) : undefined}
+                />
+              )
             ))
           )}
         </View>
+        )}
 
         {/* Training Days legend */}
         {preferredDays.length > 0 && (
@@ -691,6 +727,36 @@ function SessionCard({ event, onMove, onUndo }: {
   );
 }
 
+// ── LoggedCard ────────────────────────────────────────────────────────────────
+// A logged (non-plan) workout: scanned, uploaded, or manually logged history.
+// Read-only — no move/reschedule actions, and exercises are plain name strings.
+function LoggedCard({ event }: { event: any }) {
+  const exercises: any[] = event.exercises || [];
+  return (
+    <View style={[sc.card, { borderLeftColor: LOGGED_COLOR }]}>
+      <View style={sc.topRow}>
+        <View style={[sc.typeBadge, { backgroundColor: LOGGED_COLOR + '22' }]}>
+          <Text style={[sc.typeText, { color: LOGGED_COLOR }]}>{event.sessionType}</Text>
+        </View>
+        <View style={sc.loggedBadge}>
+          <MaterialCommunityIcons name="check" size={10} color={LOGGED_COLOR} />
+          <Text style={sc.loggedTxt}>Logged</Text>
+        </View>
+      </View>
+      {exercises.length > 0 && (
+        <View style={sc.body}>
+          {exercises.map((ex: any, i: number) => (
+            <View key={i} style={sc.exerciseRow}>
+              <View style={[sc.exDot, { backgroundColor: LOGGED_COLOR }]} />
+              <Text style={sc.exName}>{typeof ex === 'string' ? ex : ex?.name}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:         { flex: 1, backgroundColor: COLORS.background },
@@ -707,6 +773,10 @@ const s = StyleSheet.create({
   legendTxt:    { fontSize: 10, color: COLORS.text.muted },
 
   calendarCard: { marginHorizontal: SPACING.md, marginTop: SPACING.sm, backgroundColor: COLORS.background, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+
+  errorBox:     { paddingVertical: 36, paddingHorizontal: SPACING.lg, alignItems: 'center', gap: SPACING.sm },
+  errorTitle:   { fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, color: COLORS.text.secondary },
+  errorRetry:   { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontWeight: FONTS.weights.semibold },
 
   dayPanel:     { marginHorizontal: SPACING.md, marginTop: SPACING.md },
   dayPanelHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md },
@@ -759,6 +829,8 @@ const sc = StyleSheet.create({
   movedTxt:   { fontSize: 10, color: '#60A5FA', fontWeight: FONTS.weights.semibold },
   deloadBadge:{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#6B728020', borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
   deloadTxt:  { fontSize: 10, color: '#9CA3AF', fontWeight: FONTS.weights.semibold },
+  loggedBadge:{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: LOGGED_COLOR + '20', borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
+  loggedTxt:  { fontSize: 10, color: LOGGED_COLOR, fontWeight: FONTS.weights.semibold },
   meta:       { fontSize: FONTS.sizes.xs, color: COLORS.text.muted },
   body:       { marginTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: SPACING.sm, gap: 6 },
   coachNote:  { fontSize: FONTS.sizes.xs, color: COLORS.accent, fontStyle: 'italic', marginBottom: SPACING.xs },

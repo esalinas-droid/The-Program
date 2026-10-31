@@ -12,7 +12,8 @@ import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { COLORS } from '../src/constants/theme';
 import { setAuthToken, storeUser, AuthUser } from '../src/utils/auth';
-import { saveProfile } from '../src/utils/storage';
+import { getProfile, saveProfile } from '../src/utils/storage';
+import { profileApi } from '../src/utils/api';
 
 // ── Design tokens — all sourced from theme.ts (no file-local hex) ─────────────
 const GOLD    = COLORS.accent;
@@ -49,10 +50,44 @@ async function handleAuthSuccess(result: { token: string; user: AuthUser }) {
   if (result.user.name) {
     await saveProfile({ name: result.user.name });
   }
+  // Hydrate the local profile from the server before routing, so a fresh
+  // install or second device doesn't run on defaults (program mode, lbs,
+  // week 1) until the user happens to open Settings. Best-effort only —
+  // a failed fetch must never block login.
+  try {
+    const serverProfile: any = await profileApi.get();
+    if (serverProfile) {
+      const local: any = await getProfile();
+      if (!local || (!local.units && !local.training_mode)) {
+        // Nothing meaningful stored locally — take the whole server profile.
+        await saveProfile(serverProfile);
+      } else {
+        // A real local profile exists: only the server-authoritative fields
+        // may overwrite it (the same subset Settings syncs on load); local
+        // wins everywhere else so user edits aren't clobbered.
+        const SERVER_AUTHORITATIVE_FIELDS = [
+          'is_beta_tester', 'training_mode', 'has_imported_program',
+          'has_completed_tour', 'tour_version', 'currentWeek',
+          'programStartDate', 'onboardingComplete', 'trainingDaysCount',
+          'preferredDays', 'avoidMovements', 'auto_play_coach_responses',
+        ];
+        const patch: Record<string, any> = {};
+        for (const field of SERVER_AUTHORITATIVE_FIELDS) {
+          if (field in serverProfile) patch[field] = serverProfile[field];
+        }
+        if (Object.keys(patch).length > 0) await saveProfile(patch);
+      }
+    }
+  } catch {
+    // Offline, or no server profile yet (brand-new account) — login proceeds.
+  }
   if (result.user.onboardingComplete) {
     router.replace('/(tabs)');
   } else {
-    router.replace('/onboarding-intake');
+    // Path picker is the canonical entry for a not-yet-onboarded user — it
+    // offers Build / Just Track / Import. Routing straight into the build
+    // intake funneled tracker-first and import-first users into an AI program.
+    router.replace('/onboarding-path-picker');
   }
 }
 

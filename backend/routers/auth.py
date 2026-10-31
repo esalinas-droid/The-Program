@@ -33,6 +33,7 @@ load_dotenv(Path(__file__).parent.parent / '.env.local', override=False)  # loca
 
 from database import db
 from middleware import create_jwt, decode_jwt, get_current_user, DEFAULT_USER
+from user_collections import USER_COLLECTIONS
 
 logger = logging.getLogger(__name__)
 auth_router = APIRouter(prefix="/api/auth")
@@ -71,6 +72,7 @@ def _new_user_doc(
         "emailVerified":       provider != "email",  # Social = auto-verified
         "marketingOptIn":      True,
         "subscriptionTier":    "free",
+        "role":                "athlete",  # read with .get("role", "athlete") — older docs lack it
     }
 
 
@@ -160,6 +162,10 @@ async def _verify_facebook_token(access_token: str) -> Optional[dict]:
 
 
 APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
+# Last successful JWKS response, kept in memory so a brief Apple outage
+# doesn't block sign-in. Never a substitute for verification: if neither a
+# fresh fetch nor this cache yields the signing key, the token is rejected.
+_APPLE_JWKS_CACHE: list = []
 
 
 def _extract_apple_name(user_data: Optional[dict]) -> str:
@@ -186,44 +192,48 @@ async def _verify_apple_token(identity_token: str, user_data: Optional[dict] = N
         kid = header.get("kid")
         alg = header.get("alg", "RS256")
 
-        # 2. Fetch Apple's current public keys from JWKS endpoint
-        public_key = None
+        # 2. Fetch Apple's current public keys from JWKS endpoint. A successful
+        # fetch refreshes the in-memory cache; on failure, the cached keys from
+        # the last good fetch ride out brief Apple outages.
+        global _APPLE_JWKS_CACHE
+        jwks = []
         try:
             async with httpx.AsyncClient(timeout=8) as client:
                 resp = await client.get(APPLE_JWKS_URL)
             if resp.status_code == 200:
                 jwks = resp.json().get("keys", [])
-                # Find the key matching the token's kid
-                for key_data in jwks:
-                    if key_data.get("kid") == kid:
-                        from jwt.algorithms import RSAAlgorithm
-                        public_key = RSAAlgorithm.from_jwk(key_data)
-                        break
-                if not public_key and jwks:
-                    # Fallback: try first key if kid not matched
-                    from jwt.algorithms import RSAAlgorithm
-                    public_key = RSAAlgorithm.from_jwk(jwks[0])
+                if jwks:
+                    _APPLE_JWKS_CACHE = jwks
         except Exception as jwks_err:
-            logger.warning(f"Apple JWKS fetch failed (will decode unverified): {jwks_err}")
+            logger.warning(f"Apple JWKS fetch failed (trying cached keys): {jwks_err}")
+        if not jwks:
+            jwks = _APPLE_JWKS_CACHE
 
-        # 3. Verify the token signature
-        if public_key:
-            payload = jwt.decode(
-                identity_token,
-                public_key,
-                algorithms=[alg],
-                options={"verify_exp": True},
-            )
-            logger.info("Apple token verified with JWKS public key")
-        else:
-            # Development fallback — decode without signature verification
-            # In production this branch should never be reached
-            payload = jwt.decode(
-                identity_token,
-                options={"verify_signature": False},
-                algorithms=["RS256"],
-            )
-            logger.warning("Apple token decoded WITHOUT signature verification (JWKS unavailable)")
+        # Find the key matching the token's kid
+        public_key = None
+        for key_data in jwks:
+            if key_data.get("kid") == kid:
+                from jwt.algorithms import RSAAlgorithm
+                public_key = RSAAlgorithm.from_jwk(key_data)
+                break
+        if not public_key and jwks:
+            # Fallback: try first key if kid not matched
+            from jwt.algorithms import RSAAlgorithm
+            public_key = RSAAlgorithm.from_jwk(jwks[0])
+
+        # 3. Verify the token signature — fail closed. There is no unverified
+        # fallback: without a matching public key, anyone could mint a token
+        # claiming any email and be logged in as that account.
+        if not public_key:
+            logger.warning("Apple sign-in rejected: no JWKS public key available (fetch failed and cache empty)")
+            return None
+        payload = jwt.decode(
+            identity_token,
+            public_key,
+            algorithms=[alg],
+            options={"verify_exp": True},
+        )
+        logger.info("Apple token verified with JWKS public key")
 
         email = payload.get("email")
         if not email:
@@ -277,6 +287,7 @@ def _user_response(user: dict, token: str) -> dict:
             "emailVerified":      user.get("emailVerified", False),
             "marketingOptIn":     user.get("marketingOptIn", True),
             "subscriptionTier":   user.get("subscriptionTier", "free"),
+            "role":               user.get("role", "athlete"),
         },
     }
 
@@ -302,7 +313,7 @@ async def register(body: RegisterRequest):
     await db.users.insert_one(user)
     await db.users.create_index("email", unique=True, background=True)
 
-    token = create_jwt(user["userId"], email, name)
+    token = create_jwt(user["userId"], email, name, role=user.get("role", "athlete"))
     await _send_welcome_email(email, name)
 
     logger.info(f"New email user registered: {email}")
@@ -329,7 +340,7 @@ async def login(body: LoginRequest):
         {"userId": user["userId"]},
         {"$set": {"lastLoginDate": datetime.now(timezone.utc).isoformat()}},
     )
-    token = create_jwt(user["userId"], email, user["name"])
+    token = create_jwt(user["userId"], email, user["name"], role=user.get("role", "athlete"))
     logger.info(f"User logged in: {email}")
     return _user_response(user, token)
 
@@ -457,7 +468,7 @@ async def reset_password(body: ResetPasswordRequest):
     )
     await db.password_resets.delete_one({"email": email})   # single use
 
-    token = create_jwt(user["userId"], email, user.get("name", ""))
+    token = create_jwt(user["userId"], email, user.get("name", ""), role=user.get("role", "athlete"))
     logger.info("Password reset completed: %s", email)
     return _user_response(user, token)
 
@@ -497,7 +508,7 @@ async def social_auth(body: SocialAuthRequest):
             {"$set": {"lastLoginDate": datetime.now(timezone.utc).isoformat()}},
         )
 
-    token = create_jwt(user["userId"], email, name)
+    token = create_jwt(user["userId"], email, name, role=user.get("role", "athlete"))
     return _user_response(user, token)
 
 
@@ -524,6 +535,7 @@ async def get_me(authorization: Optional[str] = Header(None)):
         "emailVerified":      user.get("emailVerified", False),
         "marketingOptIn":     user.get("marketingOptIn", True),
         "subscriptionTier":   user.get("subscriptionTier", "free"),
+        "role":               user.get("role", "athlete"),
     }
 
 
@@ -589,27 +601,19 @@ async def delete_account(authorization: Optional[str] = Header(None)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    # Purge every collection that holds this user's data.
-    # NOTE: these are the REAL collection names used across the app. The prior
-    # list referenced non-existent collections (profiles, session_logs,
-    # exercise_logs, prs, body_metrics, coach_messages, coach_context,
-    # uploaded_docs, readiness) so almost nothing was actually deleted.
-    user_collections = [
-        "profile", "saved_plans", "log", "tracked_lifts", "pain_reports",
-        "substitutions", "user_documents", "user_document_chunks",
-        "conversations", "coach_memory", "coach_voice_transcriptions",
-        "coach_voice_tts", "weekly_reviews", "session_ratings",
-        "readiness_checks", "checkins", "calendar_overrides", "user_exercises",
-        "rehab_protocols", "rehab_logs", "deload_history", "image_credits",
-        "credit_transactions", "weekly_quests", "streak_freezes",
-        "session_finishes", "session_added_exercises",
-    ]
-    for coll in user_collections:
+    # Purge every collection that holds this user's data. The authoritative
+    # inventory lives in user_collections.py (shared with the data export) so
+    # the purge and export lists can never drift apart again.
+    user = await db.users.find_one({"userId": user_id}) or {}
+    for coll in USER_COLLECTIONS:
         await db[coll].delete_many({"userId": user_id})
+    # password_resets is keyed by email, not userId — purge it explicitly.
+    if user.get("email"):
+        await db.password_resets.delete_many({"email": user["email"]})
     # Delete the account record itself last.
     await db.users.delete_one({"userId": user_id})
 
-    logger.info(f"[DELETE ACCOUNT] All data purged for userId={user_id} across {len(user_collections)} collections")
+    logger.info(f"[DELETE ACCOUNT] All data purged for userId={user_id} across {len(USER_COLLECTIONS)} collections")
     return {"success": True, "message": "Account and all associated data permanently deleted."}
 
 

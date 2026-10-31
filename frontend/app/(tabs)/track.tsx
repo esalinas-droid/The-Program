@@ -10,6 +10,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect, Line, G, Text as SvgText } from 'react-native-svg';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { prApi, bwApi, analyticsApi, profileApi, programApi, liftsApi, streakApi, badgesApi, questApi } from '../../src/utils/api';
+import { lbsToKg } from '../../src/utils/calculations';
 import AskCoachButton from '../../src/components/AskCoachButton';
 
 // ── Palette ────────────────────────────────────────────────────────────────────
@@ -42,6 +43,11 @@ function fmtDate(date: string): string {
 function isRecentPR(lastDate?: string | null): boolean {
   if (!lastDate) return false;
   return (Date.now() - new Date(lastDate).getTime()) / 86400000 < 14;
+}
+// Display label for a stored weight unit ('kg'/'kgs' → 'kg', anything else → 'lbs',
+// matching how the backend normalizes units when computing e1rm).
+function weightUnitLabel(unit?: string | null): 'kg' | 'lbs' {
+  return unit && String(unit).toLowerCase().startsWith('kg') ? 'kg' : 'lbs';
 }
 function getBlockInfo(currentWeek: number) {
   const blockEnd   = DELOAD_WEEKS.find(w => w >= currentWeek) ?? 52;
@@ -407,7 +413,12 @@ export default function TrackScreen() {
     return [...filtered].sort((a, b) => a.exercise.localeCompare(b.exercise));
   }, [prs, prSort]);
 
-  const liftChartData = useMemo(() => liftHistory.filter(d => d.e1rm > 0).map(d => ({ y: d.e1rm, label: `W${d.week}` })), [liftHistory]);
+  // Server e1rm values are ALWAYS stored lbs-normalized — convert for kg athletes
+  // at display time only (stored values are never touched).
+  const isKgUser    = profile?.units === 'kg';
+  const displayE1rm = (v: number) => (isKgUser ? Math.round(lbsToKg(v)) : v);
+
+  const liftChartData = useMemo(() => liftHistory.filter(d => d.e1rm > 0).map(d => ({ y: displayE1rm(d.e1rm), label: `W${d.week}` })), [liftHistory, isKgUser]);
   const currentE1RM   = useMemo(() => liftChartData.length ? liftChartData[liftChartData.length - 1].y : null, [liftChartData]);
 
   const e1rmChange = useMemo(() => {
@@ -456,6 +467,7 @@ export default function TrackScreen() {
           exercise:   pr.exercise,
           category:   'From Training',
           bestWeight: pr.bestWeight || 0,
+          bestUnit:   pr.bestUnit   || 'lbs',
           bestReps:   pr.bestReps   || 0,
           bestE1rm:   pr.bestE1rm   || 0,
           lastDate:   pr.lastDate   || null,
@@ -466,6 +478,7 @@ export default function TrackScreen() {
         merged.set(pr.exercise, {
           ...existing,
           bestWeight: pr.bestWeight || existing.bestWeight,
+          bestUnit:   pr.bestWeight ? (pr.bestUnit || 'lbs') : existing.bestUnit,
           bestReps:   pr.bestReps   || existing.bestReps,
           bestE1rm:   pr.bestE1rm   || existing.bestE1rm,
           lastDate:   pr.lastDate   || existing.lastDate,
@@ -549,7 +562,7 @@ export default function TrackScreen() {
           {e1rmChange !== null && (
             <View style={[s.changePill, { backgroundColor: e1rmChange >= 0 ? TEAL + '20' : RED + '20' }]}>
               <MaterialCommunityIcons name={e1rmChange >= 0 ? 'arrow-up' : 'arrow-down'} size={12} color={e1rmChange >= 0 ? TEAL : RED} />
-              <Text style={[s.changeTxt, { color: e1rmChange >= 0 ? TEAL : RED }]}>{Math.abs(e1rmChange).toFixed(0)} lbs</Text>
+              <Text style={[s.changeTxt, { color: e1rmChange >= 0 ? TEAL : RED }]}>{Math.abs(e1rmChange).toFixed(0)} {isKgUser ? 'kg' : 'lbs'}</Text>
             </View>
           )}
         </View>
@@ -738,7 +751,7 @@ export default function TrackScreen() {
                 <Text style={s.maxCardLbl}>{key}</Text>
                 {isRecent && <View style={s.prBadge}><Text style={s.prBadgeTxt}>PR</Text></View>}
                 <Text style={[s.maxCardVal, { color: isRecent ? GOLD : COLORS.text.primary }]}>
-                  {pr?.bestE1rm > 0 ? pr.bestE1rm : '—'}
+                  {pr?.bestE1rm > 0 ? displayE1rm(pr.bestE1rm) : '—'}
                 </Text>
                 {pr?.exercise && <Text style={s.maxCardEx} numberOfLines={1}>{pr.exercise}</Text>}
                 {pr?.lastDate
@@ -959,8 +972,8 @@ export default function TrackScreen() {
             </View>
             <View style={s.prRight}>
               {isRecentPR(pr.lastDate) && <View style={s.newBadge}><Text style={s.newBadgeTxt}>NEW PR</Text></View>}
-              <Text style={s.prVal}>{pr.bestWeight > 0 ? `${pr.bestWeight} × ${pr.bestReps}` : '—'}</Text>
-              {pr.bestE1rm > 0 && <Text style={s.prE1rm}>Est. Max: {pr.bestE1rm}</Text>}
+              <Text style={s.prVal}>{pr.bestWeight > 0 ? `${pr.bestWeight} ${weightUnitLabel(pr.bestUnit)} × ${pr.bestReps}` : '—'}</Text>
+              {pr.bestE1rm > 0 && <Text style={s.prE1rm}>Est. Max: {displayE1rm(pr.bestE1rm)}</Text>}
             </View>
           </View>
         ))}
@@ -985,7 +998,7 @@ export default function TrackScreen() {
           {e1rmChange !== null && (
             <View style={[s.changePill, { backgroundColor: e1rmChange >= 0 ? TEAL + '20' : RED + '20' }]}>
               <MaterialCommunityIcons name={e1rmChange >= 0 ? 'arrow-up' : 'arrow-down'} size={12} color={e1rmChange >= 0 ? TEAL : RED} />
-              <Text style={[s.changeTxt, { color: e1rmChange >= 0 ? TEAL : RED }]}>{Math.abs(e1rmChange).toFixed(0)} lbs</Text>
+              <Text style={[s.changeTxt, { color: e1rmChange >= 0 ? TEAL : RED }]}>{Math.abs(e1rmChange).toFixed(0)} {isKgUser ? 'kg' : 'lbs'}</Text>
             </View>
           )}
         </View>

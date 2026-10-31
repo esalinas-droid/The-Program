@@ -68,6 +68,7 @@ Now parse the image into STRICT JSON in this shape — no commentary, no markdow
     {
       "name": "Back squat",
       "prescriptionType": "weighted",
+      "category": "main",
       "sets": [
         {"weight": 135, "reps": 5, "rpe": null},
         {"weight": 185, "reps": 5, "rpe": null}
@@ -96,6 +97,10 @@ Now parse the image into STRICT JSON in this shape — no commentary, no markdow
 - calories sets have {calories, rpe?}
 - emom/amrap/for_time sets have {weight?, reps?, duration?, rpe?}
 - Numeric fields may be null if not visible. RPE is optional, often missing.
+- category is OPTIONAL: one of warmup, main, supplemental, accessory, cooldown.
+  Include it ONLY when the image itself labels the section the exercise sits in
+  (e.g. a "Warm-up" or "Cool-down" heading). If the image has no section labels,
+  OMIT the field entirely — do NOT guess a category.
 - Use the units shown in the image (lbs vs kg — backend handles conversion).
 - Combine multiple sets of the same exercise into one entry with multiple sets.
 
@@ -226,16 +231,22 @@ async def _openai_parse(image_bytes: bytes, model: str) -> Dict:
 # is NOT in this list — an un-converted HEIC upload fails at the vision call.
 _VISION_OK_FORMATS = {"JPEG", "PNG", "GIF", "WEBP"}
 
+# Claude rescales anything over ~1568px on the long edge internally, so sending
+# more pixels only adds upload latency (the mobile request has a ~60s ceiling on
+# iOS) and token cost. Downscale full-resolution phone photos to that cap.
+_VISION_MAX_LONG_EDGE = 1568
+
 
 def _normalize_image_bytes(image_bytes: bytes) -> bytes:
-    """Convert images the vision APIs can't read (notably HEIC) to JPEG.
+    """Convert images the vision APIs can't read (notably HEIC) to JPEG, and
+    downscale oversized photos so the vision call stays fast.
 
-    Returns the original bytes when the format is already supported, or when
-    conversion isn't possible — the caller's error handling still applies.
+    Returns the original bytes when no change is needed, or when conversion
+    isn't possible — the caller's error handling still applies.
     """
     try:
         import io
-        from PIL import Image
+        from PIL import Image, ImageOps
         try:
             from pillow_heif import register_heif_opener
             register_heif_opener()
@@ -243,12 +254,19 @@ def _normalize_image_bytes(image_bytes: bytes) -> bytes:
             pass  # HEIC support unavailable; non-HEIC images still normalize
 
         img = Image.open(io.BytesIO(image_bytes))
-        if img.format in _VISION_OK_FORMATS:
+        needs_convert = img.format not in _VISION_OK_FORMATS
+        needs_resize = max(img.size) > _VISION_MAX_LONG_EDGE
+        if not needs_convert and not needs_resize:
             return image_bytes
+        # Re-encoding drops EXIF, so bake the orientation in first — otherwise
+        # portrait phone photos reach the vision model sideways.
+        img = ImageOps.exif_transpose(img)
+        if needs_resize:
+            img.thumbnail((_VISION_MAX_LONG_EDGE, _VISION_MAX_LONG_EDGE), Image.LANCZOS)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90)
+        img.save(buf, format="JPEG", quality=85 if needs_resize else 90)
         return buf.getvalue()
     except Exception:
         return image_bytes

@@ -470,7 +470,10 @@ async def compute_training_analytics(db, user_id: str) -> dict:
     cutoff = (today - timedelta(days=LOG_LOOKBACK_DAYS)).isoformat()
 
     raw_logs = await db.log.find(
-        {"userId": user_id, "date": {"$gte": cutoff}}
+        # Un-logged sets and scanned prescriptions carry completed:'no' but still
+        # hold weight/reps — analytics must only read work actually done.
+        # Missing completed = legacy row, treated as done.
+        {"userId": user_id, "date": {"$gte": cutoff}, "completed": {"$ne": "no"}}
     ).to_list(5000)
     logs = []
     for e in raw_logs:

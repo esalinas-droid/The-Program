@@ -12,6 +12,7 @@ import { getStoredUser } from '../../src/utils/auth';
 import { toLocalDateString, getLocalDateString } from '../../src/utils/dateHelpers';
 import { logApi, prApi, programApi, painReportApi, readinessApi, weeklyReviewApi, deloadApi, competitionApi, rotationApi, liftsApi, streakApi, badgesApi, questApi, calendarApi, api, profileApi } from '../../src/utils/api';
 import { getTodaySession, getTodayDayName } from '../../src/data/programData';
+import { getTodayOverrides, applyOverridesToSession } from '../../src/utils/todayOverrides';
 import { getBlock, getBlockName, getPhase, isDeloadWeek } from '../../src/utils/calculations';
 import { AthleteProfile, ProgramSession, WeekStats, TodaySessionResponse } from '../../src/types';
 import CoachRebalanceCard from '../../src/components/CoachRebalanceCard';
@@ -119,6 +120,10 @@ export default function Dashboard() {
   const [authUserName, setAuthUserName] = useState<string>('');
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
   const [programSession, setProgramSession] = useState<TodaySessionResponse | null>(null);
+  // Today's prescribed exercises with the Today screen's day-only overrides
+  // applied (added/scanned exercises in, skipped ones out) — what the athlete
+  // will actually see when they open Today.
+  const [effectiveExercises, setEffectiveExercises] = useState<any[] | null>(null);
   const [weekStats, setWeekStats] = useState<WeekStats | null>(null);
   const [bests, setBests]               = useState<any>(null);
   const [featuredLifts, setFeaturedLifts] = useState<any[]>([]);
@@ -174,12 +179,37 @@ export default function Dashboard() {
     setTodaySession(getTodaySession(week));
 
     // Try loading AI-generated session from program API
+    let apiSession: TodaySessionResponse | null = null;
     try {
-      const apiSession = await programApi.getTodaySession();
+      apiSession = await programApi.getTodaySession();
       setProgramSession(apiSession);
     } catch {
       // 404 = session completed, or no AI plan exists — clear stale value
       setProgramSession(null);
+    }
+
+    // The Today screen can add exercises (scan/upload, "+ Add Exercise") and
+    // remove prescribed ones for the day ("replace with my own workout"). Those
+    // overrides live in Today's date-keyed local store, never in the plan, so
+    // apply them here too — otherwise this card keeps advertising the old
+    // generated workout after the athlete swapped in their own.
+    try {
+      const overrides = await getTodayOverrides(getLocalDateString());
+      setEffectiveExercises(applyOverridesToSession(apiSession?.session?.exercises || [], overrides));
+    } catch {
+      setEffectiveExercises(apiSession?.session?.exercises || null);
+    }
+
+    // The server derives the true program week from the plan's start date and
+    // sends it with today's session; the local profile only ever learned
+    // currentWeek once, at onboarding. Sync it here — and persist ONLY this
+    // field, because saveProfile merges and the rest of the local profile can
+    // hold user edits the server hasn't seen.
+    const serverWeek = apiSession?.currentWeek;
+    if (typeof serverWeek === 'number' && Number.isFinite(serverWeek) && serverWeek >= 1
+        && serverWeek !== (prof.currentWeek || 1)) {
+      setProfile(prev => (prev ? { ...prev, currentWeek: serverWeek } : prev));
+      await saveProfile({ currentWeek: serverWeek });
     }
 
     // ── Has the athlete finished training today? ──────────────────────────────
@@ -523,7 +553,7 @@ export default function Dashboard() {
             {/* Issue 3C: plain white headline, no inline checkmark */}
             <Text style={s.sessionCompleteTitle}>Today's session — done</Text>
             <Text style={s.sessionScheme}>
-              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Good work today"}
+              {effectiveExercises?.[0]?.name ?? displaySession?.mainLift ?? "Good work today"}
             </Text>
             {/* Issue 2: two side-by-side outline buttons */}
             <View style={s.sessionCompleteBtns}>
@@ -561,10 +591,10 @@ export default function Dashboard() {
               <Text style={s.sessionCardDay}>{todayName}</Text>
             </View>
             <Text style={s.sessionLift}>
-              {programSession?.session?.exercises?.[0]?.name ?? displaySession?.mainLift ?? "Today's Session"}
+              {effectiveExercises?.[0]?.name ?? displaySession?.mainLift ?? "Today's Session"}
             </Text>
             <Text style={s.sessionScheme}>
-              {programSession?.session?.exercises?.[0]?.prescription ?? displaySession?.topSetScheme ?? ''}
+              {effectiveExercises?.[0]?.prescription ?? displaySession?.topSetScheme ?? ''}
             </Text>
             {programSession?.session?.coachNote ? (
               <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>
@@ -594,10 +624,10 @@ export default function Dashboard() {
                 <Text style={s.sessionCardDay}>{todayName}</Text>
               </View>
               <Text style={s.sessionLift}>
-                {programSession?.session?.exercises?.[0]?.name ?? displaySession.mainLift ?? "Today's Session"}
+                {effectiveExercises?.[0]?.name ?? displaySession.mainLift ?? "Today's Session"}
               </Text>
               <Text style={s.sessionScheme}>
-                {programSession?.session?.exercises?.[0]?.prescription ?? displaySession.topSetScheme ?? ''}
+                {effectiveExercises?.[0]?.prescription ?? displaySession.topSetScheme ?? ''}
               </Text>
               {programSession?.session?.coachNote ? (
                 <Text style={s.sessionCoachNote}>"{programSession.session.coachNote}"</Text>

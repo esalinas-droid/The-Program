@@ -46,13 +46,20 @@ JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "30"))
 
 
-def create_jwt(user_id: str, email: str, name: str) -> str:
-    """Create a signed JWT token for a user."""
+def create_jwt(user_id: str, email: str, name: str, role: str = "athlete") -> str:
+    """Create a signed JWT token for a user.
+
+    role rides along as a claim so tokens never need a forced re-login when
+    role-based access arrives. Readers must tolerate its absence — tokens
+    issued before this claim existed stay valid until they expire, so use
+    payload.get("role", "athlete"), never payload["role"].
+    """
     now = datetime.now(timezone.utc)
     payload = {
         "userId": user_id,
         "email":  email,
         "name":   name,
+        "role":   role or "athlete",
         "iat":    now,
         "exp":    now + timedelta(days=JWT_EXPIRE_DAYS),
     }

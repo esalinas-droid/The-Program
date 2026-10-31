@@ -46,4 +46,28 @@ export async function clearAll(): Promise<void> {
   await AsyncStorage.clear();
 }
 
+/**
+ * Wipe athlete-scoped local state (profile + the Today screen's per-day keys)
+ * on sign-out, account deletion, or beta reset, so the next account on this
+ * device doesn't inherit the previous user's profile, units, mode, or
+ * today-screen state. Deliberately does NOT touch notification-ID or
+ * push-token keys.
+ */
+export async function clearAthleteLocalState(): Promise<void> {
+  try {
+    await AsyncStorage.multiRemove([
+      KEYS.PROFILE,
+      'today_set_values',
+      'today_logged_sets',
+      'today_added_sets',
+      'today_finished_date',
+      'today_field_overrides',
+      'today_added_exercises',
+      'today_skipped_exercises',
+      'today_swaps',
+      'today_pending_invalidation',
+    ]);
+  } catch (e) { console.error('clearAthleteLocalState error', e); }
+}
+
 export { KEYS };

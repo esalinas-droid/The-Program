@@ -782,9 +782,9 @@ export default function TrackerSessionScreen() {
 
   // The athlete's weight unit, loaded once from the cached profile. A ref, not
   // state: it's read inside commitSet and never drives a render.
-  const profileUnitsRef = useRef<'lbs' | 'kgs'>('lbs');
+  const profileUnitsRef = useRef<'lbs' | 'kg'>('lbs');
   useEffect(() => {
-    getProfile().then(p => { if ((p as any)?.units === 'kgs') profileUnitsRef.current = 'kgs'; }).catch(() => {});
+    getProfile().then(p => { if ((p as any)?.units === 'kg') profileUnitsRef.current = 'kg'; }).catch(() => {});
   }, []);
   const [showAddSheet,    setShowAddSheet]    = useState(false);
   const [howToVisible,    setHowToVisible]    = useState(false);
@@ -947,7 +947,7 @@ export default function TrackerSessionScreen() {
         // This screen was the one write path that never sent the athlete's
         // unit, so a kg lifter's sets were stored unitless and read as pounds
         // — unrecoverably. The unit comes from their profile.
-        entry.weightUnit = profileUnitsRef.current === 'kgs' ? 'kg' : 'lb';
+        entry.weightUnit = profileUnitsRef.current === 'kg' ? 'kg' : 'lb';
       } else if (pt === 'timed') {
         entry.duration     = parseFloat(set.duration) || 0;
         entry.durationUnit = set.durationUnit;

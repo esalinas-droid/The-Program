@@ -410,6 +410,7 @@ class IntakeRequest(BaseModel):
     # Extended intake fields (Phase 2)
     primaryWeaknesses: List[str] = []
     specialtyEquipment: List[str] = []
+    cardioPreferences: Optional[List[str]] = None  # how the athlete likes to condition, e.g. ["boxing", "rowing"]; None/[] = no preference
     sleepHours: Optional[float] = None
     stressLevel: Optional[str] = None
     occupationType: Optional[str] = None

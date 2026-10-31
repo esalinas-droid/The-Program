@@ -648,7 +648,9 @@ export const competitionApi = {
 // Task 10: Exercise Rotation Detection
 export const calendarApi = {
   getEvents:   (start?: string, end?: string) =>
-    api(`/calendar/events${start && end ? `?start_date=${start}&end_date=${end}` : ''}`),
+    api(`/calendar/events${start && end ? `?start_date=${start}&end_date=${end}` : ''}`, {
+      retry: { attempts: 3 }, // read-only GET — safe to retry through cold-start 502s (~1.5s, 3s)
+    }),
   reschedule:  (body: { originalDate: string; newDate: string; sessionType?: string; reason?: string }) =>
     api('/calendar/reschedule', { method: 'POST', body: JSON.stringify(body) }),
   undoReschedule: (originalDate: string) =>

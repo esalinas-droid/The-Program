@@ -8,7 +8,7 @@ const WARMUPS: Record<string, string> = {
   DE_LOWER: '3-5 min backward sled drag · Supported hip shift or airplane 1×5/side · Hamstring floss 1×8/side',
   DE_UPPER: '2-3 min bike/rope · Band pull-aparts 2×20 · Band pressdowns 2×20 · Wall slides 2×10',
   EVENT:    '5 min walk/sled drag · 90/90 breathing 2×5 · Suitcase carry 2×40 ft/side · Split-stance hip iso 2×20s/side',
-  BOXING:   'Jump rope or shadowbox 3 min · Neck rolls 1×8 · Shoulder circles 1×10/side · Hip circles 1×10/side · Leg swings 1×10/side · Inchworm 1×5',
+  GPP:      'Easy bike, row, or jump rope 3 min · Neck rolls 1×8 · Shoulder circles 1×10/side · Hip circles 1×10/side · Leg swings 1×10/side · Inchworm 1×5',
 };
 
 // ── Activation Drills (static per session type) ───────────────────────────────
@@ -18,23 +18,23 @@ const ACTIVATION: Record<string, string> = {
   DE_LOWER: 'Glute bridge iso 2×20s · Side plank 2×20s/side · Goblet squat to box 2×5',
   DE_UPPER: 'Dead bug 1×6/side · Med-ball chest pass 3×3 or box plyo push-up 3×3',
   EVENT:    'Dead bug 2×6/side · March + brace drill 2×20 ft · Empty implement or empty yoke 1-2 runs',
-  BOXING:   'McGill curl-up 1×6/side · Bird dog 1×6/side · Hip flexor stretch 1×30s/side · Glute bridge 1×10 · Band pull-apart 1×20',
+  GPP:      'McGill curl-up 1×6/side · Bird dog 1×6/side · Hip flexor stretch 1×30s/side · Glute bridge 1×10 · Band pull-apart 1×20',
 };
 
-// ── WEDNESDAY BOXING SESSION (same every week) ───────────────────────────────
+// ── WEDNESDAY CONDITIONING SESSION (same every week) ─────────────────────────
 function getWednesdaySession(week: number): ProgramSession {
-  const block = getBlock(week);
   const isDeload = DELOAD_WEEKS.includes(week);
-  const rounds = block <= 2 ? '15-20' : '20-25';
-  const roundsActual = week <= 8 ? '15-20' : '20-25';
+  const trips = week <= 8 ? '8-10' : '10-12';
   return {
     week, day: 'Wednesday',
-    sessionType: isDeload ? 'Deload Boxing / Recovery / Mobility' : 'Boxing / Recovery / Mobility',
-    mainLift: 'Boxing',
-    warmUpProtocol: WARMUPS.BOXING,
-    activationRehab: ACTIVATION.BOXING,
+    sessionType: isDeload ? 'Deload Recovery / Conditioning' : 'Recovery / Conditioning',
+    mainLift: 'Sled Push',
+    warmUpProtocol: WARMUPS.GPP,
+    activationRehab: ACTIVATION.GPP,
     rampUpSets: `McGill curl-up 1×6/side · Bird dog 1×6/side · Hip flexor stretch 1×30s/side · Glute bridge 1×10 · Band pull-apart 1×20`,
-    topSetScheme: `${roundsActual} rounds × 1:1 work:rest @ 85% effort max`,
+    topSetScheme: isDeload
+      ? 'Sled push 6 easy trips × 40 ft @ RPE 5 — move well, leave fresh'
+      : `Sled push ${trips} trips × 40 ft @ RPE 6 — steady pace, walk-back recovery`,
     supplementalWork: [
       'Oblique circuit: Suitcase carry 3×40 ft/side · Pallof press 3×10/side · Side plank 3×30s/side',
       'Core circuit: Dead bug 2×8/side · Copenhagen plank 2×20s/side · McGill curl-up 2×6/side',
@@ -45,8 +45,8 @@ function getWednesdaySession(week: number): ProgramSession {
       'Forearm finisher: Wrist roller 3 trips · Pronation/supination 2×15/side · Plate pinch 3×25s · Band finger ext 2×25',
     ],
     eventGPP: isDeload ? 'Backward sled drag 6 trips @ RPE 5; easy walk 10 min' : 'Backward sled drag 6-8 trips @ RPE 5; reverse hyper 3×15 (restoration) or easy walk 10 min',
-    intentRPETarget: 'RPE 6-7 max on boxing, mobility is full effort',
-    coachingNotes: isDeload ? 'Deload week — boxing lighter, full mobility still mandatory.' : 'Boxing + GPP. Oblique/hip work drives yoke and carry performance. Full hip mobility circuit essential.',
+    intentRPETarget: 'RPE 6-7 max on conditioning, mobility is full effort',
+    coachingNotes: isDeload ? 'Deload week — conditioning stays light, full mobility still mandatory.' : 'Conditioning + GPP. Oblique/hip work drives yoke and carry performance. Full hip mobility circuit essential.',
     key: isDeload ? 'Deload' : getPhase(week),
     block: getBlock(week), blockName: getBlockName(getBlock(week)),
     phase: isDeload ? 'Deload' : getPhase(week),
@@ -212,8 +212,8 @@ function getEventGPP(day: string, pos: number, isDeload: boolean): string {
     if (day === 'Monday') return 'Easy sled drag 6 trips';
     if (day === 'Tuesday') return 'Easy cuff/shoulder prehab only';
     if (day === 'Thursday') return 'Mobility only';
-    if (day === 'Friday') return 'Optional very light boxing';
-    return 'One boxing session only this week';
+    if (day === 'Friday') return 'Optional very light sled drag or easy walk';
+    return 'One easy conditioning session only this week';
   }
   if (day === 'Monday') {
     if (pos === 1) return 'Backward sled drag 8 trips @RPE 5-6';
@@ -231,7 +231,7 @@ function getEventGPP(day: string, pos: number, isDeload: boolean): string {
     return 'Backward sled drag 8 trips @RPE 5-6';
   }
   if (day === 'Friday') {
-    return 'Optional easy boxing later in day';
+    return 'Optional easy conditioning later in day';
   }
   return '';
 }
@@ -267,7 +267,7 @@ function getSessionType(day: string, isDeload: boolean): string {
   const prefix = isDeload ? 'Deload ' : '';
   if (day === 'Monday') return `${prefix}ME Lower`;
   if (day === 'Tuesday') return `${prefix}ME Upper`;
-  if (day === 'Wednesday') return isDeload ? 'Deload Boxing / Recovery / Mobility' : 'Boxing / Recovery / Mobility';
+  if (day === 'Wednesday') return isDeload ? 'Deload Recovery / Conditioning' : 'Recovery / Conditioning';
   if (day === 'Thursday') return `${prefix}DE Lower`;
   if (day === 'Friday') return `${prefix}DE Upper`;
   if (day === 'Saturday') return `${prefix}Strongman Event Day`;

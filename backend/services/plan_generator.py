@@ -742,10 +742,58 @@ def _build_de_lower(lifts: CurrentLifts, unit: str,
     return _apply_progression(_filter_injured(exercises, injuries), ctx)
 
 
+# ─── Cardio / Conditioning Pool ───────────────────────────────────────────────
+# Maps the athlete's cardioPreferences keys (profile/intake) to conditioning
+# templates for GPP days and the event-day finisher. An empty or missing
+# preference list keeps the long-standing Sled Push / Backward Sled Drag
+# defaults, so existing users see no change.
+
+CARDIO_POOL: Dict[str, Dict] = {
+    "sled_work":    {"name": "Sled Push",              "prescription": "6×40yd",
+                     "sets": 6,  "reps": "40yd",   "cues": []},
+    "rowing":       {"name": "Rowing Machine",         "prescription": "5 × 2:00 moderate pace, 1:00 rest",
+                     "sets": 5,  "reps": "2:00",   "cues": ["Legs, then back, then arms", "Long smooth strokes"]},
+    "assault_bike": {"name": "Assault Bike",           "prescription": "10 × 0:30 hard / 1:00 easy spin",
+                     "sets": 10, "reps": "0:30",   "cues": ["Push and pull the handles", "Settle your breathing on the easy minute"]},
+    "jump_rope":    {"name": "Jump Rope",              "prescription": "8 × 1:00 on / 0:30 rest",
+                     "sets": 8,  "reps": "1:00",   "cues": ["Stay light on your feet", "Spin the rope from the wrists"]},
+    "incline_walk": {"name": "Incline Treadmill Walk", "prescription": "20 min steady — you can hold a conversation",
+                     "sets": 1,  "reps": "20 min", "cues": ["Tall posture", "No hands on the rails"]},
+    "running":      {"name": "Easy Run",               "prescription": "20 min at a conversational pace",
+                     "sets": 1,  "reps": "20 min", "cues": ["Relaxed shoulders", "Keep it easy — this builds your engine"]},
+    "boxing":       {"name": "Heavy Bag Rounds",       "prescription": "5 × 2:00 rounds, 1:00 rest",
+                     "sets": 5,  "reps": "2:00",   "cues": ["Stay on your toes", "Breathe out on every punch"]},
+    "swimming":     {"name": "Swim Intervals",         "prescription": "10 × 50m easy, rest as needed",
+                     "sets": 10, "reps": "50m",    "cues": ["Long strokes", "Exhale in the water"]},
+}
+
+
+def _cardio_exercise(pref_key: str, category: ExerciseCategory = ExerciseCategory.ACCESSORY,
+                     rpe: Optional[float] = None, note: str = "") -> SessionExercise:
+    """Build a fresh SessionExercise from a CARDIO_POOL template."""
+    tmpl = CARDIO_POOL[pref_key]
+    return SessionExercise(
+        sessionExerciseId=_id(), name=tmpl["name"], category=category,
+        prescription=tmpl["prescription"],
+        cues=list(tmpl.get("cues") or []),
+        targetSets=[TargetSet(setNumber=i, targetReps=tmpl["reps"], setType="work", targetRPE=rpe)
+                    for i in range(1, tmpl["sets"] + 1)],
+        notes=note,
+    )
+
+
 def _build_gpp(ctx: "ProgContext" = None) -> List[SessionExercise]:
-    exercises = [
-        SessionExercise(sessionExerciseId=_id(), name="Sled Push", category=ExerciseCategory.ACCESSORY, prescription="6×40yd",
-            targetSets=[TargetSet(setNumber=i, targetReps="40yd", setType="work") for i in range(1, 7)]),
+    prefs = [p for p in (ctx.cardio_prefs if ctx else []) if p in CARDIO_POOL]
+    gw = (ctx.global_week if ctx else 1)
+    if prefs:
+        # Rotate through the athlete's chosen cardio on the GLOBAL week number.
+        # ctx.block_number resets inside every phase — never key rotation off it.
+        n_items = min(2, len(prefs))
+        cardio = [_cardio_exercise(prefs[(gw - 1 + k) % len(prefs)]) for k in range(n_items)]
+    else:
+        # No preference recorded — unchanged long-standing default.
+        cardio = [_cardio_exercise("sled_work")]
+    exercises = cardio + [
         SessionExercise(sessionExerciseId=_id(), name="Band Pull-Apart", category=ExerciseCategory.PREHAB, prescription="100 total",
             targetSets=[TargetSet(setNumber=1, targetReps="100 total", setType="work")]),
         SessionExercise(sessionExerciseId=_id(), name="Ab Wheel", category=ExerciseCategory.PREHAB, prescription="3×10-15",
@@ -1206,6 +1254,8 @@ class ProgContext:
     injury_volume_mult: float = 1.0
     injury_details: list = _dc.field(default_factory=list)
     is_first_session_of_week: bool = False
+    # Athlete's chosen cardio types (CARDIO_POOL keys); empty = default cardio
+    cardio_prefs: list = _dc.field(default_factory=list)
 
 
 def _blocked_set(injuries) -> set:
@@ -1576,13 +1626,24 @@ def _build_event(lifts: CurrentLifts, unit: str,
         ))
 
     # ── Conditioning finisher ─────────────────────────────────────────────────
-    exercises.append(SessionExercise(
-        sessionExerciseId=_id(), name="Backward Sled Drag", category=ExerciseCategory.PREHAB,
-        prescription="6 trips — restorative, knees and posture",
-        cues=["Stay low", "Push knees forward", "Easy breathing"],
-        targetSets=[TargetSet(setNumber=i, targetReps="30m", setType="work", targetRPE=5.0)
-                    for i in range(1, 7)],
-    ))
+    # Preference-aware: athletes who chose cardio types get one of them as the
+    # finisher, at an easy effort, rotating on the GLOBAL week number
+    # (ctx.block_number resets every phase). No preference keeps the default.
+    cardio_prefs = [p for p in (ctx.cardio_prefs if ctx else []) if p in CARDIO_POOL]
+    if cardio_prefs:
+        exercises.append(_cardio_exercise(
+            cardio_prefs[(gw - 1) % len(cardio_prefs)],
+            category=ExerciseCategory.PREHAB, rpe=5.0,
+            note="Finisher — easy effort, this is recovery work, not a second session",
+        ))
+    else:
+        exercises.append(SessionExercise(
+            sessionExerciseId=_id(), name="Backward Sled Drag", category=ExerciseCategory.PREHAB,
+            prescription="6 trips — restorative, knees and posture",
+            cues=["Stay low", "Push knees forward", "Easy breathing"],
+            targetSets=[TargetSet(setNumber=i, targetReps="30m", setType="work", targetRPE=5.0)
+                        for i in range(1, 7)],
+        ))
 
     return _filter_injured(exercises, blocked)
 
@@ -1900,6 +1961,7 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
                     exp=_exp_params,
                     injury_volume_mult=_injury_vol,
                     injury_details=list(getattr(intake, 'injuryDetails', None) or []),
+                    cardio_prefs=list(getattr(intake, 'cardioPreferences', None) or []),
                 )
 
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)

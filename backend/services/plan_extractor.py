@@ -132,7 +132,7 @@ OUTPUT SCHEMA (return ONLY this JSON, nothing else):
       "exercises": [
         {
           "name": "<exercise name>",
-          "category": "<main|supplemental|accessory|prehab>",
+          "category": "<warmup|main|supplemental|accessory|prehab|cooldown>",
           "sets": <int>,
           "reps": "<e.g. 5 or 8-10 or AMRAP>",
           "intensity": "<e.g. RPE 7 or 75% or bodyweight or empty string>",
@@ -401,7 +401,9 @@ def build_annual_plan(
                     cat_raw = str(ex_data.get("category", "accessory")).lower()
                     cat = "main" if cat_raw == "main" else \
                           "supplemental" if cat_raw == "supplemental" else \
-                          "prehab" if cat_raw == "prehab" else "accessory"
+                          "prehab" if cat_raw == "prehab" else \
+                          "warmup" if cat_raw == "warmup" else \
+                          "cooldown" if cat_raw == "cooldown" else "accessory"
 
                     exercises.append(SessionExercise(
                         sessionExerciseId = _id(),

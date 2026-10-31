@@ -5,9 +5,10 @@ import {
   KeyboardAvoidingView, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONTS, RADIUS } from '../src/constants/theme';
-import { getProfile, saveProfile } from '../src/utils/storage';
+import { getProfile, saveProfile, clearAthleteLocalState } from '../src/utils/storage';
 import { profileApi, planApi, authApi, coachApi, InjuryPreviewResult } from '../src/utils/api';
 import { TOUR_VERSION_CONSTANT } from '../src/components/TourOverlay';
 import { AthleteProfile, InjuryDetail } from '../src/types';
@@ -206,6 +207,28 @@ export default function SettingsScreen() {
       } catch {}
     })();
   }, []);
+
+  // ── Imported-plan warm-up toggle (device-local; the Today screen reads this
+  //    exact key). Absent = off.
+  const [autoWarmupImported, setAutoWarmupImported] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem('auto_warmup_imported');
+        setAutoWarmupImported(v === 'true');
+      } catch {}
+    })();
+  }, []);
+
+  const toggleAutoWarmupImported = async (val: boolean) => {
+    setAutoWarmupImported(val);
+    try {
+      await AsyncStorage.setItem('auto_warmup_imported', val ? 'true' : 'false');
+    } catch (e) {
+      console.warn('[Settings] auto warm-up pref update failed:', e);
+      setAutoWarmupImported(!val);
+    }
+  };
 
   // ── Coach memory handlers ──────────────────────────────────────────────────
   const handleSubmitCorrection = async () => {
@@ -427,13 +450,36 @@ export default function SettingsScreen() {
   const [showModeSwitchModal, setShowModeSwitchModal] = useState(false);
   const [modeSwitching, setModeSwitching] = useState(false);
 
+  // profileApi.switchMode doesn't accept retry options (api.ts), so retry
+  // transient failures locally: 3 attempts, ~800ms backoff between tries.
+  const switchModeWithRetry = async (mode: 'program' | 'free') => {
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await profileApi.switchMode(mode);
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) await new Promise<void>(r => setTimeout(r, 800 * attempt));
+      }
+    }
+    throw lastErr;
+  };
+
   const executeSwitchToFree = async () => {
     setModeSwitching(true);
     setShowModeSwitchModal(false);
     try {
-      await profileApi.switchMode('free');
+      await switchModeWithRetry('free');
+      // Server confirmed — now write local state and flag the Today tab for a
+      // full rebuild on next focus (same flag the coach screen uses).
       await saveProfile({ ...profile, training_mode: 'free' } as any);
-    } catch (e) { console.warn('[ModeSwitchFree] error', e); }
+      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
+    } catch (e) {
+      console.warn('[ModeSwitchFree] error', e);
+      setModeSwitching(false);
+      Alert.alert('Could not switch mode', 'Check your connection and try again.');
+      return;
+    }
     setModeSwitching(false);
     router.replace('/(tabs)');
   };
@@ -441,9 +487,15 @@ export default function SettingsScreen() {
   const executeSwitchToProgram = async () => {
     setModeSwitching(true);
     try {
-      await profileApi.switchMode('program');
+      await switchModeWithRetry('program');
       await saveProfile({ ...profile, training_mode: 'program' } as any);
-    } catch (e) { console.warn('[ModeSwitchProgram] error', e); }
+      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
+    } catch (e) {
+      console.warn('[ModeSwitchProgram] error', e);
+      setModeSwitching(false);
+      Alert.alert('Could not switch mode', 'Check your connection and try again.');
+      return;
+    }
     setModeSwitching(false);
     router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } });
   };
@@ -494,7 +546,7 @@ export default function SettingsScreen() {
     setShowBetaResetModal(false);
     setBetaResetText('');
     try { await profileApi.reset(); } catch {}
-    await saveProfile({});
+    await clearAthleteLocalState();
     router.replace('/onboarding-intake');
   };
 
@@ -506,6 +558,7 @@ export default function SettingsScreen() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Sign Out', style: 'destructive', onPress: async () => {
           await clearAuth();
+          await clearAthleteLocalState();
           router.replace('/auth');
         }},
       ]
@@ -531,6 +584,7 @@ export default function SettingsScreen() {
               );
               if (!res.ok) throw new Error('Deletion failed. Please try again.');
               await clearAuth();
+              await clearAthleteLocalState();
               router.replace('/auth');
             } catch (e: any) {
               Alert.alert('Error', e.message || 'Could not delete account. Please try again.');
@@ -818,6 +872,19 @@ export default function SettingsScreen() {
                   setMarketingOptIn(!val);
                 }
               }}
+              trackColor={{ false: COLORS.surfaceHighlight, true: COLORS.accent }}
+              thumbColor={COLORS.text.primary}
+            />
+          </View>
+
+          <View style={[s.settingRow, { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: SPACING.md, marginTop: SPACING.md }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.settingLabel}>Auto warm-up & cool-down on imported plans</Text>
+              <Text style={s.settingDesc}>Add The Program's standard warm-up and cool-down to workouts you upload</Text>
+            </View>
+            <Switch
+              value={autoWarmupImported}
+              onValueChange={toggleAutoWarmupImported}
               trackColor={{ false: COLORS.surfaceHighlight, true: COLORS.accent }}
               thumbColor={COLORS.text.primary}
             />

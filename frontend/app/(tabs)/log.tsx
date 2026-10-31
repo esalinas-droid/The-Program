@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, FONTS, RADIUS, getSessionStyle } from '../../src/constants/theme';
 import { calendarApi, logApi, programApi, substitutionApi } from '../../src/utils/api';
 import { getLocalDateString, toLocalDateString } from '../../src/utils/dateHelpers';
@@ -940,7 +941,8 @@ export default function ScheduleScreen() {
   const [swapToast,    setSwapToast]    = useState<string | null>(null);
   const [swapping,     setSwapping]     = useState(false);
   const [calEventsRaw, setCalEventsRaw] = useState<any[]>([]);
-  // true when today's session is formally finished (programApi.getTodaySession returns 404)
+  // true when today's session is formally finished — local 'today_finished_date'
+  // flag first, falling back to the server's date-keyed finish marker
   const [todaySessionDone, setTodaySessionDone] = useState(false);
   const [trainingMode, setTrainingMode] = useState<'program' | 'free'>('program');
   // ── Tracker mode state ───────────────────────────────────────────────────────
@@ -1027,16 +1029,27 @@ export default function ScheduleScreen() {
         }),
       ]);
 
-      // On current week, check if today's session is formally done
+      // On current week, check if today's session is formally done.
+      // Finishing a session deliberately never changes the stored session, so
+      // getTodaySession keeps returning it afterwards — the real signal is the
+      // local 'today_finished_date' flag (instant, works offline), falling back
+      // to the server's date-keyed finish marker, which survives a reinstall
+      // and follows the athlete to a second device. Mirrors (tabs)/index.tsx.
       if (offset === 0) {
+        let finishedToday = false;
         try {
-          const todaySess = await programApi.getTodaySession();
-          // If getTodaySession returns null/no session → formally finished (404)
-          setTodaySessionDone(!todaySess?.session);
+          finishedToday = (await AsyncStorage.getItem('today_finished_date')) === today;
         } catch {
-          // 404 or no plan → session is done / no plan exists
-          setTodaySessionDone(true);
+          finishedToday = false;
         }
+        if (!finishedToday) {
+          try {
+            finishedToday = !!(await programApi.getSessionFinished(today))?.finished;
+          } catch {
+            // Offline or endpoint unavailable — the local answer stands.
+          }
+        }
+        setTodaySessionDone(finishedToday);
       }
 
       const events: any[] = evResp?.events || [];

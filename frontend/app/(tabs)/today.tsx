@@ -16,7 +16,7 @@ import { GestureDetector, type GestureType } from 'react-native-gesture-handler'
 import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { DragSection } from '../../src/components/DragSection';
-import { getProfile } from '../../src/utils/storage';
+import { getProfile, saveProfile } from '../../src/utils/storage';
 import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi, analyticsApi } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
@@ -491,9 +491,11 @@ const INJURY_MAP: Record<string, string[]> = {
 };
 
 // ── Helper Functions ──────────────────────────────────────────────────────────
-function getInjuryWarnings(session: ProgramSession, injuryFlags: string[]): string[] {
+// Takes the names of the exercises actually rendered on screen — the warning
+// must reflect what the athlete is about to train, not a template session.
+function getInjuryWarnings(exerciseNames: string[], injuryFlags: string[]): string[] {
   const warnings: string[] = [];
-  const allWork = [session.mainLift, ...session.supplementalWork, ...session.accessories].join(' ').toLowerCase();
+  const allWork = exerciseNames.join(' ').toLowerCase();
   for (const flag of injuryFlags) {
     const triggers = INJURY_MAP[flag];
     if (triggers?.some(t => allWork.includes(t))) {
@@ -2952,6 +2954,29 @@ const ec = StyleSheet.create({
   addFieldPillText:    { fontSize: 9, fontWeight: FONTS.weights.heavy, color: COLORS.text.muted, letterSpacing: 0.5 },
 });
 
+// ── Shared scan-photo upload (program + tracker modes) ────────────────────────
+// Uses XMLHttpRequest instead of fetch so the request carries an explicit
+// timeout: RN maps xhr.timeout onto the native request timeout, lifting iOS's
+// 60-second NSURLSession default that killed long vision parses mid-flight.
+const SCAN_UPLOAD_TIMEOUT_MS = 120000;
+const SCAN_TIMEOUT_MESSAGE   = 'The scan took too long. Try a smaller photo or better connection.';
+function uploadScanImage(formData: FormData, token: string | null): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${baseUrl}/api/tracker/parse-session-image`);
+    xhr.timeout = SCAN_UPLOAD_TIMEOUT_MS;
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.onload    = () => resolve({ status: xhr.status, body: xhr.responseText || '' });
+    xhr.onerror   = () => reject(new Error('Network request failed'));
+    xhr.ontimeout = () => reject(new Error(SCAN_TIMEOUT_MESSAGE));
+    xhr.send(formData as any);
+  });
+}
+
+// Must mirror TEXT_PARSE_MAX_CHARS in backend (see tracker-paste.tsx)
+const PROGRAM_PASTE_MAX_LEN = 4000;
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function TodayScreen() {
   const router = useRouter();
@@ -2960,6 +2985,8 @@ export default function TodayScreen() {
   const [week, setWeek]               = useState(1);
   const [todaySession, setTodaySession] = useState<ProgramSession | null>(null);
   const [apiSession, setApiSession]   = useState<TodaySessionResponse | null>(null);
+  // null = not determined yet; false = plan fetch failed, offline template shown
+  const [sessionIsFromApi, setSessionIsFromApi] = useState<boolean | null>(null);
   const [injuryFlags, setInjuryFlags] = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
@@ -2975,6 +3002,10 @@ export default function TodayScreen() {
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
   const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  // Program mode: paste workout text (free — no image credits)
+  const [showProgramPaste, setShowProgramPaste] = useState(false);
+  const [programPasteText, setProgramPasteText] = useState('');
+  const [isParsingPaste,   setIsParsingPaste]   = useState(false);
   // ── Tracker Mode: interactive exercise cards ──────────────────────────────────
   const [trackerExercises, setTrackerExercises] = useState<Exercise[]>([]);
   // ── Tracker Mode: session groupings (parallel to trackerExercises) ────────────
@@ -3079,6 +3110,12 @@ export default function TodayScreen() {
 
   // Rest period selector state
   const [exerciseRestDurations, setExerciseRestDurations] = useState<Record<string, number>>({});
+  // Session-sticky rest default: the last rest the user set anywhere carries to
+  // later sets and exercises until changed. In-session only — never persisted.
+  const [sessionRestDefault, setSessionRestDefault] = useState<number | null>(null);
+  // Which exercise the running timer belongs to, so the timer-bar pencil and the
+  // picker's Rest confirm can write their adjustment back to that exercise.
+  const [timerExerciseId, setTimerExerciseId] = useState('');
   const [customRestExerciseId, setCustomRestExerciseId]   = useState('');
   const [customRestVisible, setCustomRestVisible]         = useState(false);
   const initialLoadDone   = useRef(false);
@@ -3116,6 +3153,7 @@ export default function TodayScreen() {
   const FIELD_OVERRIDES_KEY = 'today_field_overrides'; // P2b: "just today" field choices
   const ADDED_EXERCISES_KEY = 'today_added_exercises'; // exercises added via "Add Exercise"
   const SKIPPED_EXERCISES_KEY = 'today_skipped_exercises'; // today-only prescribed skip list (coach REMOVE/SWAP)
+  const SWAPS_KEY             = 'today_swaps'; // today-only exercise swaps ({date, data} envelope)
   const TODAY_INVALIDATE_KEY  = 'today_pending_invalidation'; // set by coach → force re-load on next focus
 
   /**
@@ -3586,6 +3624,19 @@ export default function TodayScreen() {
             }
           }
         } catch { /* leave key intact on parse error */ }
+        // Today's exercise swaps — restore same-day, clear stale. Merge keeps
+        // precedence with any in-memory swap made before this restore ran.
+        try {
+          const savedSwapsRaw = await AsyncStorage.getItem(SWAPS_KEY);
+          if (savedSwapsRaw) {
+            const parsedSw = JSON.parse(savedSwapsRaw);
+            if (parsedSw?.date !== todayStr) {
+              await AsyncStorage.removeItem(SWAPS_KEY);
+            } else if (parsedSw?.data && typeof parsedSw.data === 'object') {
+              setSwaps(prev => ({ ...parsedSw.data, ...prev }));
+            }
+          }
+        } catch { /* leave key intact on parse error */ }
         // (Added sets are now restored inline in useFocusEffect — no race condition)
         mountRestoreDone.current = true;
         console.log('[Today] Mount restore complete');
@@ -3683,6 +3734,16 @@ export default function TodayScreen() {
       try {
         const profEarly = await getProfile();
         setProfileUnits(profEarly?.units === 'kg' ? 'kgs' : 'lbs');
+        // Mode re-check: Settings may have switched program ↔ tracker since this
+        // screen last loaded. On mismatch, clear the "already loaded" guards the
+        // same way onRefresh does, so THIS pass falls through to the full rebuild
+        // and adopts the new mode. No per-day AsyncStorage keys are touched.
+        const modeEarly: 'program' | 'free' = profEarly?.training_mode === 'free' ? 'free' : 'program';
+        if (trainingModeRef.current !== null && modeEarly !== trainingModeRef.current) {
+          console.log('[Today] Training mode changed →', modeEarly, '— forcing full rebuild');
+          initialLoadDone.current = false;
+          lastLoadDate.current = '';
+        }
       } catch {} // non-critical — stale value is worse than a silent skip
 
       // ── Targeted invalidation (coach mutations) ─────────────────────────────
@@ -3839,6 +3900,7 @@ export default function TodayScreen() {
                       ...(logEntry.elapsedTime != null ? { timeElapsed: String(logEntry.elapsedTime) } : {}),
                       ...(logEntry.distance    != null ? { distance: String(logEntry.distance) } : {}),
                       ...(logEntry.calories    != null ? { calories: String(logEntry.calories) } : {}),
+                      ...(logEntry.weightUnit  ? { weightUnit: logEntry.weightUnit } : {}),
                     };
                   }
                 }
@@ -3860,6 +3922,7 @@ export default function TodayScreen() {
                     ...(sorted[i].elapsedTime != null ? { timeElapsed: String(sorted[i].elapsedTime) } : {}),
                     ...(sorted[i].distance    != null ? { distance: String(sorted[i].distance) } : {}),
                     ...(sorted[i].calories    != null ? { calories: String(sorted[i].calories) } : {}),
+                    ...(sorted[i].weightUnit  ? { weightUnit: sorted[i].weightUnit } : {}),
                   };
                 }
               }
@@ -3920,11 +3983,12 @@ export default function TodayScreen() {
 
       // ── Step F: Clear stale AsyncStorage data when a new workout day starts ──
       if (lastLoadDate.current && lastLoadDate.current !== todayStr) {
-        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, ADDED_EXERCISES_KEY]).catch(() => {});
+        await AsyncStorage.multiRemove([SET_VALUES_KEY, LOGGED_SETS_KEY, ADDED_SETS_KEY, FINISHED_DATE_KEY, ADDED_EXERCISES_KEY, SWAPS_KEY]).catch(() => {});
         setSetValues({});
         setLoggedSets(new Set());
         setLogEntryIds({});
         setSessionFinished(false);
+        setSwaps({});
         userEditedSets.current.clear(); // Fix 4: reset edit tracking for new day
       }
 
@@ -3976,13 +4040,29 @@ export default function TodayScreen() {
       }
 
       // Load exercises from API — override hardcoded EXERCISES with plan-generated ones
+      let sessionHasOwnWarmup = false;  // uploaded plan carries its own warm-up exercises
+      let sessionIsImported   = false;  // today's session comes from an imported plan
       try {
         const session = await programApi.getTodaySession();
         setApiSession(session);
+        sessionHasOwnWarmup = Array.isArray(session?.session?.exercises)
+          && (session!.session!.exercises as any[]).some((e: any) => e?.category === 'warmup');
+        sessionIsImported = (session as any)?.isImported === true;
+        // Adopt the server's week. The local profile only ever learns currentWeek
+        // at onboarding (week 1), so without this every set logs as week 1 forever.
+        try {
+          const serverWeek = Number((session as any)?.currentWeek);
+          if (Number.isFinite(serverWeek) && serverWeek >= 1 && serverWeek !== w) {
+            setWeek(serverWeek);
+            // saveProfile MERGES — persist only this one field, nothing else.
+            await saveProfile({ currentWeek: serverWeek });
+          }
+        } catch { /* non-critical — week adoption retries on the next rebuild */ }
         const apiExs = buildTodayExercisesFromApi(
           session?.session?.exercises,
           session?.session?.sessionType  // pass session type so DE days get 'Dynamic Effort' badge
         );
+        setSessionIsFromApi(apiExs.length > 0);
         if (apiExs.length > 0) {
           // A1 fix: apply any "Just today" field overrides before building set rows
           let apiExsBase = apiExs;
@@ -4117,6 +4197,7 @@ export default function TodayScreen() {
                         ...(logEntry.elapsedTime != null ? { timeElapsed: String(logEntry.elapsedTime) } : {}),
                         ...(logEntry.distance    != null ? { distance: String(logEntry.distance) } : {}),
                         ...(logEntry.calories    != null ? { calories: String(logEntry.calories) } : {}),
+                        ...(logEntry.weightUnit  ? { weightUnit: logEntry.weightUnit } : {}),
                       };
                     }
                   }
@@ -4137,6 +4218,7 @@ export default function TodayScreen() {
                       ...(sorted[i].elapsedTime != null ? { timeElapsed: String(sorted[i].elapsedTime) } : {}),
                       ...(sorted[i].distance    != null ? { distance: String(sorted[i].distance) } : {}),
                       ...(sorted[i].calories    != null ? { calories: String(sorted[i].calories) } : {}),
+                      ...(sorted[i].weightUnit  ? { weightUnit: sorted[i].weightUnit } : {}),
                     };
                   }
                 }
@@ -4155,7 +4237,10 @@ export default function TodayScreen() {
             }
           } catch (err) { console.warn('[Today] Full-rebuild log fetch failed:', err); }
         }
-      } catch (err) { console.warn('[Today] API session fetch failed:', err); }
+      } catch (err) {
+        console.warn('[Today] API session fetch failed:', err);
+        setSessionIsFromApi(false);  // offline template is on screen — say so
+      }
 
       // ── Path-independent restore of added exercises ──────────────────────────
       // The inline restore above only runs when the plan API returns exercises.
@@ -4175,6 +4260,19 @@ export default function TodayScreen() {
         }
       } catch (err) { console.warn('[Today] Path-independent added-exercise restore failed:', err); }
       addedExercisesRestored.current = true;  // a restore attempt ran → persist may now prune
+
+      // ── Restore today's exercise swaps (date-guarded) ────────────────────────
+      // Merge with in-memory state LAST so a swap made just before this rebuild
+      // committed is never clobbered by the stored copy.
+      try {
+        const savedSwaps = await AsyncStorage.getItem(SWAPS_KEY);
+        if (savedSwaps) {
+          const parsedSw = JSON.parse(savedSwaps);
+          if (parsedSw?.date === todayStr && parsedSw?.data && typeof parsedSw.data === 'object') {
+            setSwaps(prev => ({ ...parsedSw.data, ...prev }));
+          }
+        }
+      } catch (err) { console.warn('[Today] Swap restore failed:', err); }
 
       // ── Check today's readiness ──────────────────────────────────────────
       try {
@@ -4199,6 +4297,28 @@ export default function TodayScreen() {
       // If API 404s/throws → isFromApi=false (local fallback — show ⚠ banner).
       // Name-matching is secondary signal only (isGeneric).
       const loadWarmupDrills = async () => {
+        // Gate auto-injection:
+        //  (a) a plan that carries its own warm-up (category 'warmup' from the
+        //      API session) keeps it — never inject a second one;
+        //  (b) imported plans get no auto warm-up unless the Settings toggle
+        //      ('auto_warmup_imported') opts back in;
+        //  (c) warm-ups removed by "Replace session" (on today's skip list)
+        //      stay removed instead of resurrecting on the next focus.
+        try {
+          if (sessionHasOwnWarmup) return;
+          if (sessionIsImported) {
+            const optIn = await AsyncStorage.getItem('auto_warmup_imported');
+            if (optIn !== 'true') return;
+          }
+          const savedSkipped = await AsyncStorage.getItem(SKIPPED_EXERCISES_KEY);
+          if (savedSkipped) {
+            const parsedSk = JSON.parse(savedSkipped);
+            if (parsedSk?.date === todayStr && Array.isArray(parsedSk?.skipped)
+                && parsedSk.skipped.some((sk: any) => String(sk?.sessionExerciseId || '').startsWith('warmup-api-'))) {
+              return;
+            }
+          }
+        } catch { /* gating is best-effort — fall through to normal injection */ }
         try {
           const wu = await warmupApi.getToday();
           const parsed = parseWarmupDrillsFromSteps(wu.steps || []);
@@ -4518,12 +4638,12 @@ export default function TodayScreen() {
       clearFinishedToday();
     }
 
-    // Determine rest duration: user selection > category default
+    // Determine rest duration: user selection > session-sticky default > category default
     const exForSet = exercises.find(e => e.sets.some(s => s.id === setId));
     const restDuration = exForSet
-      ? (exerciseRestDurations[exForSet.id] ?? REST_CONFIG[exForSet.category].default)
+      ? (exerciseRestDurations[exForSet.id] ?? sessionRestDefault ?? REST_CONFIG[exForSet.category].default)
       : 120;
-    const logName = exForSet?.name ?? exerciseName ?? '';
+    const logName = exForSet ? (swaps[exForSet.id]?.replacement ?? exForSet.name) : (exerciseName ?? '');
     // Hoist hasRpe above auto-advance so both blocks can reference it
     const exFieldsForLog = exForSet?.fields ?? [{ type: 'weight' }, { type: 'reps' }];
     const hasRpe = exFieldsForLog.some(f => f.type === 'rpe');
@@ -4532,6 +4652,7 @@ export default function TodayScreen() {
     setTimerSeconds(restDuration);
     setTimerTarget(restDuration);
     setTimerExerciseName(logName);
+    setTimerExerciseId(exForSet?.id ?? '');
     setTimerRunning(true);
 
     // ── Auto-advance: collapse current exercise + expand next when all sets done ──
@@ -4545,7 +4666,7 @@ export default function TodayScreen() {
           ex.sets.some(s => !updatedLoggedSets.has(s.id))
         );
         if (nextEx) {
-          const nextRestDur = exerciseRestDurations[nextEx.id] ?? REST_CONFIG[nextEx.category].default;
+          const nextRestDur = exerciseRestDurations[nextEx.id] ?? sessionRestDefault ?? REST_CONFIG[nextEx.category].default;
           if (hasRpe) {
             // RPE field present → no effort prompt → advance immediately as before
             setTimeout(() => {
@@ -4558,6 +4679,7 @@ export default function TodayScreen() {
               setTimerSeconds(nextRestDur);
               setTimerTarget(nextRestDur);
               setTimerExerciseName(nextEx.name);
+              setTimerExerciseId(nextEx.id);
               setTimerRunning(true);
             }, 600);
           } else {
@@ -4587,7 +4709,8 @@ export default function TodayScreen() {
         const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
         exForSet  = exercises.find(e => e.sets.some(s => s.id === setId));
         const setIdx    = exForSet ? exForSet.sets.findIndex(s => s.id === setId) : -1;
-        logName = exForSet?.name ?? exerciseName;
+        // A swapped exercise logs under the lift the athlete actually did
+        logName = exForSet ? (swaps[exForSet.id]?.replacement ?? exForSet.name) : exerciseName;
 
         // P2b: unified payload — read from exercise.fields
         const exFields = exForSet?.fields ?? [{ type: 'weight' }, { type: 'reps' }];
@@ -4760,6 +4883,7 @@ export default function TodayScreen() {
         setTimerSeconds(pa_nextRest);
         setTimerTarget(pa_nextRest);
         setTimerExerciseName(pa_nextEx.name);
+        setTimerExerciseId(pa_nextEx.id);
         setTimerRunning(true);
       }, 300); // brief delay so dismissal animation plays first
     }
@@ -5112,6 +5236,11 @@ export default function TodayScreen() {
     const replacement = picked.name;
     const reason: AdjustReason = (picked.reason as AdjustReason) || 'Preference';
     setSwaps(prev => ({ ...prev, [key]: { original, replacement, reason } }));
+    // Persist today's swaps so they survive reloads (date-keyed, clears at day roll)
+    try {
+      const nextSwaps = { ...swaps, [key]: { original, replacement, reason } };
+      await AsyncStorage.setItem(SWAPS_KEY, JSON.stringify({ date: getLocalDateString(), data: nextSwaps }));
+    } catch (e) { console.warn('[Today] Failed to persist swaps:', e); }
     try {
       const day = todayName === 'Sunday' ? 'Monday' : todayName;
       await substitutionApi.log({
@@ -5232,6 +5361,26 @@ export default function TodayScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, [exercises]);
 
+  // Shared post-parse confirm — the photo-scan and paste-text paths both land
+  // here with the same parsed-exercises shape and the same Add/Replace choice.
+  const confirmAndApplyParsed = useCallback((parsed: any[]) => {
+    const names = parsed.slice(0, 4).map((p: any) => `• ${p.name}`).join('\n');
+    const more  = parsed.length > 4 ? `\n…and ${parsed.length - 4} more` : '';
+    Alert.alert(
+      `Found ${parsed.length} exercise${parsed.length === 1 ? '' : 's'}`,
+      `${names}${more}\n\nHow should this go into today?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Add to today', onPress: () => applyScannedToProgramSession(parsed, 'add') },
+        {
+          text: 'Replace session',
+          style: 'destructive',
+          onPress: () => applyScannedToProgramSession(parsed, 'replace'),
+        },
+      ],
+    );
+  }, [applyScannedToProgramSession]);
+
   const handleProgramImageScan = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -5254,24 +5403,19 @@ export default function TodayScreen() {
         type: asset.mimeType || 'image/jpeg',
         name: 'workout.jpg',
       } as any);
-      const token   = await getAuthToken();
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
-      const res = await fetch(`${baseUrl}/api/tracker/parse-session-image`, {
-        method: 'POST',
-        body: formData,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const token = await getAuthToken();
+      const { status, body } = await uploadScanImage(formData, token);
 
-      if (!res.ok) {
-        if (res.status === 402) {
+      if (status < 200 || status >= 300) {
+        if (status === 402) {
           Alert.alert('No credits', 'You\'ve used all 3 free image scans. More credits coming in a future update.');
         } else {
-          throw new Error((await res.text()) || 'Upload failed');
+          throw new Error(body || 'Upload failed');
         }
         return;
       }
 
-      const data = await res.json();
+      const data = JSON.parse(body || '{}');
       const parsed = data.exercises || [];
       if (!parsed.length) {
         Alert.alert(
@@ -5283,28 +5427,53 @@ export default function TodayScreen() {
         return;
       }
 
-      const names = parsed.slice(0, 4).map((p: any) => `• ${p.name}`).join('\n');
-      const more  = parsed.length > 4 ? `\n…and ${parsed.length - 4} more` : '';
-      Alert.alert(
-        `Found ${parsed.length} exercise${parsed.length === 1 ? '' : 's'}`,
-        `${names}${more}\n\nHow should this go into today?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Add to today', onPress: () => applyScannedToProgramSession(parsed, 'add') },
-          {
-            text: 'Replace session',
-            style: 'destructive',
-            onPress: () => applyScannedToProgramSession(parsed, 'replace'),
-          },
-        ],
-      );
+      confirmAndApplyParsed(parsed);
     } catch (err: any) {
       console.error('[Today] Program scan failed:', err);
       Alert.alert('Scan failed', err?.message || 'Could not scan that image. Please try again.');
     } finally {
       setIsUploadingImage(false);
     }
-  }, [applyScannedToProgramSession]);
+  }, [confirmAndApplyParsed]);
+
+  // ── Program Mode: paste workout text into today's session (free) ─────────────
+  // Same parse shape and the same Add/Replace confirm as the photo scan; the
+  // text endpoint costs no image credits.
+  const handleProgramTextPaste = useCallback(async () => {
+    const trimmed = programPasteText.trim();
+    if (!trimmed) {
+      Alert.alert('Nothing to parse', 'Paste or type your workout first.');
+      return;
+    }
+    if (trimmed.length > PROGRAM_PASTE_MAX_LEN) {
+      Alert.alert(
+        'Text too long',
+        `Your workout text is ${trimmed.length} characters. Please trim it to ${PROGRAM_PASTE_MAX_LEN} characters or fewer.`,
+      );
+      return;
+    }
+    setIsParsingPaste(true);
+    try {
+      const data: any = await logApi.parseWorkoutText(trimmed);
+      const parsed = data?.exercises || [];
+      if (!parsed.length) {
+        Alert.alert(
+          'No exercises found',
+          data?.error
+            ? `Parse error: ${data.error}`
+            : 'We couldn\'t find any exercises in that text. Try a more structured format (e.g., "Squat 3x5 @ 225 lbs").',
+        );
+        return;
+      }
+      setShowProgramPaste(false);
+      setProgramPasteText('');
+      confirmAndApplyParsed(parsed);
+    } catch (err: any) {
+      Alert.alert('Parse failed', err?.message || 'Could not parse the workout text. Please try again.');
+    } finally {
+      setIsParsingPaste(false);
+    }
+  }, [programPasteText, confirmAndApplyParsed]);
 
   // ── Tracker Mode: manually add an exercise via picker (persists as week-0) ──────
   const handleTrackerAddExerciseManual = async (picked: PickedExercise) => {
@@ -5502,8 +5671,12 @@ export default function TodayScreen() {
     console.log('[Today] Finish: keeping initialLoadDone=true to prevent wrong-session rebuild');
   };
 
-  // ── Injury warnings ──────────────────────────────────────────────────────────
-  const warnings = todaySession ? getInjuryWarnings(todaySession, injuryFlags) : [];
+  // ── Injury warnings — computed from the exercises actually on screen, with
+  //    swapped-in replacements, never from the hardcoded template session ───────
+  const warnings = getInjuryWarnings(
+    exercises.map(ex => swaps[ex.id]?.replacement ?? ex.name),
+    injuryFlags,
+  );
 
   // ── Tracker Mode: Image upload handler ───────────────────────────────────────
   const handleImageUpload = useCallback(async () => {
@@ -5535,25 +5708,19 @@ export default function TodayScreen() {
       } as any);
 
       // 4. Upload to backend (multipart — do NOT set Content-Type header)
-      const token   = await getAuthToken();
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
-      const res = await fetch(`${baseUrl}/api/tracker/parse-session-image`, {
-        method: 'POST',
-        body: formData,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const token = await getAuthToken();
+      const { status, body } = await uploadScanImage(formData, token);
 
-      if (!res.ok) {
-        if (res.status === 402) {
+      if (status < 200 || status >= 300) {
+        if (status === 402) {
           Alert.alert('No credits', 'You\'ve used all 3 free image scans. More credits coming in a future update.');
         } else {
-          const txt = await res.text();
-          throw new Error(txt || 'Upload failed');
+          throw new Error(body || 'Upload failed');
         }
         return;
       }
 
-      const data = await res.json();
+      const data = JSON.parse(body || '{}');
 
       // Guard: if parse returned nothing, show a readable error — do NOT navigate to an empty review screen
       if (!data.exercises || data.exercises.length === 0) {
@@ -5654,12 +5821,13 @@ export default function TodayScreen() {
     // never started one and its REST pill was inert (tester item 1). Mode is
     // reset to 'rest' deliberately: a leftover stopwatch/EMOM mode must not
     // hijack the between-sets countdown.
-    const trackerRestDuration = exerciseRestDurations[exForSet.id] ?? REST_CONFIG[exForSet.category]?.default ?? 120;
+    const trackerRestDuration = exerciseRestDurations[exForSet.id] ?? sessionRestDefault ?? REST_CONFIG[exForSet.category]?.default ?? 120;
     setTimerMode('rest');
     setTimerIsCountUp(false);
     setTimerSeconds(trackerRestDuration);
     setTimerTarget(trackerRestDuration);
     setTimerExerciseName(exForSet.name);
+    setTimerExerciseId(exForSet.id);
     setTimerRunning(true);
 
     const exFields   = exForSet.fields ?? [{ type: 'weight' as FieldType }, { type: 'reps' as FieldType }];
@@ -6009,6 +6177,8 @@ export default function TodayScreen() {
         })()}
         onConfirm={(secs) => {
           setExerciseRestDurations(prev => ({ ...prev, [customRestExerciseId]: secs }));
+          // Sticky: carries to later exercises until the user picks a new rest
+          setSessionRestDefault(secs);
           setCustomRestVisible(false);
         }}
         onClose={() => setCustomRestVisible(false)}
@@ -6026,6 +6196,12 @@ export default function TodayScreen() {
             // Paused or done: fresh start with new target
             setTimerSeconds(secs);
             setTimerTarget(secs);
+          }
+          // Sticky: remember this rest for the exercise the timer belongs to,
+          // and carry it to later sets and exercises until changed.
+          setSessionRestDefault(secs);
+          if (timerExerciseId) {
+            setExerciseRestDurations(prev => ({ ...prev, [timerExerciseId]: secs }));
           }
           setTimerAdjustVisible(false);
         }}
@@ -6048,6 +6224,12 @@ export default function TodayScreen() {
           setTimerTarget(secs);
           setTimerExerciseName('');
           setTimerRunning(true);
+          // Sticky: remember this rest for the exercise the timer belongs to,
+          // and carry it to later sets and exercises until changed.
+          setSessionRestDefault(secs);
+          if (timerExerciseId) {
+            setExerciseRestDurations(prev => ({ ...prev, [timerExerciseId]: secs }));
+          }
           setTimerPickerVisible(false);
         }}
 
@@ -6284,7 +6466,7 @@ export default function TodayScreen() {
                       previousData={{}}
                       prExercises={new Set<string>()}
                       restConfig={{
-                        selectedSeconds: exerciseRestDurations[ex.id] ?? 120,
+                        selectedSeconds: exerciseRestDurations[ex.id] ?? sessionRestDefault ?? REST_CONFIG[ex.category]?.default ?? 120,
                         onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                         onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                       }}
@@ -6508,6 +6690,15 @@ export default function TodayScreen() {
           />
         </View>
 
+        {sessionIsFromApi === false && (
+          <View style={{ marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, padding: 10, borderRadius: 8, backgroundColor: '#2A2208', borderWidth: 1, borderColor: '#C9A84C55', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <MaterialCommunityIcons name="wifi-off" size={15} color={COLORS.accent} />
+            <Text style={{ flex: 1, fontSize: 12, color: COLORS.accent }}>
+              Couldn't load your plan — showing an offline template. Pull down to retry.
+            </Text>
+          </View>
+        )}
+
         {/* ── Part 2F: SESSION PROGRESS BAR ── */}
         {totalSets > 0 && (
           <View style={{ paddingHorizontal: 16, paddingBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -6653,7 +6844,7 @@ export default function TodayScreen() {
                   previousData={previousData}
                   prExercises={prExercises}
                   restConfig={{
-                    selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['warmup'].default,
+                    selectedSeconds: exerciseRestDurations[ex.id] ?? sessionRestDefault ?? REST_CONFIG['warmup'].default,
                     onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                     onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                   }}
@@ -6741,7 +6932,7 @@ export default function TodayScreen() {
             previousData={previousData}
             prExercises={prExercises}
             restConfig={{
-              selectedSeconds: exerciseRestDurations[ex.id],
+              selectedSeconds: exerciseRestDurations[ex.id] ?? sessionRestDefault ?? undefined,
               onSelect: (secs) => {
                 setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs }));
               },
@@ -6808,7 +6999,7 @@ export default function TodayScreen() {
                   previousData={previousData}
                   prExercises={prExercises}
                   restConfig={{
-                    selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['gpp'].default,
+                    selectedSeconds: exerciseRestDurations[ex.id] ?? sessionRestDefault ?? REST_CONFIG['gpp'].default,
                     onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                     onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                   }}
@@ -6872,7 +7063,7 @@ export default function TodayScreen() {
                 previousData={previousData}
                 prExercises={prExercises}
                 restConfig={{
-                  selectedSeconds: exerciseRestDurations[ex.id] ?? REST_CONFIG['cooldown'].default,
+                  selectedSeconds: exerciseRestDurations[ex.id] ?? sessionRestDefault ?? REST_CONFIG['cooldown'].default,
                   onSelect: (secs) => setExerciseRestDurations(prev => ({ ...prev, [ex.id]: secs })),
                   onCustom: () => { setCustomRestExerciseId(ex.id); setCustomRestVisible(true); },
                 }}
@@ -6925,6 +7116,17 @@ export default function TodayScreen() {
           <Text style={s.addExerciseBtnText}>
             {isUploadingImage ? 'Scanning image…' : 'Scan Workout Photo'}
           </Text>
+        </TouchableOpacity>
+
+        {/* ── PASTE WORKOUT TEXT (program mode — free, no image credits) ── */}
+        <TouchableOpacity
+          style={s.addExerciseBtn}
+          onPress={() => setShowProgramPaste(true)}
+          disabled={isParsingPaste}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="text-box-edit-outline" size={15} color={COLORS.accent} />
+          <Text style={s.addExerciseBtnText}>Paste Workout Text</Text>
         </TouchableOpacity>
 
         {/* ── ASK COACH (program mode — beside the session actions, where an
@@ -6988,6 +7190,67 @@ export default function TodayScreen() {
         originalExerciseName={pickerMode === 'swap' && adjustName ? extractExerciseName(adjustName) : undefined}
         title={pickerMode === 'tracker-add' || pickerMode === 'add' ? 'Add Exercise' : 'Swap Exercise'}
       />
+
+      {/* ── PASTE WORKOUT TEXT MODAL (program mode — free) ── */}
+      <Modal
+        visible={showProgramPaste}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowProgramPaste(false)}
+      >
+        <KeyboardAvoidingView
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.lg, gap: SPACING.sm }}>
+            <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>
+              Paste Workout Text
+            </Text>
+            <Text style={{ color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, lineHeight: 20 }}>
+              Paste or type your workout below and we'll turn it into exercises for today — free.
+            </Text>
+            <View style={{ backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: programPasteText.length > PROGRAM_PASTE_MAX_LEN ? RED : COLORS.border }}>
+              <TextInput
+                style={{ minHeight: 240, padding: SPACING.md, color: COLORS.text.primary, fontSize: FONTS.sizes.base, lineHeight: 22 }}
+                value={programPasteText}
+                onChangeText={setProgramPasteText}
+                placeholder={'Squat 3x5 @ 225 lbs'}
+                placeholderTextColor={COLORS.text.muted}
+                multiline
+                textAlignVertical="top"
+                autoCorrect={false}
+                autoCapitalize="sentences"
+              />
+            </View>
+            <Text style={{ textAlign: 'right', fontSize: FONTS.sizes.xs, color: programPasteText.length > PROGRAM_PASTE_MAX_LEN ? RED : COLORS.text.muted }}>
+              {programPasteText.length} / {PROGRAM_PASTE_MAX_LEN}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+              <TouchableOpacity
+                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border }}
+                onPress={() => setShowProgramPaste(false)}
+                disabled={isParsingPaste}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: COLORS.text.secondary, fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.semibold }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.md, borderRadius: RADIUS.lg, backgroundColor: COLORS.accent }}
+                onPress={handleProgramTextPaste}
+                disabled={isParsingPaste}
+                activeOpacity={0.85}
+              >
+                {isParsingPaste
+                  ? <ActivityIndicator size="small" color="#000" />
+                  : <MaterialCommunityIcons name="brain" size={16} color="#000" />}
+                <Text style={{ color: '#000', fontSize: FONTS.sizes.base, fontWeight: FONTS.weights.bold }}>
+                  {isParsingPaste ? 'Parsing…' : 'Parse Workout'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* ── READINESS CHECK MODAL — suppressed while celebration is visible ── */}
       <ReadinessModal

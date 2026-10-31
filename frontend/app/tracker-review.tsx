@@ -46,6 +46,9 @@ interface SessionSet {
   weight: string;
   reps: string;
   rpe: string;
+  // Unit of `weight` ('kg'/'lb'/'lbs'); '' means "use the athlete's profile unit".
+  // Populated in edit mode from the saved entry so re-saving preserves per-set units.
+  weightUnit: string;
   duration: string;
   durationUnit: 'sec' | 'min';
   distance: string;
@@ -73,7 +76,7 @@ function makeDefaultSet(): SessionSet {
   _setCounter++;
   return {
     id: `s-${Date.now()}-${_setCounter}`,
-    weight: '', reps: '', rpe: '',
+    weight: '', reps: '', rpe: '', weightUnit: '',
     duration: '', durationUnit: 'sec',
     distance: '', distanceUnit: 'ft', load: '',
     heightVal: '', heightUnit: 'in',
@@ -89,6 +92,7 @@ function makeSetFromParsed(parsed: any): SessionSet {
     weight:       parsed.weight   != null ? String(parsed.weight)   : '',
     reps:         parsed.reps     != null ? String(parsed.reps)     : '',
     rpe:          parsed.rpe      != null ? String(parsed.rpe)      : '',
+    weightUnit:   '',
     duration:     parsed.duration != null ? String(parsed.duration) : '',
     durationUnit: unit === 'min' ? 'min' : 'sec',
     distance:     parsed.distance != null ? String(parsed.distance) : '',
@@ -206,6 +210,7 @@ function buildEntries(
   sessionTitle: string | null,
   imageId: string | undefined,
   sessionId: string | null,
+  defaultWeightUnit: 'lbs' | 'kg',
 ): any[] {
   const entries: any[] = [];
   for (let exIdx = 0; exIdx < exercises.length; exIdx++) {
@@ -235,6 +240,9 @@ function buildEntries(
           entry.weight = parseFloat(set.weight) || 0;
           entry.reps   = parseInt(set.reps, 10) || 0;
           entry.rpe    = parseFloat(set.rpe)    || 0;
+          // Per-set unit (edit mode) wins; otherwise stamp the athlete's profile unit
+          // so kg sessions aren't stored unitless and read back as pounds.
+          entry.weightUnit = set.weightUnit || defaultWeightUnit;
           break;
         case 'timed':
           entry.duration = parseFloat(set.duration) || 0;
@@ -246,6 +254,7 @@ function buildEntries(
           entry.weight   = parseFloat(set.load)     || 0;
           entry.distance = parseFloat(set.distance) || 0;
           entry.unit     = set.distanceUnit;
+          entry.weightUnit = set.weightUnit || defaultWeightUnit;
           if (set.side) entry.side = set.side;
           break;
         case 'height':
@@ -292,6 +301,9 @@ function logsToExercises(logs: any[]): SessionExercise[] {
     const ex = groups.get(key)!;
     _setCounter++;
     const set = makeDefaultSet();
+    // Carry the saved entry's unit through the edit round-trip — edit mode is
+    // delete+reinsert server-side, so dropping it would strip correct kg stamps.
+    set.weightUnit = log.weightUnit || '';
 
     switch (pt) {
       case 'weighted': case 'emom': case 'amrap': case 'for_time':
@@ -759,6 +771,13 @@ export default function TrackerReviewScreen() {
 
   const titleInputRef = useRef<TextInput>(null);
 
+  // The athlete's weight unit, loaded once from the cached profile. A ref, not
+  // state: it's only read inside the save handlers and never drives a render.
+  const profileUnitsRef = useRef<'lbs' | 'kg'>('lbs');
+  useEffect(() => {
+    getProfile().then(p => { if ((p as any)?.units === 'kg') profileUnitsRef.current = 'kg'; }).catch(() => {});
+  }, []);
+
   // ── Edit mode: load existing log entries on mount ──────────────────────────
   useEffect(() => {
     if (!isEditMode) return;
@@ -924,7 +943,7 @@ export default function TrackerReviewScreen() {
     try {
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
-      const entries = buildEntries(exercises, date, week, title, imageId, sessionId);
+      const entries = buildEntries(exercises, date, week, title, imageId, sessionId, profileUnitsRef.current);
 
       if (options?.replace && options?.existingLogIds?.length) {
         // Replace: atomically delete today's existing week-0 logs, insert new session
@@ -995,7 +1014,7 @@ export default function TrackerReviewScreen() {
       const week    = profile?.currentWeek || 1;
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
-      const entries = buildEntries(exercises, date, week, title, imageId, null);
+      const entries = buildEntries(exercises, date, week, title, imageId, null, profileUnitsRef.current);
       await logApi.createBulk(entries, imageId, title || undefined);
       clearParsedSession();
       router.back();
@@ -1014,7 +1033,7 @@ export default function TrackerReviewScreen() {
       const date    = toISODate(selectedDate);
       const title   = sessionTitle.trim() || null;
       // Preserve the original week (0 = tracker) from the session
-      const entries = buildEntries(exercises, date, 0, title, undefined, null);   // null sessionId for edit-mode re-saves
+      const entries = buildEntries(exercises, date, 0, title, undefined, null, profileUnitsRef.current);   // null sessionId for edit-mode re-saves
 
       await logApi.updateSession(editingLogIds, entries);
       router.back();
