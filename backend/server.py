@@ -621,6 +621,30 @@ async def _sync_current_week(userId: str, profile_doc: dict = None) -> int:
         return int((profile_doc or {}).get("currentWeek") or 1)
 
 
+def _profile_from_mongo_lenient(doc: dict) -> "AthleteProfile":
+    """Profile docs written by earlier schema generations can hold nulls or
+    wrong-typed values that the current strict model rejects. That validation
+    error used to 500 every endpoint that echoes the profile — invisibly on
+    GET /profile (each client catches it and falls back to local storage) and
+    user-visibly on /profile/switch-mode ("Could not switch mode"). Nulls are
+    dropped first so model defaults apply; if validation still fails, only the
+    exact offending fields are dropped and logged, so the athlete gets a
+    working profile instead of a 500."""
+    data = {k: v for k, v in doc.items() if v is not None}
+    try:
+        return AthleteProfile.from_mongo(data)
+    except Exception as e:
+        bad_fields = set()
+        for err in (getattr(e, "errors", None) or (lambda: []))():
+            loc = err.get("loc") or ()
+            if loc:
+                bad_fields.add(str(loc[0]))
+        logger.warning("[Profile] lenient parse dropped fields %s for userId=%s (%s)",
+                       sorted(bad_fields), doc.get("userId"), e)
+        cleaned = {k: v for k, v in data.items() if k not in bad_fields}
+        return AthleteProfile.from_mongo(cleaned)
+
+
 @api_router.get("/profile")
 async def get_profile(userId: str = Depends(get_current_user)):
     doc = await db.profile.find_one({"userId": userId})
@@ -631,7 +655,7 @@ async def get_profile(userId: str = Depends(get_current_user)):
     # stamps it on every logged set, so a stale value corrupts training history.
     week = await _sync_current_week(userId, doc)
     doc["currentWeek"] = week
-    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+    return _profile_from_mongo_lenient(doc).model_dump(exclude={"id"})
 
 @api_router.post("/profile")
 async def create_profile(profile: AthleteProfileUpdate, userId: str = Depends(get_current_user)):
@@ -656,7 +680,7 @@ async def create_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
         d["userId"] = userId
         result = await db.profile.insert_one(d)
         doc = await db.profile.find_one({"_id": result.inserted_id})
-    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+    return _profile_from_mongo_lenient(doc).model_dump(exclude={"id"})
 
 @api_router.put("/profile")
 async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(get_current_user)):
@@ -681,7 +705,7 @@ async def update_profile(profile: AthleteProfileUpdate, userId: str = Depends(ge
     if data.get("onboardingComplete"):
         await db.users.update_one({"userId": userId}, {"$set": {"onboardingComplete": True}})
     doc = await db.profile.find_one({"userId": userId})
-    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+    return _profile_from_mongo_lenient(doc).model_dump(exclude={"id"})
 
 # ── Injury Intelligence ───────────────────────────────────────────────────────
 
@@ -7121,7 +7145,7 @@ async def complete_tour(userId: str = Depends(get_current_user)):
         upsert=True,
     )
     doc = await db.profile.find_one({"userId": userId})
-    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+    return _profile_from_mongo_lenient(doc).model_dump(exclude={"id"})
 
 
 @api_router.post("/profile/reset-tour")
@@ -7148,7 +7172,7 @@ async def reset_tour(userId: str = Depends(get_current_user)):
         upsert=True,
     )
     doc = await db.profile.find_one({"userId": userId})
-    return AthleteProfile.from_mongo(doc).model_dump(exclude={"id"})
+    return _profile_from_mongo_lenient(doc).model_dump(exclude={"id"})
 
 
 @api_router.post("/profile/reset")
@@ -7329,8 +7353,15 @@ async def switch_training_mode(body: dict, userId: str = Depends(get_current_use
     )
     logger.info(f"[SwitchMode] userId={userId} → training_mode='{mode}'")
 
+    # The client never reads this echo (it writes training_mode locally on
+    # success), so a legacy doc that still defeats the lenient parse must not
+    # fail the switch itself — the two writes above already happened.
     doc = await db.profile.find_one({"userId": userId})
-    profile_out = AthleteProfile.from_mongo(doc).model_dump(exclude={"id"}) if doc else {}
+    try:
+        profile_out = _profile_from_mongo_lenient(doc).model_dump(exclude={"id"}) if doc else {}
+    except Exception as e:
+        logger.error(f"[SwitchMode] profile echo failed for userId={userId}: {e}")
+        profile_out = {}
 
     return {
         "success": True,

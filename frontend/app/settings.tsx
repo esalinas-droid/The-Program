@@ -474,10 +474,13 @@ export default function SettingsScreen() {
       // full rebuild on next focus (same flag the coach screen uses).
       await saveProfile({ ...profile, training_mode: 'free' } as any);
       await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
-    } catch (e) {
+    } catch (e: any) {
       console.warn('[ModeSwitchFree] error', e);
       setModeSwitching(false);
-      Alert.alert('Could not switch mode', 'Check your connection and try again.');
+      // Include the real failure in the alert — "check your connection" hid a
+      // server-side 500 for weeks and made this bug undiagnosable from a phone.
+      const detail = String(e?.message || '').slice(0, 180);
+      Alert.alert('Could not switch mode', detail ? `The server said:\n${detail}` : 'Check your connection and try again.');
       return;
     }
     setModeSwitching(false);
@@ -490,10 +493,11 @@ export default function SettingsScreen() {
       await switchModeWithRetry('program');
       await saveProfile({ ...profile, training_mode: 'program' } as any);
       await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
-    } catch (e) {
+    } catch (e: any) {
       console.warn('[ModeSwitchProgram] error', e);
       setModeSwitching(false);
-      Alert.alert('Could not switch mode', 'Check your connection and try again.');
+      const detail = String(e?.message || '').slice(0, 180);
+      Alert.alert('Could not switch mode', detail ? `The server said:\n${detail}` : 'Check your connection and try again.');
       return;
     }
     setModeSwitching(false);
