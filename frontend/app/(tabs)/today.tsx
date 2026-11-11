@@ -5382,16 +5382,25 @@ export default function TodayScreen() {
   }, [applyScannedToProgramSession]);
 
   const handleProgramImageScan = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow access to your photo library to scan workout logs.');
+    // The system photo picker (PHPicker on iOS, Photo Picker on Android 13+)
+    // needs no library permission. Gating on requestMediaLibraryPermissionsAsync
+    // dead-ended athletes who denied the prompt once: iOS never re-asks, so
+    // scans stayed blocked until the app was reinstalled. Ask only where it can
+    // still matter (older Android) and never block on the answer.
+    if (Platform.OS === 'android') {
+      await ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => null);
+    }
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+    } catch {
+      Alert.alert('Could not open photos', 'If this keeps happening, check photo access for The Program in your phone\'s Settings.');
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      allowsEditing: false,
-    });
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
 
@@ -5680,19 +5689,23 @@ export default function TodayScreen() {
 
   // ── Tracker Mode: Image upload handler ───────────────────────────────────────
   const handleImageUpload = useCallback(async () => {
-    // 1. Request media library permissions
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow access to your photo library to scan workout logs.');
+    // 1. Launch the system photo picker — no library permission needed (see
+    //    handleProgramImageScan). Blocking on a denied permission left scans
+    //    dead until the app was reinstalled.
+    if (Platform.OS === 'android') {
+      await ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => null);
+    }
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+    } catch {
+      Alert.alert('Could not open photos', 'If this keeps happening, check photo access for The Program in your phone\'s Settings.');
       return;
     }
-
-    // 2. Launch image picker
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      allowsEditing: false,
-    });
 
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
@@ -7200,28 +7213,37 @@ export default function TodayScreen() {
       >
         <KeyboardAvoidingView
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.lg, gap: SPACING.sm }}>
+          {/* flexShrink keeps the sheet inside the space above the keyboard;
+              the input scrolls internally instead of growing the sheet, so the
+              Parse/Cancel buttons below always stay reachable on screen. */}
+          <View style={{ backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.lg, gap: SPACING.sm, flexShrink: 1 }}>
             <Text style={{ color: COLORS.text.primary, fontSize: FONTS.sizes.lg, fontWeight: FONTS.weights.bold }}>
               Paste Workout Text
             </Text>
             <Text style={{ color: COLORS.text.secondary, fontSize: FONTS.sizes.sm, lineHeight: 20 }}>
               Paste or type your workout below and we'll turn it into exercises for today — free.
             </Text>
-            <View style={{ backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: programPasteText.length > PROGRAM_PASTE_MAX_LEN ? RED : COLORS.border }}>
-              <TextInput
-                style={{ minHeight: 240, padding: SPACING.md, color: COLORS.text.primary, fontSize: FONTS.sizes.base, lineHeight: 22 }}
-                value={programPasteText}
-                onChangeText={setProgramPasteText}
-                placeholder={'Squat 3x5 @ 225 lbs'}
-                placeholderTextColor={COLORS.text.muted}
-                multiline
-                textAlignVertical="top"
-                autoCorrect={false}
-                autoCapitalize="sentences"
-              />
-            </View>
+            <ScrollView
+              style={{ flexGrow: 0, flexShrink: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={{ backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: programPasteText.length > PROGRAM_PASTE_MAX_LEN ? RED : COLORS.border }}>
+                <TextInput
+                  style={{ minHeight: 140, maxHeight: 200, padding: SPACING.md, color: COLORS.text.primary, fontSize: FONTS.sizes.base, lineHeight: 22 }}
+                  value={programPasteText}
+                  onChangeText={setProgramPasteText}
+                  placeholder={'Squat 3x5 @ 225 lbs'}
+                  placeholderTextColor={COLORS.text.muted}
+                  multiline
+                  textAlignVertical="top"
+                  autoCorrect={false}
+                  autoCapitalize="sentences"
+                />
+              </View>
+            </ScrollView>
             <Text style={{ textAlign: 'right', fontSize: FONTS.sizes.xs, color: programPasteText.length > PROGRAM_PASTE_MAX_LEN ? RED : COLORS.text.muted }}>
               {programPasteText.length} / {PROGRAM_PASTE_MAX_LEN}
             </Text>

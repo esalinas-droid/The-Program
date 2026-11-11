@@ -144,10 +144,11 @@ export default function ImportDocumentScreen() {
   // ── Pick photo (JPG / PNG) ────────────────────────────────────────────────
   const pickPhoto = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        setErrorMsg('Photo library permission denied. Please enable it in Settings.');
-        return;
+      // No permission gate: the system photo picker needs no library access
+      // (PHPicker on iOS / Photo Picker on Android 13+). Blocking on a denied
+      // permission left photo imports dead until the app was reinstalled.
+      if (Platform.OS === 'android') {
+        await ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => null);
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
