@@ -470,18 +470,25 @@ export default function SettingsScreen() {
     setShowModeSwitchModal(false);
     try {
       await switchModeWithRetry('free');
-      // Server confirmed — now write local state and flag the Today tab for a
-      // full rebuild on next focus (same flag the coach screen uses).
-      await saveProfile({ ...profile, training_mode: 'free' } as any);
-      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
     } catch (e: any) {
       console.warn('[ModeSwitchFree] error', e);
       setModeSwitching(false);
-      // Include the real failure in the alert — "check your connection" hid a
-      // server-side 500 for weeks and made this bug undiagnosable from a phone.
-      const detail = String(e?.message || '').slice(0, 180);
+      // Include the real failure in the alert — "check your connection" hid the
+      // true error for weeks and made this bug undiagnosable from a phone.
+      const detail = String(e?.message || '').slice(0, 220);
       Alert.alert('Could not switch mode', detail ? `The server said:\n${detail}` : 'Check your connection and try again.');
       return;
+    }
+    // Server confirmed — now write local state and flag the Today tab for a
+    // full rebuild on next focus (same flag the coach screen uses). These are
+    // best-effort on purpose: the server already switched, so a local-storage
+    // hiccup must not show a failure alert (Today re-reads the server mode on
+    // focus anyway via login hydration + focus re-check).
+    try {
+      await saveProfile({ ...profile, training_mode: 'free' } as any);
+      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
+    } catch (e) {
+      console.warn('[ModeSwitchFree] local write failed (server switch OK)', e);
     }
     setModeSwitching(false);
     router.replace('/(tabs)');
@@ -491,14 +498,18 @@ export default function SettingsScreen() {
     setModeSwitching(true);
     try {
       await switchModeWithRetry('program');
-      await saveProfile({ ...profile, training_mode: 'program' } as any);
-      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
     } catch (e: any) {
       console.warn('[ModeSwitchProgram] error', e);
       setModeSwitching(false);
-      const detail = String(e?.message || '').slice(0, 180);
+      const detail = String(e?.message || '').slice(0, 220);
       Alert.alert('Could not switch mode', detail ? `The server said:\n${detail}` : 'Check your connection and try again.');
       return;
+    }
+    try {
+      await saveProfile({ ...profile, training_mode: 'program' } as any);
+      await AsyncStorage.setItem('today_pending_invalidation', String(Date.now()));
+    } catch (e) {
+      console.warn('[ModeSwitchProgram] local write failed (server switch OK)', e);
     }
     setModeSwitching(false);
     router.push({ pathname: '/onboarding-path-picker', params: { mode: 'switch' } });
