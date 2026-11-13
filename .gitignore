@@ -406,6 +406,11 @@ backend/.env.local
 # but DO track example env files (documented var names, no secrets)
 !.env.example
 !backend/.env.example
+# frontend/.env.production holds only the PUBLIC production backend URL and
+# MUST stay tracked: `eas update` bundles with the local env, and without this
+# file it inlines .env's localhost into the published OTA bundle (killed all
+# backend connectivity on every phone that applied the Nov 4-13 2026 updates).
+!frontend/.env.production
 
 # Local credentials / secrets — never commit
 memory/test_credentials.md
