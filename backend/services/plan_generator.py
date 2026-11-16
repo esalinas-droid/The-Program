@@ -1119,6 +1119,136 @@ _DEFAULT_EXPERIENCE = _EXPERIENCE_SCALING["intermediate"]
 def _experience_params(experience: str) -> dict:
     return _EXPERIENCE_SCALING.get(str(experience or "").strip().lower(), _DEFAULT_EXPERIENCE)
 
+
+def _recovery_volume_mult(sleep_hours, stress_level, occupation) -> float:
+    """Accessory-volume multiplier from the athlete's recovery profile.
+
+    Onboarding asks about sleep, stress and job and then ignored all three — an
+    athlete sleeping 5 hours in survival mode on a construction site got the
+    same weekly volume as a well-rested desk worker. Each factor trims the
+    generic accessory volume (same lever the injury scaling uses); main-lift
+    work is untouched. Values mirror the onboarding options exactly:
+    sleep '5'/'6'/'7'/'8'/'9', stress low/moderate/high/very_high,
+    occupation sedentary/active/manual. Floor at 0.80 so stacked factors can
+    never gut a program.
+    """
+    mult = 1.0
+    try:
+        s = float(sleep_hours) if sleep_hours is not None else None
+    except (TypeError, ValueError):
+        s = None
+    if s is not None and s > 0:
+        if s < 6.0:
+            mult *= 0.88
+        elif s < 7.0:
+            mult *= 0.95
+    stress = str(stress_level or "").strip().lower()
+    if stress == "very_high":
+        mult *= 0.88
+    elif stress == "high":
+        mult *= 0.95
+    if str(occupation or "").strip().lower() == "manual":
+        mult *= 0.95
+    return max(0.80, round(mult, 3))
+
+
+# ── Weakness-targeted accessory work ─────────────────────────────────────────
+# Onboarding collects primary weaknesses and never read them. Each selected
+# weakness maps to accessory options; a non-deload session that carries a
+# generic filler accessory gets ONE filler swapped for the week's weakness
+# pick, rotating weekly through the athlete's selections so several weaknesses
+# all keep coming back around. Prescriptions carry an RPE so the generic
+# accessory volume wave leaves them alone. Session volume never grows — no
+# filler to displace means no change.
+_GENERIC_FILLER_ACCESSORIES = {"Hammer Curl", "DB Lateral Raise"}
+
+# label (exact onboarding key) -> (side, [(exercise, reps, note), ...])
+_WEAKNESS_ACCESSORIES = {
+    "Off the chest / bottom ROM":          ("upper", [("Paused Bench Press", "8", "3-count pause on the chest"),
+                                                      ("Incline DB Press", "10", None)]),
+    "Tricep lockout (top half)":           ("upper", [("Close-Grip Bench", "8", None),
+                                                      ("2-Board Press", "6", None)]),
+    "Shoulder girdle / pec tie-in":        ("upper", [("Incline DB Press", "10", None),
+                                                      ("Face Pull", "15", None)]),
+    "Off the floor (deadlift / clean)":    ("lower", [("Deficit Deadlift", "5", "controlled off the floor"),
+                                                      ("Pause Deadlift", "5", "2-count pause at the shin")]),
+    "Knee / hip transition (mid-pull)":    ("lower", [("Block Pull", "5", "below-knee blocks"),
+                                                      ("Pause Deadlift", "5", "pause at the knee")]),
+    "Lockout / hip drive (deadlift)":      ("lower", [("Hip Thrust", "10", None),
+                                                      ("Kettlebell Swing", "12", "hard hip snap")]),
+    "Squat depth / the hole":              ("lower", [("Pause Squat", "5", "2-count in the hole"),
+                                                      ("Goblet Squat", "10", "slow 3-count descent")]),
+    "Upper back rounding under load":      ("any",   [("Pendlay Row", "8", None),
+                                                      ("Good Morning", "8", None)]),
+    "Core stability / bracing":            ("any",   [("Ab Wheel", "10", None),
+                                                      ("Suitcase Carry", "30m", "per side")]),
+    "Hip mobility / achieving depth":      ("lower", [("Goblet Squat", "10", "slow 3-count descent"),
+                                                      ("Cossack Squat", "8", "per side")]),
+    "Shoulder / overhead mobility":        ("upper", [("Face Pull", "15", None),
+                                                      ("Band Pull-Apart", "20", None)]),
+    "Overhead lockout & stability":        ("upper", [("Push Press", "5", None),
+                                                      ("Overhead Carry", "20m", None)]),
+    "Pressing strength (general upper)":   ("upper", [("Close-Grip Bench", "8", None),
+                                                      ("DB Shoulder Press", "10", None)]),
+    "Posterior chain (hamstrings/glutes)": ("lower", [("Romanian Deadlift", "8", None),
+                                                      ("Reverse Hyper", "12", None)]),
+    "Grip strength / forearm endurance":   ("any",   [("Farmer Carry", "30m", "heavy, no straps"),
+                                                      ("Dead Hang", "30s", "max hold")]),
+    "Conditioning / work capacity":        ("any",   [("Sled Drag", "40m", "steady pace"),
+                                                      ("Kettlebell Swing", "15", None)]),
+    # "Mental / confidence under maximal" is coaching, not an exercise swap —
+    # the Pocket Coach owns it.
+}
+
+
+def _session_side(exercises) -> str:
+    """'upper', 'lower' or 'mixed', judged from the session's main/supplemental
+    lift names. Heuristic on purpose: it only steers which weakness fits."""
+    names = " ".join(
+        e.name.lower() for e in exercises
+        if e.category in (ExerciseCategory.MAIN, ExerciseCategory.SUPPLEMENTAL)
+    )
+    upper = any(k in names for k in ("bench", "press", "row", "pull-up", "dip", "log", "axle"))
+    lower = any(k in names for k in ("squat", "deadlift", "yoke", "stone", "farmer",
+                                     "sled", "hyper", "good morning", "swing", "lunge"))
+    if upper and lower:
+        return "mixed"
+    return "upper" if upper else ("lower" if lower else "mixed")
+
+
+def _swap_weakness_accessory(exercises, ctx) -> None:
+    """Swap one generic filler accessory for this week's weakness-targeted pick."""
+    pool = [w for w in ctx.weaknesses if w in _WEAKNESS_ACCESSORIES]
+    if not pool:
+        return
+    side = _session_side(exercises)
+    # Rotate the starting weakness week by week, then take the first that fits.
+    start = (ctx.global_week - 1) % len(pool)
+    for weakness in pool[start:] + pool[:start]:
+        target_side, options = _WEAKNESS_ACCESSORIES[weakness]
+        if target_side != "any" and side != "mixed" and side != target_side:
+            continue
+        existing = {e.name for e in exercises}
+        for k in range(len(options)):
+            # Alternate between a weakness's options block by block.
+            name, reps, note = options[(ctx.block_number - 1 + k) % len(options)]
+            if name in ctx.blocked or name in existing:
+                continue
+            note_txt = (note + " — " if note else "") + f"targets your weakness: {weakness}"
+            replacement = SessionExercise(
+                sessionExerciseId=_id(), name=name, category=ExerciseCategory.ACCESSORY,
+                prescription=f"3×{reps} @ RPE 7-8",
+                targetSets=[TargetSet(setNumber=i, targetReps=reps, targetRPE=7.5, setType="work")
+                            for i in range(1, 4)],
+                notes=note_txt,
+            )
+            for idx, ex in enumerate(exercises):
+                if ex.category == ExerciseCategory.ACCESSORY and ex.name in _GENERIC_FILLER_ACCESSORIES:
+                    exercises[idx] = replacement
+                    return
+            return  # no filler on this session — never inflate volume
+        return
+
 # Per-block deload scheduling (template-level DATA):
 #   The final week of every block is a deload, EXCEPT for blocks that are this
 #   short (they are effectively tapers/short blocks) and phases listed as opting out.
@@ -1253,6 +1383,10 @@ class ProgContext:
     exp: dict = _dc.field(default_factory=lambda: dict(_DEFAULT_EXPERIENCE))
     injury_volume_mult: float = 1.0
     injury_details: list = _dc.field(default_factory=list)
+    # Recovery profile (sleep/stress/occupation) volume scaling, resolved once
+    recovery_volume_mult: float = 1.0
+    # Athlete's selected primary weaknesses (exact onboarding labels)
+    weaknesses: list = _dc.field(default_factory=list)
     is_first_session_of_week: bool = False
     # Athlete's chosen cardio types (CARDIO_POOL keys); empty = default cardio
     cardio_prefs: list = _dc.field(default_factory=list)
@@ -1401,10 +1535,10 @@ def _apply_progression(exercises, ctx):
                     for i in range(n_sets)
                 ]
 
-    # 3b. Athlete-specific volume: experience level and active-injury severity.
-    #     Beginners get less total work, advanced/elite athletes more; an athlete
-    #     carrying a severe or painful active injury gets less regardless.
-    vol_mult = ctx.exp.get("volume", 1.0) * ctx.injury_volume_mult
+    # 3b. Athlete-specific volume: experience level, active-injury severity and
+    #     recovery profile (sleep/stress/occupation). Beginners get less total
+    #     work, advanced/elite athletes more; poor recovery trims it regardless.
+    vol_mult = ctx.exp.get("volume", 1.0) * ctx.injury_volume_mult * ctx.recovery_volume_mult
     if not ctx.is_deload and abs(vol_mult - 1.0) > 0.01:
         for ex in exercises:
             if ex.category not in (ExerciseCategory.SUPPLEMENTAL, ExerciseCategory.ACCESSORY):
@@ -1425,6 +1559,11 @@ def _apply_progression(exercises, ctx):
         for rex in _rehab_exercises(ctx.injury_details, ctx.blocked):
             if rex.name not in existing:
                 exercises.append(rex)
+
+    # 3d. Weakness-targeted accessory work: swap one generic filler accessory
+    #     for an exercise aimed at one of the athlete's selected weaknesses.
+    if ctx.weaknesses and not ctx.is_deload:
+        _swap_weakness_accessory(exercises, ctx)
 
     # 4. RPE targets on main-lift work sets.
     #    Prescribe effort so the session self-regulates on the day. Deliberate
@@ -1876,6 +2015,13 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
     _injury_vol = _injury_volume_mult(getattr(intake, 'injuryDetails', None))
     if _injury_vol < 1.0:
         print(f"[PLANGEN] Active injury — scaling accessory volume to {_injury_vol:.0%}")
+    _recovery_vol = _recovery_volume_mult(
+        getattr(intake, 'sleepHours', None),
+        getattr(intake, 'stressLevel', None),
+        getattr(intake, 'occupationType', None),
+    )
+    if _recovery_vol < 1.0:
+        print(f"[PLANGEN] Recovery profile — scaling accessory volume to {_recovery_vol:.0%}")
 
     weeks_out = _weeks_until(getattr(intake, 'competitionDate', None),
                              getattr(intake, 'programStartDate', None))
@@ -1962,6 +2108,8 @@ def generate_plan(intake: IntakeRequest, plan_id: Optional[str] = None) -> Annua
                     injury_volume_mult=_injury_vol,
                     injury_details=list(getattr(intake, 'injuryDetails', None) or []),
                     cardio_prefs=list(getattr(intake, 'cardioPreferences', None) or []),
+                    recovery_volume_mult=_recovery_vol,
+                    weaknesses=list(getattr(intake, 'primaryWeaknesses', None) or []),
                 )
 
                 # Build sessions using real calendar day numbers (Mon=1...Fri=5)

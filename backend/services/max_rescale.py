@@ -105,7 +105,26 @@ def rescale_plan_doc(plan_doc: dict, multipliers: Dict[str, float],
     for max_key, mult in multipliers.items():
         for ex_name in MAX_TO_EXERCISES.get(max_key, ()):
             ex_to_mult[ex_name] = mult
+    return _rescale_by_exercise_map(plan_doc, ex_to_mult, from_week)
 
+
+def rescale_single_exercise(plan_doc: dict, exercise: str, mult: float,
+                            from_week: int = 1) -> Tuple[dict, int]:
+    """Scale one exercise's future loads by a multiplier.
+
+    The apply path for load suggestions: the athlete accepted "raise Bench 5%",
+    so only that exercise moves, only from the current week forward. Same
+    discipline as a max rescale — completed weeks stay the record of what was
+    actually prescribed, and the prescription text is rewritten so the UI can't
+    show stale numbers.
+    """
+    if not plan_doc or not exercise or not mult or abs(mult - 1.0) < 0.001:
+        return plan_doc, 0
+    return _rescale_by_exercise_map(plan_doc, {exercise: mult}, from_week)
+
+
+def _rescale_by_exercise_map(plan_doc: dict, ex_to_mult: Dict[str, float],
+                             from_week: int) -> Tuple[dict, int]:
     touched = 0
     for phase in plan_doc.get("phases", []) or []:
         for block in phase.get("blocks", []) or []:

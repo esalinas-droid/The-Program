@@ -1695,6 +1695,53 @@ async def get_load_suggestions(userId: str = Depends(get_current_user)):
         return {"suggestions": []}
 
 
+class ApplySuggestionBody(BaseModel):
+    exercise: str
+    percentChange: float     # e.g. 5 = raise 5%, -7 = back off 7%
+
+
+@api_router.post("/progression/apply")
+async def apply_load_suggestion(body: ApplySuggestionBody, userId: str = Depends(get_current_user)):
+    """Apply an accepted load suggestion to the athlete's live plan.
+
+    The suggestion engine is advisory; this is the athlete saying yes. Scales
+    only the named exercise, only from the current week forward, using the same
+    rescale discipline as a training-max change (completed weeks untouched,
+    prescription text rewritten so the UI can't show stale numbers). The
+    percent is clamped to the engine's own bounds so a bad client can never
+    swing a program by more than a step.
+    """
+    from services.max_rescale import rescale_single_exercise
+
+    exercise = (body.exercise or "").strip()
+    if not exercise:
+        raise HTTPException(status_code=400, detail="exercise is required")
+    pct = max(-10.0, min(10.0, float(body.percentChange or 0)))
+    if abs(pct) < 0.5:
+        raise HTTPException(status_code=400, detail="percentChange too small to apply")
+
+    plan_doc = await db.saved_plans.find_one({"userId": userId, "status": "active"})
+    if not plan_doc:
+        raise HTTPException(status_code=404, detail="No active plan")
+
+    current_week = _calculate_current_week(plan_doc.get("startDate", "")) or 1
+    plan_doc, touched = rescale_single_exercise(
+        plan_doc, exercise, 1 + pct / 100.0, from_week=current_week
+    )
+    if touched == 0:
+        raise HTTPException(status_code=404, detail=f"'{exercise}' not found in remaining weeks")
+
+    plan_doc.pop("_id", None)
+    await db.saved_plans.replace_one(
+        {"planId": plan_doc.get("planId"), "userId": userId}, plan_doc
+    )
+    _prog_store["plans"].pop(userId, None)   # evict cache so the new loads load
+    logger.info("[SUGGEST] user=%s applied %+.1f%% to '%s' from week %d (%d sessions)",
+                userId, pct, exercise, current_week, touched)
+    return {"applied": True, "exercise": exercise, "percentChange": pct,
+            "fromWeek": current_week, "exercisesUpdated": touched}
+
+
 @api_router.get("/plan/session/today")
 async def get_today_session_mongo(userId: str = Depends(get_current_user)):
     """Get today's session — auto-loads plan from MongoDB if not in memory."""

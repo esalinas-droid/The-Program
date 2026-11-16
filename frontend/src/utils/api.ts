@@ -727,6 +727,32 @@ export interface MaxesResponse {
   units: 'lbs' | 'kg';
   prSuggestions: PrSuggestion[];
 }
+// ── Load suggestions (autoregulation) ────────────────────────────────────────
+// The server compares logged RPE against prescribed RPE and suggests a change;
+// nothing is applied until the athlete taps Apply (requiresConfirmation).
+export interface LoadSuggestion {
+  exercise: string;
+  direction: 'increase' | 'decrease';
+  targetRPE: number;
+  avgLoggedRPE: number;
+  sessionsUsed: number;
+  currentWeight: number | null;
+  suggestedWeight: number | null;
+  percentChange: number;
+  reason: string;
+  requiresConfirmation: boolean;
+}
+
+export const progressionApi = {
+  suggestions: (): Promise<{ suggestions: LoadSuggestion[]; sessionType?: string }> =>
+    api('/progression/suggestions'),
+  apply: (exercise: string, percentChange: number): Promise<{ applied: boolean; fromWeek: number; exercisesUpdated: number }> =>
+    api('/progression/apply', {
+      method: 'POST',
+      body: JSON.stringify({ exercise, percentChange }),
+    }),
+};
+
 export const maxesApi = {
   get:    (): Promise<MaxesResponse> => api('/profile/maxes'),
   update: (maxes: Record<string, number>, rescaleProgram = true) =>

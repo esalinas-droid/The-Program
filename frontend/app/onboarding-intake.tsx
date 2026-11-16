@@ -3,8 +3,9 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   SafeAreaView, Platform, Animated,
   TextInput, ActivityIndicator, Alert, Image,
-  KeyboardAvoidingView, Dimensions, Linking,
+  KeyboardAvoidingView, Dimensions, Linking, Modal,
 } from 'react-native';
+import { Calendar } from 'react-native-calendars';
 import { WEAKNESS_IMAGES, EQUIPMENT_IMAGES, ANATOMY_IMAGES } from '../src/constants/onboardingAssets';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -17,6 +18,22 @@ import { saveProfile } from '../src/utils/storage';
 import { programApi, profileApi, uploadApi, planApi } from '../src/utils/api';
 import { getLocalDateString } from '../src/utils/dateHelpers';
 import { getStoredUser, getAuthToken, storeUser } from '../src/utils/auth';
+
+// ── Competition-date helpers ──────────────────────────────────────────────────
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const isoDaysFromNow = (days: number): string => {
+  const t = new Date();
+  t.setDate(t.getDate() + days);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
+// Old profiles may hold free-text dates ("November 2025") — show those as-is.
+const formatCompDate = (d: string): string => {
+  if (!ISO_DATE_RE.test(d)) return d;
+  const dt = new Date(`${d}T00:00:00`);
+  return isNaN(dt.getTime())
+    ? d
+    : dt.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+};
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type StepConfig = {
@@ -349,6 +366,7 @@ export default function OnboardingIntake() {
   const [hasCompetition,   setHasCompetition]  = useState<boolean | null>(null);
   const [competitionType,  setCompetitionType] = useState('');
   const [competitionDate,  setCompetitionDate] = useState('');
+  const [showCompDatePicker, setShowCompDatePicker] = useState(false);
 
   // Step 12 — Current Program (optional)
   const [currentProgram,   setCurrentProgram]  = useState('');
@@ -1986,17 +2004,53 @@ export default function OnboardingIntake() {
             </View>
 
             <Text style={[s.bwLabel, { marginTop: SPACING.sm }]}>Target competition date</Text>
-            <View style={s.liftRow}>
+            {/* A real picker instead of free text: the generator fits the whole
+                program to this date, so a typo used to silently produce the
+                generic 52-week template. ISO output parses first on the server. */}
+            <TouchableOpacity
+              style={s.liftRow}
+              onPress={() => { haptic(); setShowCompDatePicker(true); }}
+              activeOpacity={0.8}
+            >
               <MaterialCommunityIcons name="calendar-month-outline" size={18} color={COLORS.accent} />
-              <TextInput
-                style={[s.liftInput, { flex: 1, width: undefined, marginLeft: SPACING.sm }]}
-                value={competitionDate}
-                onChangeText={setCompetitionDate}
-                placeholder="e.g. November 2025"
-                placeholderTextColor={COLORS.text.muted}
-                returnKeyType="done"
-              />
-            </View>
+              <Text style={{ flex: 1, marginLeft: SPACING.sm, fontSize: FONTS.sizes.base, color: competitionDate ? COLORS.text.primary : COLORS.text.muted }}>
+                {competitionDate ? formatCompDate(competitionDate) : 'Pick the date'}
+              </Text>
+              <MaterialCommunityIcons name="chevron-down" size={18} color={COLORS.text.muted} />
+            </TouchableOpacity>
+
+            <Modal visible={showCompDatePicker} transparent animationType="fade" onRequestClose={() => setShowCompDatePicker(false)}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: SPACING.lg }}>
+                <View style={{ backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.md }}>
+                  <Calendar
+                    minDate={isoDaysFromNow(7)}
+                    maxDate={isoDaysFromNow(365)}
+                    current={ISO_DATE_RE.test(competitionDate) ? competitionDate : undefined}
+                    markedDates={ISO_DATE_RE.test(competitionDate)
+                      ? { [competitionDate]: { selected: true, selectedColor: COLORS.accent } }
+                      : {}}
+                    onDayPress={(day: { dateString: string }) => {
+                      haptic();
+                      setCompetitionDate(day.dateString);
+                      setShowCompDatePicker(false);
+                    }}
+                    theme={{
+                      calendarBackground: COLORS.surface,
+                      dayTextColor: COLORS.text.primary,
+                      monthTextColor: COLORS.text.primary,
+                      textDisabledColor: COLORS.text.muted,
+                      arrowColor: COLORS.accent,
+                      todayTextColor: COLORS.accent,
+                      selectedDayBackgroundColor: COLORS.accent,
+                      selectedDayTextColor: '#000',
+                    }}
+                  />
+                  <TouchableOpacity onPress={() => setShowCompDatePicker(false)} style={{ alignItems: 'center', paddingVertical: SPACING.md }}>
+                    <Text style={{ color: COLORS.text.secondary, fontWeight: '600' }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
           </View>
         )}
       </View>

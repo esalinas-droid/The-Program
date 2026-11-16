@@ -17,7 +17,7 @@ import * as Haptics from 'expo-haptics';
 import { COLORS, SPACING, FONTS, RADIUS } from '../../src/constants/theme';
 import { DragSection } from '../../src/components/DragSection';
 import { getProfile, saveProfile } from '../../src/utils/storage';
-import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi, analyticsApi } from '../../src/utils/api';
+import { substitutionApi, programApi, readinessApi, painReportApi, logApi, streakApi, badgesApi, prApi, exerciseApi, warmupApi, analyticsApi, progressionApi, LoadSuggestion } from '../../src/utils/api';
 import { getProgramSession, getTodayDayName, getTodaySession } from '../../src/data/programData';
 import { getLocalDateString } from '../../src/utils/dateHelpers';
 import { getBlock } from '../../src/utils/calculations';
@@ -3002,6 +3002,9 @@ export default function TodayScreen() {
   const [trackerLogs, setTrackerLogs] = useState<any[]>([]);
   const [trackerLogsLoading, setTrackerLogsLoading] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  // Program mode: advisory load suggestions (autoregulation — athlete decides)
+  const [loadSuggestions, setLoadSuggestions] = useState<Record<string, LoadSuggestion>>({});
+  const [applyingSuggestion, setApplyingSuggestion] = useState<string | null>(null);
   // Program mode: paste workout text (free — no image credits)
   const [showProgramPaste, setShowProgramPaste] = useState(false);
   const [programPasteText, setProgramPasteText] = useState('');
@@ -3155,6 +3158,7 @@ export default function TodayScreen() {
   const SKIPPED_EXERCISES_KEY = 'today_skipped_exercises'; // today-only prescribed skip list (coach REMOVE/SWAP)
   const SWAPS_KEY             = 'today_swaps'; // today-only exercise swaps ({date, data} envelope)
   const TODAY_INVALIDATE_KEY  = 'today_pending_invalidation'; // set by coach → force re-load on next focus
+  const SUGGESTIONS_DISMISSED_KEY = 'today_suggestions_dismissed'; // {date, names[]} — "Not now" lasts the day
 
   /**
    * Record "finished training today", locally and on the server.
@@ -3543,6 +3547,109 @@ export default function TodayScreen() {
     setLoadKey(k => k + 1);          // Triggers useFocusEffect to re-run (while screen is focused)
     // setRefreshing(false) is handled by the load effect after data arrives
   }, []);
+
+  // ── Load suggestions (autoregulation) ───────────────────────────────────────
+  // The server compares logged RPE against prescribed RPE for today's lifts and
+  // suggests a change. Advisory by design: nothing moves until the athlete taps
+  // Apply. "Not now" silences a suggestion for the rest of the day.
+  const refreshLoadSuggestions = useCallback(async () => {
+    try {
+      const res = await progressionApi.suggestions();
+      const list = res?.suggestions || [];
+      if (!list.length) { setLoadSuggestions({}); return; }
+      let dismissed: string[] = [];
+      try {
+        const raw = await AsyncStorage.getItem(SUGGESTIONS_DISMISSED_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (parsed?.date === getLocalDateString()) dismissed = parsed.names || [];
+      } catch {}
+      const map: Record<string, LoadSuggestion> = {};
+      for (const sg of list) {
+        if (!dismissed.includes(sg.exercise)) map[sg.exercise] = sg;
+      }
+      setLoadSuggestions(map);
+    } catch { /* advisory only — never disturb the session */ }
+  }, []);
+
+  useEffect(() => {
+    if (trainingMode === 'program' && !loading) refreshLoadSuggestions();
+  }, [trainingMode, loading, loadKey, refreshLoadSuggestions]);
+
+  const handleApplySuggestion = useCallback(async (sg: LoadSuggestion) => {
+    if (applyingSuggestion) return;
+    setApplyingSuggestion(sg.exercise);
+    try {
+      await progressionApi.apply(sg.exercise, sg.percentChange);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLoadSuggestions(prev => {
+        const next = { ...prev };
+        delete next[sg.exercise];
+        return next;
+      });
+      // Full reload so the new prescribed loads appear immediately.
+      initialLoadDone.current = false;
+      lastLoadDate.current = '';
+      setLoadKey(k => k + 1);
+    } catch (err: any) {
+      Alert.alert('Could not apply', String(err?.message || 'Please try again.').slice(0, 180));
+    } finally {
+      setApplyingSuggestion(null);
+    }
+  }, [applyingSuggestion]);
+
+  const handleDismissSuggestion = useCallback(async (name: string) => {
+    setLoadSuggestions(prev => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    try {
+      const today = getLocalDateString();
+      const raw = await AsyncStorage.getItem(SUGGESTIONS_DISMISSED_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      const names: string[] = parsed?.date === today ? (parsed.names || []) : [];
+      if (!names.includes(name)) names.push(name);
+      await AsyncStorage.setItem(SUGGESTIONS_DISMISSED_KEY, JSON.stringify({ date: today, names }));
+    } catch {}
+  }, []);
+
+  // Advisory chip above a lift's card when the engine has something to say.
+  const renderLoadSuggestionBar = (ex: Exercise) => {
+    const sg = loadSuggestions[ex.name];
+    if (!sg || sessionFinished) return null;
+    const up = sg.direction === 'increase';
+    return (
+      <View style={[s.suggestionBar, up ? s.suggestionBarUp : s.suggestionBarDown]}>
+        <MaterialCommunityIcons
+          name={up ? 'trending-up' : 'trending-down'}
+          size={16}
+          color={up ? COLORS.accent : '#5B9CF5'}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={s.suggestionTitle}>{up ? 'Coming up easy' : 'Running heavy'}</Text>
+          <Text style={s.suggestionDetail}>
+            Avg RPE {sg.avgLoggedRPE} vs {sg.targetRPE} target over {sg.sessionsUsed} sessions — {up ? 'raise' : 'lower'} {Math.abs(sg.percentChange)}%{sg.suggestedWeight ? ` (~${sg.suggestedWeight})` : ''}?
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={s.suggestionApplyBtn}
+          onPress={() => handleApplySuggestion(sg)}
+          disabled={!!applyingSuggestion}
+          activeOpacity={0.85}
+        >
+          {applyingSuggestion === sg.exercise
+            ? <ActivityIndicator size="small" color="#000" />
+            : <Text style={s.suggestionApplyText}>Apply</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleDismissSuggestion(sg.exercise)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <MaterialCommunityIcons name="close" size={16} color={COLORS.text.muted} />
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   // ── Restore edited values from AsyncStorage on component mount ──────────────
   useEffect(() => {
@@ -6919,8 +7026,9 @@ export default function TodayScreen() {
           const fullIdx = gi;
           const groupLen = mainExercises.length;
           return (
+          <View key={ex.id}>
+          {renderLoadSuggestionBar(ex)}
           <ExerciseCard
-            key={ex.id}
             exercise={ex}
             expanded={expanded.has(ex.id)}
             loggedSets={loggedSets}
@@ -6969,6 +7077,7 @@ export default function TodayScreen() {
             onFieldsChange={(newFields, scope) => handleFieldsChange(ex, newFields, scope)}
             dragHandle={<DragHandle gesture={gesture} />}
           />
+          </View>
           );
         }}
         />
@@ -7884,6 +7993,14 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.accent + '08',
   },
   addExerciseBtnText: { color: COLORS.accent, fontSize: FONTS.sizes.sm, fontWeight: FONTS.weights.semibold, letterSpacing: 0.3 },
+  // ── Load suggestion chip (autoregulation — advisory, athlete decides)
+  suggestionBar:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 6, paddingHorizontal: SPACING.md, paddingVertical: 10, borderRadius: RADIUS.md, borderWidth: 1 },
+  suggestionBarUp:    { backgroundColor: COLORS.accent + '10', borderColor: COLORS.accent + '40' },
+  suggestionBarDown:  { backgroundColor: '#5B9CF510', borderColor: '#5B9CF540' },
+  suggestionTitle:    { fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.heavy, color: COLORS.text.primary, letterSpacing: 0.3 },
+  suggestionDetail:   { fontSize: FONTS.sizes.xs, color: COLORS.text.secondary, marginTop: 1 },
+  suggestionApplyBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.full, backgroundColor: COLORS.accent },
+  suggestionApplyText:{ fontSize: FONTS.sizes.xs, fontWeight: FONTS.weights.bold, color: '#000' },
 });
 
 // ── AdjustModal Styles ────────────────────────────────────────────────────────
