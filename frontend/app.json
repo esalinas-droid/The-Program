@@ -54,7 +54,7 @@
         "FOREGROUND_SERVICE",
         "WAKE_LOCK"
       ],
-      "versionCode": 40
+      "versionCode": 39
     },
     "web": {
       "bundler": "metro",
